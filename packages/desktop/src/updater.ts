@@ -22,9 +22,9 @@ autoUpdater.logger = {
   debug: (_msg: unknown) => { /* silencioso */ },
 } as unknown as typeof autoUpdater.logger;
 
-// No descargar automáticamente — el usuario decide
-autoUpdater.autoDownload = false;
-// Instalar al cerrar la app (no forzar reinicio)
+// Descargar automáticamente en background
+autoUpdater.autoDownload = true;
+// Instalar al cerrar la app (no interrumpe al usuario)
 autoUpdater.autoInstallOnAppQuit = true;
 
 export function initAutoUpdater(mainWindow: BrowserWindow): void {
