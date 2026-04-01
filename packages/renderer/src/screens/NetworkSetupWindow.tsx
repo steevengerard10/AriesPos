@@ -82,7 +82,8 @@ const NetworkSetupWindow = () => {
   const handleSetServer = async () => {
     try {
       await appAPI.setAppConfig({ mode: 'server', terminalName: 'Servidor principal' });
-      setStep('done');
+      // Reiniciar la app para activar modo servidor con DB y Express
+      await appAPI.restart();
     } catch (e: any) {
       setTestErr(e?.message || 'Error al configurar como servidor');
     }

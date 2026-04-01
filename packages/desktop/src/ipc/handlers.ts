@@ -1720,12 +1720,12 @@ export function registerIpcHandlers(): void {
       }
       if (baseIP) break;
     }
-    if (!baseIP) return { servers: [] };
+    if (!baseIP) return [];
 
     const targetPort = port ?? 3001;
     const timeout = 800;
     const concurrency = 30;
-    const servers: { ip: string; port: number; negocio: string; version: string }[] = [];
+    const servers: { ip: string; port: number; nombre: string; version: string }[] = [];
 
     const checkIP = (ip: string): Promise<void> =>
       new Promise((resolve) => {
@@ -1735,9 +1735,9 @@ export function registerIpcHandlers(): void {
           .then(r => r.json())
           .then((data: unknown) => {
             clearTimeout(timer);
-            const d = data as { status?: string; negocio?: string; version?: string };
+            const d = data as { status?: string; negocio?: string; nombre?: string; version?: string };
             if (d?.status === 'ok') {
-              servers.push({ ip, port: targetPort, negocio: d.negocio || 'ARIESPos', version: d.version || '?' });
+              servers.push({ ip, port: targetPort, nombre: d.negocio || d.nombre || 'ARIESPos', version: d.version || '?' });
             }
             resolve();
           })

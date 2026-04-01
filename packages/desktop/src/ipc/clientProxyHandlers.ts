@@ -412,18 +412,21 @@ export function registerClientProxyHandlers(serverIP: string, port: number, serv
   ipcMain.handle('network:scan', async (_e, scanPort?: number) => {
     const targetPort = scanPort ?? 3001;
     const localIP = getLocalIP();
+    if (!localIP || localIP === '127.0.0.1') return [];
     const subnet = localIP.split('.').slice(0, 3).join('.');
-    const results: { ip: string; port: number; info: Record<string, unknown> }[] = [];
+    const results: { ip: string; port: number; nombre: string; version: string }[] = [];
 
     const checkHost = async (host: string) => {
       try {
         const ctrl = new AbortController();
         const tid = setTimeout(() => ctrl.abort(), 800);
-        const res = await fetch(`http://${host}:${targetPort}/api/servidor/info`, { signal: ctrl.signal });
+        const res = await fetch(`http://${host}:${targetPort}/api/ping`, { signal: ctrl.signal });
         clearTimeout(tid);
         if (res.ok) {
-          const info = await res.json() as Record<string, unknown>;
-          results.push({ ip: host, port: targetPort, info });
+          const data = await res.json() as { status?: string; negocio?: string; nombre?: string; version?: string };
+          if (data?.status === 'ok') {
+            results.push({ ip: host, port: targetPort, nombre: data.negocio || data.nombre || 'ARIESPos', version: data.version || '?' });
+          }
         }
       } catch { /* ignorar */ }
     };

@@ -190,13 +190,9 @@ ipcMain.handle('app:resetAppConfig', () => {
 // Llamado desde SetupScreen para activar modo cliente sin reiniciar
 ipcMain.handle('app:switchToClientMode', (_e, { ip, port, terminalName }: { ip: string; port: number; terminalName: string }) => {
   saveAppConfig({ mode: 'client', serverIP: ip, serverPort: port, terminalName });
-  // Recargar el renderer local (misma app de escritorio, no la webpos)
-  if (!isDev) {
-    const rendererPath = path.join(process.resourcesPath, 'renderer', 'index.html');
-    mainWindow?.loadFile(rendererPath);
-  } else {
-    mainWindow?.loadURL('http://localhost:9200');
-  }
+  // Reiniciar la app completa para que los proxy handlers se registren correctamente
+  app.relaunch();
+  app.exit(0);
   return { success: true };
 });
 
