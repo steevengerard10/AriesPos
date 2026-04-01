@@ -18,7 +18,7 @@ export const LicenseScreen: React.FC<Props> = ({ onActivated }) => {
       formatted = 'ARIES';
       const rest = clean.slice(5);
       for (let i = 0; i < rest.length && i < 16; i++) {
-        if (i > 0 && i % 4 === 0) formatted += '-';
+        if (i % 4 === 0) formatted += '-';
         formatted += rest[i];
       }
     } else {
