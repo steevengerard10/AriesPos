@@ -9,6 +9,7 @@ import { app as electronApp } from 'electron';
 import { getDb } from '../database/db';
 import { generatePosHTML } from './webpos';
 import { exportFiadosToExcel } from '../services/fiados-excel-backup';
+import { createSyncRouter } from './syncRoutes';
 const localtunnel = require('localtunnel') as (opts: { port: number; subdomain?: string }) => Promise<{ url: string; close(): void; on(ev: string, cb: (...a: unknown[]) => void): void }>;
 const cloudflared = require('cloudflared') as {
   bin: string;
@@ -694,6 +695,9 @@ export function startServer(): void {
     emitToWeb('fiados:list-changed', { id });
     res.json({ success: true, pagado_total: pagadoTotal, nuevo_pagado: nuevoPagado, pendiente: total - nuevoPagado });
   });
+
+  // ── /api/sync/* — Sincronización multi-PC ─────────────────────────────────
+  expressApp.use('/api/sync', basicAuth, createSyncRouter(io, exportFiadosToExcel));
 
   // ── Socket.IO ─────────────────────────────────────────────────────────────
   io.on('connection', (socket) => {

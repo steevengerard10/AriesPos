@@ -216,7 +216,26 @@ ipcMain.handle('app:testServerConnection', async (_e, { ip, port }: { ip: string
   });
 });
 
-ipcMain.handle('app:validateAdminCode', (_e, code: string) => {
+ipcMain.handle('app:validateAdminCode', async (_e, code: string) => {
+  const cfg = getAppConfig();
+  if (cfg.mode === 'client' && cfg.serverIP) {
+    try {
+      const auth = 'Basic ' + Buffer.from(`admin:159753`).toString('base64');
+      const { default: http } = await import('http');
+      const data = await new Promise<string>((resolve, reject) => {
+        const body = JSON.stringify({ pin: code });
+        const req = http.request(
+          { hostname: cfg.serverIP, port: cfg.serverPort || 3001, path: '/api/sync/auth/validate-admin', method: 'POST',
+            headers: { Authorization: auth, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } },
+          (res) => { let d = ''; res.on('data', c => d += c); res.on('end', () => resolve(d)); }
+        );
+        req.on('error', reject);
+        req.write(body);
+        req.end();
+      });
+      return (JSON.parse(data) as { valid: boolean }).valid ?? false;
+    } catch { return false; }
+  }
   try {
     const db = getDb();
     const row = db.prepare(`SELECT id FROM usuarios WHERE pin = ? AND activo = 1 AND rol = 'admin'`).get(code);
@@ -269,18 +288,16 @@ app.whenReady().then(async () => {
     fs.mkdirSync(backupsPath, { recursive: true });
   }
 
-  // Siempre inicializar DB — cada PC tiene su propia base de datos local
-  try {
-    await initDatabase();
-    console.log('[Main] initDatabase OK');
-  } catch (err) {
-    console.error('[Main] initDatabase FAILED:', err);
-    app.quit();
-    return;
-  }
-
   if (!isClientMode) {
-    // Solo el SERVIDOR abre el puerto y sirve la API a la red
+    // SERVIDOR: inicializar DB local, abrir firewall, arrancar Express, registrar handlers locales
+    try {
+      await initDatabase();
+      console.log('[Main] initDatabase OK');
+    } catch (err) {
+      console.error('[Main] initDatabase FAILED:', err);
+      app.quit();
+      return;
+    }
     try {
       const { execFile } = await import('child_process');
       execFile('netsh', [
@@ -298,12 +315,16 @@ app.whenReady().then(async () => {
       console.warn('[Firewall] Error al abrir firewall:', fwErr);
     }
     startServer();
+    registerIpcHandlers();
   } else {
-    console.log(`[Main] Modo CLIENTE — DB local activa, sin servidor`);
+    // CLIENTE: sin DB local — todos los datos van al servidor a través de HTTP
+    console.log(`[Main] Modo CLIENTE → ${appCfg.serverIP}:${appCfg.serverPort}`);
+    const { registerClientProxyHandlers } = await import('./ipc/clientProxyHandlers');
+    registerClientProxyHandlers(
+      appCfg.serverIP,
+      appCfg.serverPort || 3001,
+    );
   }
-
-  // Registrar handlers IPC (usan la DB local)
-  registerIpcHandlers();
 
   // Crear ventana principal (siempre carga el renderer de escritorio)
   createMainWindow();
