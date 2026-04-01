@@ -9,7 +9,6 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { VentaPayload } from '../types/index';
 import { exportFiadosToExcel, getFiadosExcelPath } from '../services/fiados-excel-backup';
-import { isLicensed, validateLicenseKey, saveLicense, readSavedLicense } from '../services/license';
 
 export function registerIpcHandlers(): void {
   // ── PRODUCTOS ────────────────────────────────────────────────
@@ -1765,17 +1764,8 @@ export function registerIpcHandlers(): void {
     return '127.0.0.1';
   });
 
-  // ── LICENCIA ─────────────────────────────────────────────────────────────
-  ipcMain.handle('license:check', () => {
-    const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
-    return { isDev, licensed: isDev || isLicensed(), key: readSavedLicense() };
-  });
-
-  ipcMain.handle('license:activate', (_e, key: string) => {
-    if (!validateLicenseKey(key)) return { success: false, error: 'Clave inválida. Verificá que la copiaste correctamente.' };
-    saveLicense(key);
-    return { success: true };
-  });
+  // Nota: license:check y license:activate se registran en main.ts (nivel global)
+  // para que funcionen tanto en modo servidor como en modo cliente.
 
   console.log('[IPC] Todos los handlers registrados.');
 }

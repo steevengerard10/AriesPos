@@ -7,6 +7,7 @@ import { registerIpcHandlers } from './ipc/handlers';
 import { autoBackup, scheduleBackupCleanup } from './database/backup';
 import { getAppConfig, saveAppConfig, resetAppConfig } from './config/appConfig';
 import { initAutoUpdater } from './updater';
+import { isLicensed, validateLicenseKey, saveLicense, readSavedLicense } from './services/license';
 
 let mainWindow: BrowserWindow | null = null;
 let posWindow: BrowserWindow | null = null;
@@ -269,6 +270,18 @@ ipcMain.handle('window:open-network', () => {
   networkWindow.loadURL(netUrl);
 });
 
+// ── LICENCIA (global: funciona en ambos modos, servidor y cliente) ────────
+ipcMain.handle('license:check', () => {
+  const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
+  return { isDev, licensed: isDev || isLicensed(), key: readSavedLicense() };
+});
+
+ipcMain.handle('license:activate', (_e, key: string) => {
+  if (!validateLicenseKey(key)) return { success: false, error: 'Clave inv\u00e1lida. Verific\u00e1 que la copiaste correctamente.' };
+  saveLicense(key);
+  return { success: true };
+});
+
 process.on('uncaughtException', (err) => {
   console.error('[FATAL] uncaughtException:', err);
 });
@@ -319,11 +332,16 @@ app.whenReady().then(async () => {
   } else {
     // CLIENTE: sin DB local — todos los datos van al servidor a través de HTTP
     console.log(`[Main] Modo CLIENTE → ${appCfg.serverIP}:${appCfg.serverPort}`);
-    const { registerClientProxyHandlers } = await import('./ipc/clientProxyHandlers');
-    registerClientProxyHandlers(
-      appCfg.serverIP,
-      appCfg.serverPort || 3001,
-    );
+    try {
+      const { registerClientProxyHandlers } = await import('./ipc/clientProxyHandlers');
+      registerClientProxyHandlers(
+        appCfg.serverIP,
+        appCfg.serverPort || 3001,
+      );
+    } catch (proxyErr) {
+      console.error('[Main] Error al registrar proxy handlers (modo cliente):', proxyErr);
+      // Continuar igual — createMainWindow() siempre debe ejecutarse
+    }
   }
 
   // Crear ventana principal (siempre carga el renderer de escritorio)
