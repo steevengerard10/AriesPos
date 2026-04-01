@@ -59,6 +59,10 @@ const api = {
   updaterInstall:     () => ipcRenderer.invoke('updater:install'),
   updaterCheckManual: () => ipcRenderer.invoke('updater:check-manual'),
   getAppVersion:      () => ipcRenderer.sendSync('app:get-version-sync'),
+
+  // ── Licencia ─────────────────────────────────────────────────
+  licenseCheck:    () => ipcRenderer.invoke('license:check'),
+  licenseActivate: (key: string) => ipcRenderer.invoke('license:activate', key),
 };
 
 contextBridge.exposeInMainWorld('electron', api);

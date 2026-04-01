@@ -94,7 +94,7 @@ async function main() {
 ║  • La APK para Android
 ║
 ║  En 10-15 minutos estará disponible en:
-║  https://github.com/TuUsuario/ariespos/releases
+║  https://github.com/steevengerard10/ariespos/releases
 ║
 ║  Los programas instalados se actualizarán solos
 ║  la próxima vez que los abran.

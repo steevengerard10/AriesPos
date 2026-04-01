@@ -26,6 +26,7 @@ import { onEvent } from './lib/api';
 import { useAlertMonitorStore } from './store/useAlertMonitorStore';
 import { SetupScreen } from './setup/SetupScreen';
 import NetworkSetupWindow from './screens/NetworkSetupWindow';
+import { LicenseScreen } from './screens/LicenseScreen';
 import { UpdateNotification } from './components/shared/UpdateNotification';
 import './i18n';
 import i18n from './i18n';
@@ -168,6 +169,7 @@ const App: React.FC = () => {
   const { isAuthenticated, setConfig, setServerInfo, theme } = useAppStore();
   const [loading, setLoading] = useState(true);
   const [showSetup, setShowSetup] = useState(false);
+  const [licensed, setLicensed] = useState<boolean | null>(null);
 
   // Aplicar tema guardado al montar y cuando cambia
   useEffect(() => {
@@ -177,6 +179,15 @@ const App: React.FC = () => {
   useEffect(() => {
     const init = async () => {
       try {
+        // Verificar licencia primero
+        const lic = await (window as any).electron?.licenseCheck?.();
+        if (lic && !lic.licensed) {
+          setLicensed(false);
+          setLoading(false);
+          return;
+        }
+        setLicensed(true);
+
         // Verificar si la app ya fue configurada (modo servidor/cliente)
         const appCfg = await appAPI.getAppConfig().catch(() => null);
         if (appCfg && appCfg.mode === null) {
@@ -207,6 +218,7 @@ const App: React.FC = () => {
   }, []);
 
   if (loading) return <SplashScreen />;
+  if (licensed === false) return <LicenseScreen onActivated={() => setLicensed(true)} />;
   if (showSetup) return <SetupScreen onComplete={() => setShowSetup(false)} />;
 
     return (

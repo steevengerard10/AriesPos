@@ -1,0 +1,12 @@
+{
+  "expo": {
+    "extra": {
+      "eas": {
+        "projectId": "b315e751-5ab2-4895-84de-3e424a33b06a"
+      }
+    },
+    "android": {
+      "package": "com.steev123.ariespos"
+    }
+  }
+}

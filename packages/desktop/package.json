@@ -60,7 +60,7 @@
     "publish": [
       {
         "provider": "github",
-        "owner": "TuUsuario",
+        "owner": "steevengerard10",
         "repo": "ariespos",
         "releaseType": "release"
       }
