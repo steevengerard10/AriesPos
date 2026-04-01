@@ -1,0 +1,13 @@
+node_modules/
+dist/
+build/
+out/
+.cache/
+*.db
+*.db-shm
+*.db-wal
+backups/
+release/
+*.log
+.DS_Store
+Thumbs.db

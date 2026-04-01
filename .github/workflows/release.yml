@@ -1,0 +1,98 @@
+# .github/workflows/release.yml
+# Se ejecuta automáticamente cuando subís un tag v*
+
+name: Build & Release ARIESPos
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+
+  # ── JOB 1: Compilar el instalador de Windows ─────────────────────────────
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      - name: Instalar Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Instalar pnpm
+        run: npm install -g pnpm
+
+      - name: Instalar dependencias
+        run: pnpm install --frozen-lockfile
+
+      - name: Compilar renderer (Vite)
+        run: pnpm --filter renderer build
+
+      - name: Compilar TypeScript desktop
+        run: pnpm --filter @ariespos/desktop exec tsc -p tsconfig.json
+
+      - name: Reconstruir módulos nativos para Electron
+        run: pnpm --filter @ariespos/desktop exec electron-builder install-app-deps
+
+      - name: Empaquetar instalador Windows
+        run: pnpm --filter @ariespos/desktop exec electron-builder --win --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ── JOB 2: Compilar la APK de Android ────────────────────────────────────
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      - name: Instalar Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Instalar EAS CLI
+        run: npm install -g eas-cli
+
+      - name: Instalar dependencias de la app móvil
+        working-directory: ./ariespos-mobile
+        run: npm install
+
+      - name: Login en Expo
+        working-directory: ./ariespos-mobile
+        run: eas whoami
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Compilar APK (preview)
+        working-directory: ./ariespos-mobile
+        run: eas build --platform android --profile preview --non-interactive --no-wait
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Crear Release en GitHub con nota de cambios
+        uses: softprops/action-gh-release@v1
+        with:
+          draft: false
+          prerelease: false
+          body: |
+            ## ARIESPos ${{ github.ref_name }}
+
+            ### Instalación
+            - **Windows**: Descargá el archivo `.exe` y ejecutalo
+            - **Android**: La APK se compila en Expo y llega por notificación, o descargá desde [expo.dev](https://expo.dev)
+
+            ### Actualización automática
+            Si ya tenés ARIESPos instalado, se actualiza solo al abrirlo.
+
+            ### Cambios
+            $(cat CHANGELOG.md | head -20)
+          files: |
+            packages/desktop/release/*.exe
+            packages/desktop/release/*.blockmap
+            packages/desktop/release/latest.yml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,50 @@
+{
+  "expo": {
+    "name": "ARIESPos Mobile",
+    "slug": "ariespos-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0d0f14"
+    },
+    "updates": {
+      "fallbackToCacheTimeout": 0
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "plugins": [
+      [
+        "expo-barcode-scanner",
+        {
+          "cameraPermission": "ARIESPos necesita acceso a la cámara para escanear códigos de barras."
+        }
+      ]
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.ariespos.app"
+    },
+    "android": {
+      "package": "com.ariespos.app",
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0d0f14"
+      },
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.VIBRATE",
+        "android.permission.INTERNET",
+        "android.permission.ACCESS_NETWORK_STATE",
+        "android.permission.ACCESS_WIFI_STATE"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    }
+  }
+}

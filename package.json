@@ -1,0 +1,35 @@
+{
+  "name": "ariespos",
+  "version": "1.0.0",
+  "private": true,
+  "description": "ARIESPos - Sistema de Punto de Venta",
+  "scripts": {
+    "dev": "pnpm --filter desktop dev",
+    "build": "pnpm --filter renderer build && pnpm --filter desktop build",
+    "build:win": "pnpm --filter renderer build && pnpm --filter desktop build:win",
+    "build:mac": "pnpm --filter renderer build && pnpm --filter desktop build:mac",
+    "build:linux": "pnpm --filter renderer build && pnpm --filter desktop build:linux",
+    "release": "tsx scripts/release.ts",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "devDependencies": {
+    "electron-builder": "^24.13.3",
+    "tsx": "^4.19.2",
+    "typescript": "^5.4.5"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "pnpm": ">=8.0.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "electron",
+      "esbuild"
+    ]
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.3"
+  }
+}

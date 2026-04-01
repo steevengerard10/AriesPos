@@ -1,0 +1,96 @@
+{
+  "name": "@ariespos/desktop",
+  "version": "1.0.0",
+  "private": true,
+  "main": "dist/main.js",
+  "scripts": {
+    "dev": "tsc -p tsconfig.json && concurrently \"pnpm --filter renderer dev\" \"wait-on http://localhost:9200 && electron .\"",
+    "build": "tsc -p tsconfig.json && electron-builder",
+    "build:win": "tsc -p tsconfig.json && electron-builder --win",
+    "build:mac": "tsc -p tsconfig.json && electron-builder --mac",
+    "build:linux": "tsc -p tsconfig.json && electron-builder --linux",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src"
+  },
+  "dependencies": {
+    "@types/adm-zip": "^0.5.8",
+    "adm-zip": "^0.5.16",
+    "archiver": "^7.0.1",
+    "better-sqlite3": "^12.8.0",
+    "cloudflared": "^0.7.1",
+    "cors": "^2.8.5",
+    "date-fns": "^3.6.0",
+    "electron-updater": "^6.3.9",
+    "express": "^4.19.2",
+    "iconv-lite": "^0.7.2",
+    "localtunnel": "^2.0.2",
+    "multer": "^1.4.5-lts.1",
+    "papaparse": "^5.4.1",
+    "socket.io": "^4.7.5",
+    "uuid": "^9.0.1",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^4.0.3",
+    "@eslint/js": "^10.0.1",
+    "@types/archiver": "^6.0.2",
+    "@types/better-sqlite3": "^7.6.10",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/localtunnel": "^2.0.4",
+    "@types/multer": "^1.4.11",
+    "@types/node": "^20.12.7",
+    "@types/papaparse": "^5.3.14",
+    "@types/uuid": "^9.0.8",
+    "concurrently": "^8.2.2",
+    "electron": "^30.5.1",
+    "electron-builder": "^24.13.3",
+    "eslint": "^10.1.0",
+    "globals": "^17.4.0",
+    "typescript": "^5.4.5",
+    "typescript-eslint": "^8.57.2",
+    "wait-on": "^7.2.0"
+  },
+  "build": {
+    "appId": "com.ariespos.app",
+    "productName": "ARIESPos",
+    "directories": {
+      "output": "release"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "TuUsuario",
+        "repo": "ariespos",
+        "releaseType": "release"
+      }
+    ],
+    "files": [
+      "dist/**/*",
+      "node_modules/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../../packages/renderer/dist",
+        "to": "renderer"
+      }
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "assets/icon.ico"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "assets/icon.icns"
+    },
+    "linux": {
+      "target": "AppImage",
+      "icon": "assets/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": true,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}

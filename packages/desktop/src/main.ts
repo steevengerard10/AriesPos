@@ -1,0 +1,341 @@
+import { app, BrowserWindow, ipcMain, dialog, shell, nativeTheme } from 'electron';
+import * as path from 'path';
+import * as fs from 'fs';
+import { initDatabase, getDb } from './database/db';
+import { startServer } from './server/index';
+import { registerIpcHandlers } from './ipc/handlers';
+import { autoBackup, scheduleBackupCleanup } from './database/backup';
+import { getAppConfig, saveAppConfig, resetAppConfig } from './config/appConfig';
+import { initAutoUpdater } from './updater';
+
+let mainWindow: BrowserWindow | null = null;
+let posWindow: BrowserWindow | null = null;
+let networkWindow: BrowserWindow | null = null;
+
+const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
+
+function createMainWindow(): void {
+  mainWindow = new BrowserWindow({
+    width: 1400,
+    height: 900,
+    minWidth: 1100,
+    minHeight: 700,
+    backgroundColor: '#0f172a',
+    titleBarStyle: 'hidden',
+    titleBarOverlay: {
+      color: '#1e293b',
+      symbolColor: '#94a3b8',
+      height: 36,
+    },
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+    icon: path.join(__dirname, '../assets/icon.png'),
+    show: false,
+  });
+
+  const appCfg = getAppConfig();
+  if (appCfg.mode === 'client' && appCfg.serverIP) {
+    const serverURL = `http://${appCfg.serverIP}:${appCfg.serverPort}/pos`;
+    console.log(`[Main] Modo CLIENTE → cargando ${serverURL}`);
+    mainWindow.loadURL(serverURL);
+  } else if (isDev) {
+    mainWindow.loadURL('http://localhost:9200');
+    mainWindow.webContents.openDevTools({ mode: 'detach' });
+  } else {
+    const rendererPath = path.join(process.resourcesPath, 'renderer', 'index.html');
+    mainWindow.loadFile(rendererPath);
+  }
+
+  mainWindow.once('ready-to-show', () => {
+    console.log('[Main] mainWindow ready-to-show');
+    mainWindow?.show();
+  });
+
+  mainWindow.on('closed', () => {
+    console.log('[Main] mainWindow closed');
+    mainWindow = null;
+  });
+
+  mainWindow.webContents.on('did-fail-load', (_e, code, desc, url) => {
+    console.error(`[Main] mainWindow did-fail-load: ${code} ${desc} ${url}`);
+  });
+}
+
+export function createPosWindow(): void {
+  if (posWindow && !posWindow.isDestroyed()) {
+    posWindow.focus();
+    posWindow.webContents.send('pos:reset');
+    return;
+  }
+
+  posWindow = new BrowserWindow({
+    width: 1200,
+    height: 800,
+    minWidth: 1000,
+    minHeight: 650,
+    backgroundColor: '#0f172a',
+    titleBarStyle: 'hidden',
+    titleBarOverlay: {
+      color: '#1e293b',
+      symbolColor: '#94a3b8',
+      height: 36,
+    },
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+    icon: path.join(__dirname, '../assets/icon.png'),
+    show: false,
+  });
+
+  if (isDev) {
+    posWindow.loadURL('http://localhost:9200/#/pos');
+  } else {
+    const rendererPath = path.join(process.resourcesPath, 'renderer', 'index.html');
+    posWindow.loadFile(rendererPath, { hash: '/pos' });
+  }
+
+  posWindow.once('ready-to-show', () => {
+    posWindow?.maximize();
+    posWindow?.show();
+    posWindow?.focus();
+  });
+
+  posWindow.on('closed', () => {
+    posWindow = null;
+  });
+}
+
+ipcMain.on('open-pos-window', () => {
+  createPosWindow();
+});
+
+ipcMain.on('close-pos-window', () => {
+  if (posWindow && !posWindow.isDestroyed()) {
+    posWindow.close();
+  }
+});
+
+ipcMain.on('broadcast-event', (_event, eventName: string, data: unknown) => {
+  // Broadcast to main window
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send(eventName, data);
+  }
+  // Broadcast to pos window
+  if (posWindow && !posWindow.isDestroyed()) {
+    posWindow.webContents.send(eventName, data);
+  }
+});
+
+ipcMain.handle('app:get-version', () => app.getVersion());
+// Versión síncrona para preload.getAppVersion()
+ipcMain.on('app:get-version-sync', (event) => { event.returnValue = app.getVersion(); });
+ipcMain.handle('app:get-path', (_event, name: string) => app.getPath(name as Parameters<typeof app.getPath>[0]));
+
+ipcMain.handle('dialog:open-file', async (_event, options) => {
+  const result = await dialog.showOpenDialog(mainWindow!, options);
+  return result;
+});
+
+ipcMain.handle('dialog:save-file', async (_event, options) => {
+  const result = await dialog.showSaveDialog(mainWindow!, options);
+  return result;
+});
+
+ipcMain.handle('dialog:open-directory', async (_event, options) => {
+  const result = await dialog.showOpenDialog(mainWindow!, { ...options, properties: ['openDirectory'] });
+  return result;
+});
+
+ipcMain.handle('shell:open-path', (_event, filePath: string) => {
+  return shell.openPath(filePath);
+});
+
+ipcMain.handle('app:restart', () => {
+  app.relaunch();
+  app.exit(0);
+});
+
+ipcMain.handle('theme:set', (_event, theme: 'dark' | 'light' | 'system') => {
+  nativeTheme.themeSource = theme;
+});
+
+// ── Config de red (modo servidor / cliente) ────────────────────────────
+ipcMain.handle('app:getAppConfig', () => getAppConfig());
+
+ipcMain.handle('app:setAppConfig', (_e, config: Record<string, unknown>) => {
+  saveAppConfig(config as Parameters<typeof saveAppConfig>[0]);
+  return { success: true };
+});
+
+ipcMain.handle('app:resetAppConfig', () => {
+  resetAppConfig();
+  return { success: true };
+});
+
+// Llamado desde SetupScreen para activar modo cliente sin reiniciar
+ipcMain.handle('app:switchToClientMode', (_e, { ip, port, terminalName }: { ip: string; port: number; terminalName: string }) => {
+  saveAppConfig({ mode: 'client', serverIP: ip, serverPort: port, terminalName });
+  const serverURL = `http://${ip}:${port}/pos`;
+  mainWindow?.loadURL(serverURL);
+  return { success: true };
+});
+
+// Test de conexión al servidor (usado en setup screen)
+ipcMain.handle('app:testServerConnection', async (_e, { ip, port }: { ip: string; port: number }) => {
+  const { default: http } = await import('http');
+  return new Promise<{ ok: boolean; info?: Record<string, unknown>; error?: string }>((resolve) => {
+    const req = http.get(`http://${ip}:${port}/api/servidor/info`, { timeout: 4000 }, (res) => {
+      if (res.statusCode === 200 || res.statusCode === 401) {
+        resolve({ ok: true });
+      } else {
+        resolve({ ok: false, error: `HTTP ${res.statusCode}` });
+      }
+      res.resume();
+    });
+    req.on('error', (e) => resolve({ ok: false, error: e.message }));
+    req.on('timeout', () => { req.destroy(); resolve({ ok: false, error: 'Tiempo de espera agotado' }); });
+  });
+});
+
+ipcMain.handle('app:validateAdminCode', (_e, code: string) => {
+  try {
+    const db = getDb();
+    const row = db.prepare(`SELECT id FROM usuarios WHERE pin = ? AND activo = 1 AND rol = 'admin'`).get(code);
+    return Boolean(row);
+  } catch {
+    return false;
+  }
+});
+
+// ── Ventana de red ─────────────────────────────────────────────
+ipcMain.handle('window:open-network', () => {
+  if (networkWindow && !networkWindow.isDestroyed()) {
+    networkWindow.focus();
+    return;
+  }
+  networkWindow = new BrowserWindow({
+    width: 800,
+    height: 620,
+    title: 'Configuración de Red — ARIESPos',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  });
+  networkWindow.on('closed', () => { networkWindow = null; });
+  const netUrl = isDev
+    ? 'http://localhost:9200/#/network-setup'
+    : `file://${path.join(process.resourcesPath, 'renderer', 'index.html')}#/network-setup`;
+  networkWindow.loadURL(netUrl);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('[FATAL] uncaughtException:', err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[FATAL] unhandledRejection:', reason);
+});
+
+app.whenReady().then(async () => {
+  console.log('[Main] app.whenReady fired');
+  const appCfg = getAppConfig();
+  const isClientMode = appCfg.mode === 'client' && Boolean(appCfg.serverIP);
+
+  // Asegurar carpeta de datos
+  const userDataPath = app.getPath('userData');
+  const backupsPath = path.join(userDataPath, 'backups');
+  if (!fs.existsSync(backupsPath)) {
+    fs.mkdirSync(backupsPath, { recursive: true });
+  }
+
+  if (isClientMode) {
+    console.log(`[Main] Modo CLIENTE → servidor: ${appCfg.serverIP}:${appCfg.serverPort}`);
+    // En modo cliente no inicializamos DB ni servidor local
+    registerIpcHandlers();
+    createMainWindow();
+  } else {
+    // Modo SERVIDOR (o primer arranque sin configurar)
+    // Inicializar DB
+    try {
+      await initDatabase();
+      console.log('[Main] initDatabase OK');
+    } catch (err) {
+      console.error('[Main] initDatabase FAILED:', err);
+      app.quit();
+      return;
+    }
+
+    // Iniciar servidor Express + Socket.IO
+    startServer();
+
+    // Registrar handlers IPC
+    registerIpcHandlers();
+
+    // Crear ventana principal
+    createMainWindow();
+
+    // Actualizaciones automáticas (solo en producción)
+    if (app.isPackaged && mainWindow) {
+      initAutoUpdater(mainWindow);
+    }
+  }
+
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createMainWindow();
+    }
+  });
+});
+
+app.on('window-all-closed', async () => {
+  // Backup automático al cerrar
+  try {
+    await autoBackup();
+    await scheduleBackupCleanup();
+  } catch (err) {
+    console.error('Error en backup automático:', err);
+  }
+
+  if (process.platform !== 'darwin') {
+    app.quit();
+  }
+});
+
+app.on('before-quit', async () => {
+  try {
+    await autoBackup();
+  } catch (err) {
+    console.error('Error en backup antes de salir:', err);
+  }
+});
+
+// Seguridad: deshabilitar navegación a URLs externas
+app.on('web-contents-created', (_event, contents) => {
+  contents.on('will-navigate', (event, url) => {
+    const cfg = getAppConfig();
+    const allowedOrigins = ['http://localhost:9200', 'file://'];
+    // Permitir la URL del servidor en modo cliente
+    if (cfg.mode === 'client' && cfg.serverIP) {
+      allowedOrigins.push(`http://${cfg.serverIP}:${cfg.serverPort}`);
+    }
+    // Permitir IPs de red local (LAN) para el panel admin web
+    const isLAN = /^http:\/\/(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[01])\.)/.test(url);
+    const isAllowed = isLAN || allowedOrigins.some(origin => url.startsWith(origin));
+    if (!isAllowed) {
+      event.preventDefault();
+    }
+  });
+
+  contents.setWindowOpenHandler(() => {
+    return { action: 'deny' };
+  });
+});
