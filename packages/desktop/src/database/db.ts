@@ -325,6 +325,230 @@ function runMigrations(db: Database.Database): void {
         }
       },
     },
+    {
+      name: '011_seed_productos_arg',
+      run: (db: Database.Database) => {
+        // Eliminar productos previos
+        db.exec(`DELETE FROM productos`);
+
+        // Agregar categorías extra si no existen
+        const ensureCat = db.prepare(`INSERT OR IGNORE INTO categorias (nombre, color) VALUES (?, ?)`);
+        ensureCat.run('Golosinas', '#ec4899');
+        ensureCat.run('Galletitas', '#f97316');
+        ensureCat.run('Lácteos', '#06b6d4');
+
+        const getCat = (nombre: string): number | null => {
+          const row = db.prepare(`SELECT id FROM categorias WHERE nombre = ? LIMIT 1`).get(nombre) as { id: number } | undefined;
+          return row ? row.id : null;
+        };
+
+        const beb  = getCat('Bebidas');
+        const gol  = getCat('Golosinas');
+        const gall = getCat('Galletitas');
+        const lac  = getCat('Lácteos');
+
+        const ins = db.prepare(`
+          INSERT OR IGNORE INTO productos (codigo, nombre, categoria_id, precio_venta, unidad_medida, en_catalogo, activo)
+          VALUES (?, ?, ?, 0, 'unidad', 1, 1)
+        `);
+
+        const productos: [string, string, number | null][] = [
+          // ── COCA-COLA COMPANY ────────────────────────────────────────
+          // Coca-Cola
+          ['CC-001', 'Coca-Cola 237ml Lata',               beb],
+          ['CC-002', 'Coca-Cola 354ml Lata',               beb],
+          ['CC-003', 'Coca-Cola 500ml',                    beb],
+          ['CC-004', 'Coca-Cola 1L',                       beb],
+          ['CC-005', 'Coca-Cola 1.5L',                     beb],
+          ['CC-006', 'Coca-Cola 2L',                       beb],
+          ['CC-007', 'Coca-Cola 2.25L',                    beb],
+          ['CC-008', 'Coca-Cola 3L',                       beb],
+          ['CC-009', 'Coca-Cola 1.5L Retornable',          beb],
+          ['CC-010', 'Coca-Cola 2L Retornable',            beb],
+          ['CC-011', 'Coca-Cola Zero 354ml Lata',          beb],
+          ['CC-012', 'Coca-Cola Zero 500ml',               beb],
+          ['CC-013', 'Coca-Cola Zero 1.5L',                beb],
+          ['CC-014', 'Coca-Cola Zero 2.25L',               beb],
+          ['CC-015', 'Coca-Cola Light 354ml Lata',         beb],
+          ['CC-016', 'Coca-Cola Light 1.5L',               beb],
+          // Sprite
+          ['SP-001', 'Sprite 354ml Lata',                  beb],
+          ['SP-002', 'Sprite 500ml',                       beb],
+          ['SP-003', 'Sprite 1.5L',                        beb],
+          ['SP-004', 'Sprite 2.25L',                       beb],
+          ['SP-005', 'Sprite 3L',                          beb],
+          ['SP-006', 'Sprite Zero 354ml Lata',             beb],
+          ['SP-007', 'Sprite Zero 500ml',                  beb],
+          // Fanta
+          ['FN-001', 'Fanta Naranja 354ml Lata',           beb],
+          ['FN-002', 'Fanta Naranja 500ml',                beb],
+          ['FN-003', 'Fanta Naranja 1.5L',                 beb],
+          ['FN-004', 'Fanta Naranja 2.25L',                beb],
+          ['FN-005', 'Fanta Naranja 3L',                   beb],
+          ['FN-006', 'Fanta Limón 354ml Lata',             beb],
+          ['FN-007', 'Fanta Limón 500ml',                  beb],
+          ['FN-008', 'Fanta Limón 1.5L',                   beb],
+          ['FN-009', 'Fanta Uva 354ml Lata',               beb],
+          ['FN-010', 'Fanta Uva 500ml',                    beb],
+          // Cepita
+          ['CE-001', 'Cepita Naranja 200ml',               beb],
+          ['CE-002', 'Cepita Naranja 1L',                  beb],
+          ['CE-003', 'Cepita Naranja 1.5L',                beb],
+          ['CE-004', 'Cepita Manzana 200ml',               beb],
+          ['CE-005', 'Cepita Manzana 1L',                  beb],
+          ['CE-006', 'Cepita Durazno 200ml',               beb],
+          ['CE-007', 'Cepita Durazno 1L',                  beb],
+          ['CE-008', 'Cepita Multifruta 200ml',            beb],
+          ['CE-009', 'Cepita Multifruta 1L',               beb],
+          ['CE-010', 'Cepita Pera 200ml',                  beb],
+          ['CE-011', 'Cepita Pera 1L',                     beb],
+          ['CE-012', 'Cepita Uva 200ml',                   beb],
+          ['CE-013', 'Cepita Uva 1L',                      beb],
+          // Dasani
+          ['DA-001', 'Agua Dasani 500ml',                  beb],
+          ['DA-002', 'Agua Dasani 1.5L',                   beb],
+          // Powerade (Coca-Cola)
+          ['PW-001', 'Powerade Naranja 500ml',             beb],
+          ['PW-002', 'Powerade Limón 500ml',               beb],
+          ['PW-003', 'Powerade Uva 500ml',                 beb],
+          ['PW-004', 'Powerade Mountain Blast 500ml',      beb],
+
+          // ── PEPSICO ──────────────────────────────────────────────────
+          // Pepsi
+          ['PP-001', 'Pepsi 250ml Lata',                   beb],
+          ['PP-002', 'Pepsi 500ml',                        beb],
+          ['PP-003', 'Pepsi 1.5L',                         beb],
+          ['PP-004', 'Pepsi 2.25L',                        beb],
+          ['PP-005', 'Pepsi 3L',                           beb],
+          ['PP-006', 'Pepsi Black 250ml Lata',             beb],
+          ['PP-007', 'Pepsi Black 500ml',                  beb],
+          ['PP-008', 'Pepsi Black 1.5L',                   beb],
+          // 7UP
+          ['UP-001', '7UP 250ml Lata',                     beb],
+          ['UP-002', '7UP 500ml',                          beb],
+          ['UP-003', '7UP 1.5L',                           beb],
+          ['UP-004', '7UP 2.25L',                          beb],
+          ['UP-005', '7UP 3L',                             beb],
+          ['UP-006', '7UP Free 250ml Lata',                beb],
+          ['UP-007', '7UP Free 500ml',                     beb],
+          // Gatorade
+          ['GT-001', 'Gatorade Naranja 500ml',             beb],
+          ['GT-002', 'Gatorade Limón 500ml',               beb],
+          ['GT-003', 'Gatorade Uva 500ml',                 beb],
+          ['GT-004', 'Gatorade Tropical 500ml',            beb],
+          ['GT-005', 'Gatorade Manzana 500ml',             beb],
+          ['GT-006', 'Gatorade Mandarina 500ml',           beb],
+          ['GT-007', 'Gatorade Cool Blue 500ml',           beb],
+          ['GT-008', 'Gatorade Naranja 1L',                beb],
+          ['GT-009', 'Gatorade Limón 1L',                  beb],
+          // H2OH
+          ['H2-001', 'H2OH Limón 500ml',                   beb],
+          ['H2-002', 'H2OH Naranja 500ml',                 beb],
+          ['H2-003', 'H2OH Pomelo 500ml',                  beb],
+          ['H2-004', 'H2OH Limón 1.5L',                    beb],
+          // Lipton Ice Tea (PepsiCo)
+          ['LI-001', 'Lipton Ice Tea Limón 500ml',         beb],
+          ['LI-002', 'Lipton Ice Tea Durazno 500ml',       beb],
+          ['LI-003', 'Lipton Ice Tea Limón 1.5L',          beb],
+          ['LI-004', 'Lipton Ice Tea Durazno 1.5L',        beb],
+          // Mirinda (PepsiCo)
+          ['MI-001', 'Mirinda Naranja 250ml Lata',         beb],
+          ['MI-002', 'Mirinda Naranja 500ml',              beb],
+          ['MI-003', 'Mirinda Naranja 1.5L',               beb],
+
+          // ── ARCOR – BAGLEY (Galletitas) ──────────────────────────────
+          ['BG-001', 'Bagley Criollitas x200g',            gall],
+          ['BG-002', 'Bagley Criollitas x100g',            gall],
+          ['BG-003', 'Bagley Merengadas x160g',            gall],
+          ['BG-004', 'Bagley Lincoln x210g',               gall],
+          ['BG-005', 'Bagley Lincoln Vainilla x210g',      gall],
+          ['BG-006', 'Bagley Oreo x160g',                  gall],
+          ['BG-007', 'Bagley Oreo x312g',                  gall],
+          ['BG-008', 'Bagley Pepas x250g',                 gall],
+          ['BG-009', 'Bagley Pepas Membrillo x250g',       gall],
+          ['BG-010', 'Bagley Traviata x180g',              gall],
+          ['BG-011', 'Bagley Vocación x180g',              gall],
+          ['BG-012', 'Bagley Gaucho x300g',                gall],
+          ['BG-013', 'Bagley Opera x150g',                 gall],
+          ['BG-014', 'Bagley Tentaciones Chocolate x180g', gall],
+          ['BG-015', 'Bagley Sabritas x110g',              gall],
+          ['BG-016', 'Bagley Express x180g',               gall],
+          // ARCOR – Rumba (Golosinas)
+          ['RU-001', 'Rumba Clásica x100g',                gol],
+          ['RU-002', 'Rumba con Maní x100g',               gol],
+          ['RU-003', 'Rumba Mentol x100g',                 gol],
+          // ARCOR – Diversión (Golosinas)
+          ['DV-001', 'Diversión Chocolate x40g',           gol],
+          ['DV-002', 'Diversión con Leche x40g',           gol],
+          ['DV-003', 'Diversión Maní x40g',                gol],
+          // ARCOR – Golosinas varias
+          ['AR-001', 'Bon o Bon x200g',                    gol],
+          ['AR-002', 'Bon o Bon Unitario x16g',            gol],
+          ['AR-003', 'Cofler Chocolate x55g',              gol],
+          ['AR-004', 'Cofler Almendras x55g',              gol],
+          ['AR-005', 'Cofler Aireado x55g',                gol],
+          ['AR-006', 'Menthoplus x15g',                    gol],
+          ['AR-007', 'Rocklets x25g',                      gol],
+          ['AR-008', 'Rocklets x100g',                     gol],
+          ['AR-009', 'Caramelos Arcor x100g',              gol],
+          ['AR-010', 'Sugus x18g',                         gol],
+          ['AR-011', 'Sugus x180g',                        gol],
+          ['AR-012', 'Butter Toffees x420g',               gol],
+          ['AR-013', 'Butter Toffees x100g',               gol],
+          ['AR-014', 'Palito Arcor Chocolate x10g',        gol],
+          ['AR-015', 'Arcor Frambuesa x100g',              gol],
+          ['AR-016', 'Arcor Menta x100g',                  gol],
+          ['AR-017', 'Topline x32g',                       gol],
+          ['AR-018', 'Mogul Masticables x100g',            gol],
+          ['AR-019', 'Gomitas Arcor x100g',                gol],
+          ['AR-020', 'Alfajor Rocklets x45g',              gol],
+          ['AR-021', 'Alfajor Bon o Bon x36g',             gol],
+          ['AR-022', 'Chocolín x200g',                     gol],
+          ['AR-023', 'Acerete x50g',                       gol],
+
+          // ── MILKAUT (Lácteos) ─────────────────────────────────────────
+          ['ML-001', 'Leche Milkaut Entera x1L',           lac],
+          ['ML-002', 'Leche Milkaut Descremada x1L',       lac],
+          ['ML-003', 'Leche Milkaut Semidescremada x1L',   lac],
+          ['ML-004', 'Leche Milkaut Larga Vida Entera x1L',lac],
+          ['ML-005', 'Crema de Leche Milkaut x200ml',      lac],
+          ['ML-006', 'Crema de Leche Milkaut x500ml',      lac],
+          ['ML-007', 'Yogur Milkaut Natural x200g',        lac],
+          ['ML-008', 'Yogur Milkaut Frutado Frutilla x200g',lac],
+          ['ML-009', 'Yogur Milkaut Frutado Durazno x200g',lac],
+          ['ML-010', 'Yogur Milkaut Frutado Vainilla x200g',lac],
+          ['ML-011', 'Yogur Milkaut Batido x1kg',          lac],
+          ['ML-012', 'Queso Cremoso Milkaut x220g',        lac],
+          ['ML-013', 'Queso Cremoso Milkaut x400g',        lac],
+          ['ML-014', 'Ricota Milkaut x250g',               lac],
+          ['ML-015', 'Manteca Milkaut x200g',              lac],
+          ['ML-016', 'Manteca Milkaut x100g',              lac],
+
+          // ── TERRABUSI (Galletitas) ────────────────────────────────────
+          ['TB-001', 'Terrabusi Marineras x370g',          gall],
+          ['TB-002', 'Terrabusi Marineras x185g',          gall],
+          ['TB-003', 'Terrabusi Hogaza x400g',             gall],
+          ['TB-004', 'Terrabusi Hogaza x200g',             gall],
+          ['TB-005', 'Terrabusi Agua x200g',               gall],
+          ['TB-006', 'Terrabusi Club Social x192g',        gall],
+          ['TB-007', 'Terrabusi Club Social Integral x187g',gall],
+          ['TB-008', 'Terrabusi Crackers x150g',           gall],
+          ['TB-009', 'Terrabusi Variedad x200g',           gall],
+          ['TB-010', 'Terrabusi De Hojaldre x150g',        gall],
+          ['TB-011', 'Terrabusi Salvado x200g',            gall],
+          ['TB-012', 'Terrabusi Chocolinas x200g',         gall],
+          ['TB-013', 'Terrabusi Chocolinas x120g',         gall],
+          ['TB-014', 'Terrabusi Tentación x180g',          gall],
+          ['TB-015', 'Terrabusi Express x200g',            gall],
+        ];
+
+        for (const [codigo, nombre, catId] of productos) {
+          ins.run(codigo, nombre, catId);
+        }
+
+        console.log(`[DB] ${productos.length} productos de Coca-Cola, PepsiCo, Arcor, Milkaut y Terrabusi insertados.`);
+      },
+    },
   ];
 
   const executedMigrations: { name: string }[] = db
