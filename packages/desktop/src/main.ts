@@ -37,18 +37,18 @@ function createMainWindow(): void {
     show: false,
   });
 
-  const appCfg = getAppConfig();
-  if (appCfg.mode === 'client' && appCfg.serverIP) {
-    const serverURL = `http://${appCfg.serverIP}:${appCfg.serverPort}/pos`;
-    console.log(`[Main] Modo CLIENTE → cargando ${serverURL}`);
-    mainWindow.loadURL(serverURL);
-  } else if (isDev) {
-    mainWindow.loadURL('http://localhost:9200');
-    mainWindow.webContents.openDevTools({ mode: 'detach' });
-  } else {
-    const rendererPath = path.join(process.resourcesPath, 'renderer', 'index.html');
-    mainWindow.loadFile(rendererPath);
+  function loadRenderer() {
+    if (isDev) {
+      mainWindow!.loadURL('http://localhost:9200');
+      mainWindow!.webContents.openDevTools({ mode: 'detach' });
+    } else {
+      const rendererPath = path.join(process.resourcesPath, 'renderer', 'index.html');
+      mainWindow!.loadFile(rendererPath);
+    }
   }
+
+  // Siempre carga el renderer de escritorio completo (no la webpos del servidor)
+  loadRenderer();
 
   mainWindow.once('ready-to-show', () => {
     console.log('[Main] mainWindow ready-to-show');
@@ -60,8 +60,15 @@ function createMainWindow(): void {
     mainWindow = null;
   });
 
+  // Si falla la carga (ej. dev server no está), reintentar el renderer local
   mainWindow.webContents.on('did-fail-load', (_e, code, desc, url) => {
     console.error(`[Main] mainWindow did-fail-load: ${code} ${desc} ${url}`);
+    if (!isDev) {
+      setTimeout(() => {
+        const rendererPath = path.join(process.resourcesPath, 'renderer', 'index.html');
+        mainWindow?.loadFile(rendererPath);
+      }, 1500);
+    }
   });
 }
 
@@ -182,8 +189,13 @@ ipcMain.handle('app:resetAppConfig', () => {
 // Llamado desde SetupScreen para activar modo cliente sin reiniciar
 ipcMain.handle('app:switchToClientMode', (_e, { ip, port, terminalName }: { ip: string; port: number; terminalName: string }) => {
   saveAppConfig({ mode: 'client', serverIP: ip, serverPort: port, terminalName });
-  const serverURL = `http://${ip}:${port}/pos`;
-  mainWindow?.loadURL(serverURL);
+  // Recargar el renderer local (misma app de escritorio, no la webpos)
+  if (!isDev) {
+    const rendererPath = path.join(process.resourcesPath, 'renderer', 'index.html');
+    mainWindow?.loadFile(rendererPath);
+  } else {
+    mainWindow?.loadURL('http://localhost:9200');
+  }
   return { success: true };
 });
 
@@ -257,24 +269,18 @@ app.whenReady().then(async () => {
     fs.mkdirSync(backupsPath, { recursive: true });
   }
 
-  if (isClientMode) {
-    console.log(`[Main] Modo CLIENTE → servidor: ${appCfg.serverIP}:${appCfg.serverPort}`);
-    // En modo cliente no inicializamos DB ni servidor local
-    registerIpcHandlers();
-    createMainWindow();
-  } else {
-    // Modo SERVIDOR (o primer arranque sin configurar)
-    // Inicializar DB
-    try {
-      await initDatabase();
-      console.log('[Main] initDatabase OK');
-    } catch (err) {
-      console.error('[Main] initDatabase FAILED:', err);
-      app.quit();
-      return;
-    }
+  // Siempre inicializar DB — cada PC tiene su propia base de datos local
+  try {
+    await initDatabase();
+    console.log('[Main] initDatabase OK');
+  } catch (err) {
+    console.error('[Main] initDatabase FAILED:', err);
+    app.quit();
+    return;
+  }
 
-    // Abrir puerto 3001 en Firewall de Windows automáticamente
+  if (!isClientMode) {
+    // Solo el SERVIDOR abre el puerto y sirve la API a la red
     try {
       const { execFile } = await import('child_process');
       execFile('netsh', [
@@ -291,20 +297,20 @@ app.whenReady().then(async () => {
     } catch (fwErr) {
       console.warn('[Firewall] Error al abrir firewall:', fwErr);
     }
-
-    // Iniciar servidor Express + Socket.IO
     startServer();
+  } else {
+    console.log(`[Main] Modo CLIENTE — DB local activa, sin servidor`);
+  }
 
-    // Registrar handlers IPC
-    registerIpcHandlers();
+  // Registrar handlers IPC (usan la DB local)
+  registerIpcHandlers();
 
-    // Crear ventana principal
-    createMainWindow();
+  // Crear ventana principal (siempre carga el renderer de escritorio)
+  createMainWindow();
 
-    // Actualizaciones automáticas (solo en producción)
-    if (app.isPackaged && mainWindow) {
-      initAutoUpdater(mainWindow);
-    }
+  // Actualizaciones automáticas (solo en producción)
+  if (app.isPackaged && mainWindow) {
+    initAutoUpdater(mainWindow);
   }
 
   app.on('activate', () => {
