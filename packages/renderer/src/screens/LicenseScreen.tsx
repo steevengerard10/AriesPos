@@ -10,22 +10,10 @@ export const LicenseScreen: React.FC<Props> = ({ onActivated }) => {
   const [loading, setLoading] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Auto-formatear mientras escribe: ARIES-XXXX-XXXX-XXXX-XXXX
+  // Acepta la clave tal como se escribe o pega (con o sin guiones)
+  // La validación en el backend normaliza antes de comparar
   const handleChange = (val: string) => {
-    const clean = val.toUpperCase().replace(/[^A-Z0-9]/g, '');
-    let formatted = '';
-    if (clean.startsWith('ARIES')) {
-      formatted = 'ARIES';
-      const rest = clean.slice(5);
-      for (let i = 0; i < rest.length && i < 16; i++) {
-        if (i % 4 === 0) formatted += '-';
-        formatted += rest[i];
-      }
-    } else {
-      // Si pega la clave completa con guiones, usarla tal cual
-      formatted = val.toUpperCase();
-    }
-    setKey(formatted);
+    setKey(val.toUpperCase());
     setError('');
   };
 
@@ -105,7 +93,7 @@ export const LicenseScreen: React.FC<Props> = ({ onActivated }) => {
           value={key}
           onChange={(e) => handleChange(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && handleActivate()}
-          placeholder="ARIES-XXXX-XXXX-XXXX-XXXX"
+          placeholder="ARIES-XXXX-XXXX-XXXX-XXXX  (los guiones son opcionales)"
           spellCheck={false}
           style={{
             width: '100%',

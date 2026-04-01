@@ -274,6 +274,24 @@ app.whenReady().then(async () => {
       return;
     }
 
+    // Abrir puerto 3001 en Firewall de Windows automáticamente
+    try {
+      const { execFile } = await import('child_process');
+      execFile('netsh', [
+        'advfirewall', 'firewall', 'add', 'rule',
+        'name=ARIESPos-Server',
+        'dir=in',
+        'action=allow',
+        'protocol=TCP',
+        'localport=3001',
+      ], (err) => {
+        if (err) console.warn('[Firewall] No se pudo agregar regla (puede que ya exista):', err.message);
+        else console.log('[Firewall] Puerto 3001 abierto en Windows Firewall');
+      });
+    } catch (fwErr) {
+      console.warn('[Firewall] Error al abrir firewall:', fwErr);
+    }
+
     // Iniciar servidor Express + Socket.IO
     startServer();
 

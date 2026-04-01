@@ -1750,7 +1750,7 @@ export function registerIpcHandlers(): void {
       await Promise.all(ips.slice(i, i + concurrency).map(checkIP));
     }
 
-    return { servers };
+    return servers;
   });
 
   // ── NETWORK: obtener IP local ─────────────────────────────────────────
