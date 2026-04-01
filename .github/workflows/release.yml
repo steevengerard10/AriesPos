@@ -40,7 +40,7 @@ jobs:
       - name: Empaquetar instalador Windows
         run: pnpm --filter @ariespos/desktop exec electron-builder --win --publish always
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
 
   # ── JOB 2: Compilar la APK de Android ────────────────────────────────────
   build-android:
