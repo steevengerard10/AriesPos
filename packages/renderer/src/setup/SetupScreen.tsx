@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
-import { appAPI } from '../lib/api';
+import { appAPI, networkAPI } from '../lib/api';
 
 interface SetupScreenProps {
   onComplete: () => void;
 }
 
 type Step = 'choose' | 'client-form' | 'server-login' | 'testing' | 'done';
+
+interface ScannedServer { ip: string; port: number; nombre: string; version?: string; }
 
 export function SetupScreen({ onComplete }: SetupScreenProps) {
   const [step, setStep] = useState<Step>('choose');
@@ -16,6 +18,8 @@ export function SetupScreen({ onComplete }: SetupScreenProps) {
   const [testing, setTesting] = useState(false);
   const [adminCode, setAdminCode] = useState('');
   const [serverLoginError, setServerLoginError] = useState('');
+  const [scanning, setScanning] = useState(false);
+  const [foundServers, setFoundServers] = useState<ScannedServer[]>([]);
 
 
   const setServer = async () => {
@@ -63,6 +67,21 @@ export function SetupScreen({ onComplete }: SetupScreenProps) {
       // La ventana carga la web del servidor — no necesitamos hacer nada más aquí
     } else {
       setError(result.error || 'No se pudo conectar al servidor');
+    }
+  };
+
+  const handleScan = async () => {
+    setScanning(true);
+    setFoundServers([]);
+    setError('');
+    try {
+      const found = await networkAPI.scan(3001);
+      setFoundServers(found);
+      if (found.length === 0) setError('No se encontraron servidores ARIESPos en la red. Verificá que esté encendido y en la misma red.');
+    } catch {
+      setError('Error al escanear la red');
+    } finally {
+      setScanning(false);
     }
   };
 
@@ -206,9 +225,47 @@ export function SetupScreen({ onComplete }: SetupScreenProps) {
 
         {step === 'client-form' && (
           <>
-            <p style={{ fontSize: 13, color: '#94a3b8', marginBottom: 20, lineHeight: 1.6 }}>
-              Ingresá la IP de la PC servidor. Podés verla en ARIESPos → Configuración → Red.
+            <p style={{ fontSize: 13, color: '#94a3b8', marginBottom: 16, lineHeight: 1.6 }}>
+              Buscá el servidor automáticamente o ingresá su IP.
             </p>
+
+            {/* Botón de escaneo automático */}
+            <button
+              onClick={handleScan}
+              disabled={scanning}
+              style={{
+                width: '100%', padding: '11px', borderRadius: 9, marginBottom: 12,
+                background: scanning ? '#1a2744' : '#0f766e',
+                color: scanning ? '#94a3b8' : 'white',
+                border: 'none', cursor: scanning ? 'not-allowed' : 'pointer',
+                fontSize: 13, fontWeight: 700,
+              }}
+            >
+              {scanning ? '🔍 Buscando en la red...' : '🔍 Buscar servidor automáticamente'}
+            </button>
+
+            {/* Servidores encontrados */}
+            {foundServers.length > 0 && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontSize: 11, color: '#10b981', fontWeight: 700, marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  Servidores encontrados
+                </div>
+                {foundServers.map(s => (
+                  <button
+                    key={`${s.ip}:${s.port}`}
+                    onClick={() => { setIp(s.ip); setPort(String(s.port)); setFoundServers([]); }}
+                    style={{
+                      width: '100%', textAlign: 'left', padding: '10px 14px', borderRadius: 8,
+                      background: '#0d2137', border: '1px solid #10b981',
+                      color: '#e2e8f0', cursor: 'pointer', marginBottom: 6, fontSize: 13,
+                    }}
+                  >
+                    <strong style={{ color: '#10b981' }}>{s.nombre}</strong>
+                    <span style={{ color: '#64748b', marginLeft: 8 }}>{s.ip}:{s.port}</span>
+                  </button>
+                ))}
+              </div>
+            )}
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               <div>

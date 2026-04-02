@@ -307,25 +307,44 @@ app.whenReady().then(async () => {
       app.quit();
       return;
     }
-    // Abrir firewall (async + verificar primero si ya existe la regla)
+    // Abrir firewall — profile=any para cubrir redes Public, Private y Domain
     try {
       const { exec } = await import('child_process');
       const { promisify } = await import('util');
       const execAsync = promisify(exec);
       const port = 3001;
+      const addRule = `netsh advfirewall firewall add rule name="ARIESPos-${port}" dir=in action=allow protocol=TCP localport=${port} profile=any`;
+      let ruleExists = false;
       try {
-        await execAsync(`netsh advfirewall firewall show rule name="ARIESPos-${port}"`);
-        console.log(`[Firewall] Puerto ${port} ya estaba abierto`);
-      } catch {
-        // La regla no existe — crearla
-        await execAsync(
-          `netsh advfirewall firewall add rule name="ARIESPos-${port}" ` +
-          `dir=in action=allow protocol=TCP localport=${port}`
-        );
-        console.log(`[Firewall] Puerto ${port} abierto exitosamente`);
+        const { stdout } = await execAsync(`netsh advfirewall firewall show rule name="ARIESPos-${port}"`);
+        // Verificar que la regla existente tenga profile=any (puede ser una regla vieja sin ese profile)
+        ruleExists = stdout.includes('Profiles:') ? stdout.toLowerCase().includes('any') : true;
+      } catch { /* regla no existe */ }
+
+      if (!ruleExists) {
+        // Intentar primero sin elevación (si ya hay admin)
+        try {
+          await execAsync(`netsh advfirewall firewall delete rule name="ARIESPos-${port}"`);
+        } catch { /* ignorar */ }
+        try {
+          await execAsync(addRule);
+          console.log(`[Firewall] Puerto ${port} abierto (profile=any)`);
+        } catch {
+          // Sin admin — usar PowerShell con Start-Process -Verb RunAs (UAC popup)
+          console.log('[Firewall] Sin admin, intentando elevación via PowerShell...');
+          try {
+            const psCmd = `Start-Process -FilePath 'netsh' -ArgumentList 'advfirewall firewall add rule name=\"ARIESPos-${port}\" dir=in action=allow protocol=TCP localport=${port} profile=any' -Verb RunAs -Wait -WindowStyle Hidden`;
+            await execAsync(`powershell -NoProfile -NonInteractive -Command "${psCmd}"`);
+            console.log(`[Firewall] Puerto ${port} abierto via PowerShell elevado`);
+          } catch (elevErr) {
+            console.warn('[Firewall] No se pudo abrir el puerto. El usuario rechazó la elevación o no tiene permisos:', elevErr);
+          }
+        }
+      } else {
+        console.log(`[Firewall] Puerto ${port} ya tiene regla con profile=any`);
       }
     } catch (fwErr) {
-      console.warn('[Firewall] No se pudo abrir el puerto (ejecutar como Administrador la primera vez):', fwErr);
+      console.warn('[Firewall] Error general al configurar firewall:', fwErr);
     }
     startServer();
     registerIpcHandlers();
