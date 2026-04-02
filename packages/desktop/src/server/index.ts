@@ -232,10 +232,17 @@ export function startServer(): void {
     cors: {
       origin: '*',
       methods: ['GET', 'POST'],
+      credentials: false,
     },
+    transports: ['websocket', 'polling'],
   });
 
-  expressApp.use(cors());
+  expressApp.use(cors({
+    origin: (_origin, callback) => callback(null, true), // acepta cualquier origen (red local)
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+  }));
   expressApp.use(express.json({ limit: '10mb' }));
   expressApp.use(express.urlencoded({ extended: true }));
 

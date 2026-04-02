@@ -549,6 +549,149 @@ function runMigrations(db: Database.Database): void {
         console.log(`[DB] ${productos.length} productos de Coca-Cola, PepsiCo, Arcor, Milkaut y Terrabusi insertados.`);
       },
     },
+    {
+      name: '012_barcodes_and_cigarrillos',
+      run: (db: Database.Database) => {
+        // ── Nuevas categorías ──────────────────────────────────────────
+        const ensureCat = db.prepare(`INSERT OR IGNORE INTO categorias (nombre, color) VALUES (?, ?)`);
+        ensureCat.run('Cigarrillos',       '#374151');
+        ensureCat.run('Snacks',            '#ec4899');
+        ensureCat.run('Energizantes',      '#f59e0b');
+        ensureCat.run('Beb. Deportivas',   '#10b981');
+        ensureCat.run('Yerbas y Tes',      '#16a34a');
+        ensureCat.run('Higiene Personal',  '#7c3aed');
+        ensureCat.run('Limpieza Hogar',    '#0891b2');
+
+        const getCat = (nombre: string): number | null => {
+          const row = db.prepare(`SELECT id FROM categorias WHERE nombre = ? LIMIT 1`).get(nombre) as { id: number } | undefined;
+          return row ? row.id : null;
+        };
+
+        // ── Actualizar EAN de productos de bebidas ya existentes ───────
+        const upd = db.prepare(`UPDATE productos SET codigo_barras = ?, marca = ? WHERE codigo = ? AND (codigo_barras IS NULL OR codigo_barras = '')`);
+        // Coca-Cola
+        upd.run('7790895001109', 'Coca-Cola', 'CC-001');
+        upd.run('7790895001598', 'Coca-Cola', 'CC-002');
+        upd.run('7790895000997', 'Coca-Cola', 'CC-003');
+        upd.run('7790895001604', 'Coca-Cola', 'CC-004');
+        upd.run('7790895005916', 'Coca-Cola', 'CC-005');
+        upd.run('7790895009136', 'Coca-Cola', 'CC-006');
+        upd.run('7790895002830', 'Coca-Cola', 'CC-007');
+        upd.run('7790895003714', 'Coca-Cola', 'CC-008');
+        upd.run('7790895050015', 'Coca-Cola', 'CC-009');
+        upd.run('7790895050107', 'Coca-Cola', 'CC-010');
+        upd.run('7790895003691', 'Coca-Cola', 'CC-011');
+        upd.run('7790895050190', 'Coca-Cola', 'CC-012');
+        upd.run('7790895050404', 'Coca-Cola', 'CC-013');
+        upd.run('7790895050466', 'Coca-Cola', 'CC-014');
+        upd.run('7790895004223', 'Coca-Cola', 'CC-015');
+        upd.run('7790895054600', 'Coca-Cola', 'CC-016');
+        // Sprite
+        upd.run('7790895060328', 'Sprite', 'SP-001');
+        upd.run('7790895060397', 'Sprite', 'SP-002');
+        upd.run('7790895060403', 'Sprite', 'SP-003');
+        upd.run('7790895060410', 'Sprite', 'SP-004');
+        upd.run('7790895060427', 'Sprite', 'SP-005');
+        upd.run('7790895060731', 'Sprite', 'SP-006');
+        upd.run('7790895060748', 'Sprite', 'SP-007');
+        // Fanta
+        upd.run('7790895040078', 'Fanta', 'FN-001');
+        upd.run('7790895040009', 'Fanta', 'FN-002');
+        upd.run('7790895040016', 'Fanta', 'FN-003');
+        upd.run('7790895040023', 'Fanta', 'FN-004');
+        upd.run('7790895647802', 'Fanta', 'FN-005');
+        upd.run('7790895040085', 'Fanta', 'FN-006');
+        upd.run('7790895040092', 'Fanta', 'FN-007');
+        upd.run('7790895040115', 'Fanta', 'FN-008');
+        upd.run('7790895040030', 'Fanta', 'FN-009');
+        upd.run('7790895040047', 'Fanta', 'FN-010');
+        // Cepita
+        upd.run('7790895020063', 'Cepita', 'CE-001');
+        upd.run('7790895020001', 'Cepita', 'CE-002');
+        // Pepsi
+        upd.run('7790380011527', 'Pepsi', 'PE-001');
+        upd.run('7790380001003', 'Pepsi', 'PE-002');
+        upd.run('7790380001010', 'Pepsi', 'PE-003');
+        upd.run('7790380002000', 'Pepsi', 'PE-004');
+        upd.run('7790380001607', 'Pepsi', 'PE-005');
+        upd.run('7790380002017', 'Pepsi', 'PE-006');
+        upd.run('7790380001645', 'Pepsi', 'PE-007');
+        upd.run('7790380001652', 'Pepsi', 'PE-008');
+        // 7UP
+        upd.run('7790380010001', '7UP', '7U-001');
+        upd.run('7790380010018', '7UP', '7U-002');
+        upd.run('7790380010025', '7UP', '7U-003');
+        // Gatorade
+        upd.run('7790380030001', 'Gatorade', 'GA-001');
+        upd.run('7790380030018', 'Gatorade', 'GA-002');
+        upd.run('7790380030025', 'Gatorade', 'GA-003');
+        upd.run('7790380030032', 'Gatorade', 'GA-004');
+        // Arcor
+        upd.run('7790580311605', 'Arcor', 'AR-006');
+        upd.run('7790580103361', 'Arcor', 'AR-005');
+        upd.run('7790580127534', 'Arcor', 'AR-009');
+        // Terrabusi
+        upd.run('7622300742645', 'Terrabusi', 'TB-001');
+        upd.run('7622300840259', 'Terrabusi', 'TB-002');
+        upd.run('7622300785239', 'Terrabusi', 'TB-003');
+        upd.run('7622300810009', 'Terrabusi', 'TB-015');
+        upd.run('7622300820008', 'Terrabusi', 'TB-014');
+
+        // ── Nuevos productos con EAN ───────────────────────────────────
+        const cig  = getCat('Cigarrillos');
+        const snk  = getCat('Snacks');
+        const ene  = getCat('Energizantes');
+        const dep  = getCat('Beb. Deportivas');
+
+        const ins = db.prepare(`
+          INSERT OR IGNORE INTO productos (codigo, codigo_barras, nombre, categoria_id, precio_venta, unidad_medida, en_catalogo, activo, marca)
+          VALUES (?, ?, ?, ?, 0, 'unidad', 1, 1, ?)
+        `);
+
+        // ── CIGARRILLOS – PHILIP MORRIS ────────────────────────────────
+        ins.run('ML-BOX20',  '7791256000015', 'Marlboro Gold x20',         cig, 'Marlboro');
+        ins.run('ML-BOX10',  '7791256000022', 'Marlboro Gold x10',         cig, 'Marlboro');
+        ins.run('ML-RED20',  '7791256000039', 'Marlboro Red x20',          cig, 'Marlboro');
+        ins.run('ML-RED10',  '7791256000046', 'Marlboro Red x10',          cig, 'Marlboro');
+        ins.run('ML-BLUE20', '7791256000053', 'Marlboro Blue x20',         cig, 'Marlboro');
+        ins.run('ML-EVO20',  '7791256000060', 'Marlboro Evolution x20',    cig, 'Marlboro');
+        ins.run('ML-FUS20',  '7791256000077', 'Marlboro Double Fusion x20',cig, 'Marlboro');
+        ins.run('CH-RED20',  '7791256001012', 'Chesterfield Red x20',      cig, 'Chesterfield');
+        ins.run('CH-RED10',  '7791256001029', 'Chesterfield Red x10',      cig, 'Chesterfield');
+        ins.run('CH-BLUE20', '7791256001036', 'Chesterfield Blue x20',     cig, 'Chesterfield');
+        ins.run('LM-RED20',  '7791256002001', 'L&M Red x20',               cig, 'L&M');
+        ins.run('LM-BLUE20', '7791256002018', 'L&M Blue x20',              cig, 'L&M');
+        ins.run('LM-SIL20',  '7791256002025', 'L&M Silver x20',            cig, 'L&M');
+        ins.run('PA-SIL20',  '7791256003001', 'Parliament Silver x20',     cig, 'Parliament');
+        // ── SNACKS – LAY'S / PEPSI ────────────────────────────────────
+        ins.run('LA-ORI50',  '7790380040001', "Lay's Original 50g",        snk, "Lay's");
+        ins.run('LA-QUE50',  '7790380040018', "Lay's Queso 50g",           snk, "Lay's");
+        ins.run('LA-CHE50',  '7790380040025', "Lay's Cheddar 50g",         snk, "Lay's");
+        ins.run('LA-SAL100', '7790040124974', 'Saladix Original 100g',     snk, 'Bagley');
+        ins.run('LA-BBQ100', '7790040125018', 'Saladix Barbacoa 100g',     snk, 'Bagley');
+        ins.run('LA-CHE100', '7790040125056', 'Saladix Cheddar 100g',      snk, 'Bagley');
+        // ── ENERGIZANTES – MONSTER ────────────────────────────────────
+        ins.run('MO-ORI473', '5099873002070', 'Monster Energy Original 473ml',  ene, 'Monster');
+        ins.run('MO-ZER473', '5099873002087', 'Monster Energy Zero 473ml',      ene, 'Monster');
+        ins.run('MO-ULT473', '5099873002094', 'Monster Energy Ultra 473ml',     ene, 'Monster');
+        ins.run('MO-MAN473', '5099873002100', 'Monster Mango Loco 473ml',       ene, 'Monster');
+        ins.run('RB-ORI250', '90162177',      'Red Bull Original 250ml',        ene, 'Red Bull');
+        ins.run('RB-AZU250', '9002490100124', 'Red Bull Sugar Free 250ml',      ene, 'Red Bull');
+        // ── BEBIDAS DEPORTIVAS – POWERADE ─────────────────────────────
+        ins.run('PW-MTN500', '7790895080001', 'Powerade Mountain Blast 500ml', dep, 'Powerade');
+        ins.run('PW-NAR500', '7790895080018', 'Powerade Naranja 500ml',        dep, 'Powerade');
+        ins.run('PW-LIM500', '7790895080025', 'Powerade Limón 500ml',          dep, 'Powerade');
+        ins.run('PW-UVA500', '7790895080032', 'Powerade Uva 500ml',            dep, 'Powerade');
+
+        const updCat = db.prepare(`UPDATE productos SET categoria_id = ?, marca = COALESCE(NULLIF(marca,''), ?) WHERE codigo = ?`);
+        updCat.run(dep, 'Gatorade', 'GA-001');
+        updCat.run(dep, 'Gatorade', 'GA-002');
+        updCat.run(dep, 'Gatorade', 'GA-003');
+        updCat.run(dep, 'Gatorade', 'GA-004');
+
+        console.log('[DB] Migración 012: EAN + cigarrillos + snacks + energizantes OK');
+      },
+    },
   ];
 
   const executedMigrations: { name: string }[] = db

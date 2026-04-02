@@ -307,21 +307,25 @@ app.whenReady().then(async () => {
       app.quit();
       return;
     }
+    // Abrir firewall (async + verificar primero si ya existe la regla)
     try {
-      const { execFile } = await import('child_process');
-      execFile('netsh', [
-        'advfirewall', 'firewall', 'add', 'rule',
-        'name=ARIESPos-Server',
-        'dir=in',
-        'action=allow',
-        'protocol=TCP',
-        'localport=3001',
-      ], (err) => {
-        if (err) console.warn('[Firewall] No se pudo agregar regla (puede que ya exista):', err.message);
-        else console.log('[Firewall] Puerto 3001 abierto en Windows Firewall');
-      });
+      const { exec } = await import('child_process');
+      const { promisify } = await import('util');
+      const execAsync = promisify(exec);
+      const port = 3001;
+      try {
+        await execAsync(`netsh advfirewall firewall show rule name="ARIESPos-${port}"`);
+        console.log(`[Firewall] Puerto ${port} ya estaba abierto`);
+      } catch {
+        // La regla no existe — crearla
+        await execAsync(
+          `netsh advfirewall firewall add rule name="ARIESPos-${port}" ` +
+          `dir=in action=allow protocol=TCP localport=${port}`
+        );
+        console.log(`[Firewall] Puerto ${port} abierto exitosamente`);
+      }
     } catch (fwErr) {
-      console.warn('[Firewall] Error al abrir firewall:', fwErr);
+      console.warn('[Firewall] No se pudo abrir el puerto (ejecutar como Administrador la primera vez):', fwErr);
     }
     startServer();
     registerIpcHandlers();
