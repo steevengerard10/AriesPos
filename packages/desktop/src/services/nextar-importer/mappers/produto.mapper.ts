@@ -40,7 +40,10 @@ export function mapProducto(raw: RawProduct, index: number): MappedProduct {
   const unidad = UNIT_MAP[unidadRaw] || 'unidad';
   const fraccionable = raw.fraccionable || FRACTIONAL_UNITS.has(unidad) ? 1 : 0;
 
-  const codigo = (raw.codigo || '').trim() || `NX${String(index).padStart(6, '0')}`;
+  // Prioridad: código interno Nextar → código de barras → número secuencial
+  const codigo = (raw.codigo || '').trim()
+    || (raw.codigoBarras || '').trim()
+    || String(index + 1);
 
   return {
     codigo,

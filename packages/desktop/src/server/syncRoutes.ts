@@ -187,28 +187,21 @@ export function createSyncRouter(io: SocketIOServer, exportFiadosToExcel: Export
 
   router.post('/productos/limpiar-basura', (_req, res) => {
     const db = getDb();
-    const { validateProductName } = require('../services/nextar-importer/language-detector');
-    type ValidationResult = { isValid: boolean; language: string; reason?: string };
 
-    const PLACEHOLDERS = new Set([
-      'sin nombre', 'sin descripcion', 'sin desc', 'producto',
-      'undefined', 'null', 'n/a', 'na',
-    ]);
+    function esBasura(nombre: string): boolean {
+      if (!nombre || nombre.trim().length === 0) return true;
+      for (const c of nombre) {
+        const cp = c.codePointAt(0)!;
+        if (cp < 32 || cp > 591) return true;
+      }
+      return false;
+    }
 
     const todos = db.prepare(`SELECT id, nombre FROM productos`).all() as { id: number; nombre: string }[];
     const basura: number[] = [];
-    let eliminadosPt = 0, eliminadosEn = 0, eliminadosBasura = 0;
 
     for (const p of todos) {
-      const n = (p.nombre || '').trim();
-      if (PLACEHOLDERS.has(n.toLowerCase())) { basura.push(p.id); eliminadosBasura++; continue; }
-      const result: ValidationResult = validateProductName(n);
-      if (!result.isValid) {
-        basura.push(p.id);
-        if (result.language === 'pt') eliminadosPt++;
-        else if (result.language === 'en') eliminadosEn++;
-        else eliminadosBasura++;
-      }
+      if (esBasura(p.nombre || '')) basura.push(p.id);
     }
 
     if (basura.length > 0) {
@@ -222,7 +215,7 @@ export function createSyncRouter(io: SocketIOServer, exportFiadosToExcel: Export
       })();
       emit('producto:actualizado', { reload: true });
     }
-    res.json({ deleted: basura.length, pt: eliminadosPt, en: eliminadosEn, basura: eliminadosBasura });
+    res.json({ deleted: basura.length, pt: 0, en: 0, basura: basura.length });
   });
 
   router.post('/productos/seed', (_req, res) => {

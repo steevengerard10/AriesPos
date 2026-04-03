@@ -117,12 +117,19 @@ export function validateProductName(raw: string): ValidationResult {
     return { isValid: false, language: 'basura', reason: 'caracteres de control' };
   }
 
-  // 6. Alto porcentaje de símbolos fuera del charset español válido
-  //    Cualquier char que no sea letra, dígito, puntuación o acento normal
-  //    es sospechoso. Si >25% del nombre son esos chars → basura binaria.
+  // 6. Cualquier char fuera del rango latino (> U+024F = 591) → basura binary NexusDB
+  //    Los nombres de productos argentinos solo usan Latin Basic + Latin-1 + Latin Extended-A/B
+  //    Chars como ‰ (U+2030), … (U+2026), œ (U+0153 ok), † (U+2020), etc. son basura binaria.
+  //    U+024F = 591 = fin de Latin Extended-B (cubre á é í ó ú ñ ü y todos los acentos normales)
   const charArr = [...s];
+  const hasHighUnicode = charArr.some(c => c.codePointAt(0)! > 591);
+  if (hasHighUnicode) {
+    return { isValid: false, language: 'basura', reason: 'contiene chars fuera del rango latino' };
+  }
+
+  // También verificar ratio de chars NO en el charset esperado para productos
   const symbolCount = charArr.filter(c => !VALID_PRODUCT_CHAR_RE.test(c)).length;
-  if (symbolCount > 0 && symbolCount / charArr.length > 0.25) {
+  if (symbolCount > 0 && symbolCount / charArr.length > 0.10) {
     return { isValid: false, language: 'basura', reason: `símbolos inválidos (${symbolCount}/${charArr.length})` };
   }
 

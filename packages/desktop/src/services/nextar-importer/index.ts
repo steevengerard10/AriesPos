@@ -23,10 +23,8 @@ import { getDb } from '../../database/db';
 
 export interface ImportProgress {
   step: string;
-  current: number;   // 0-100
-  total: number;
-  status: 'running' | 'done' | 'error';
-  message: string;
+  percent: number;   // 0-100
+  detail?: string;
 }
 
 export interface ImportNixtarResult {
@@ -66,7 +64,7 @@ export async function importNixtarBackup(
     };
   }
 
-  onProgress({ step: 'Abriendo backup ZIP…', current: 2, total: 100, status: 'running', message: path.basename(resolvedZip) });
+  onProgress({ step: 'Abriendo backup ZIP…', percent: 2, detail: path.basename(resolvedZip) });
 
   // Extraer archivos del ZIP a tmp
   let extracted;
@@ -86,7 +84,7 @@ export async function importNixtarBackup(
     const db = getDb();
 
     // ── PASO 1: LEER DATOS DEL BINARIO NX1 ──────────────────────────────
-    onProgress({ step: 'Leyendo productos…', current: 10, total: 100, status: 'running', message: 'Analizando Produto.nx1' });
+onProgress({ step: 'Leyendo productos…', percent: 10, detail: 'Analizando Produto.nx1' });
 
     let rawProducts: ReturnType<typeof extractProductsFromBuffer> = [];
     let rawCategorias: ReturnType<typeof extractCategoriasFromBuffer> = [];
@@ -102,7 +100,7 @@ export async function importNixtarBackup(
           console.log('[nx1-debug] 0 productos encontrados. Strings en Produto.nx1:');
           debugStrings.forEach(s => console.log(' ', s));
         }
-        onProgress({ step: 'Leyendo productos…', current: 20, total: 100, status: 'running', message: `${rawProducts.length} productos encontrados` });
+        onProgress({ step: 'Leyendo productos…', percent: 20, detail: `${rawProducts.length} productos encontrados` });
       } catch (e) {
         errores.push(`Produto.nx1: ${String(e)}`);
       }
@@ -114,7 +112,7 @@ export async function importNixtarBackup(
       try {
         const data = fs.readFileSync(files['categoria.nx1']);
         rawCategorias = extractCategoriasFromBuffer(data);
-        onProgress({ step: 'Leyendo categorías…', current: 30, total: 100, status: 'running', message: `${rawCategorias.length} categorías encontradas` });
+        onProgress({ step: 'Leyendo categorías…', percent: 30, detail: `${rawCategorias.length} categorías encontradas` });
       } catch (e) {
         errores.push(`Categoria.nx1: ${String(e)}`);
       }
@@ -124,14 +122,14 @@ export async function importNixtarBackup(
       try {
         const data = fs.readFileSync(files['cliente.nx1']);
         rawClientes = extractClientesFromBuffer(data);
-        onProgress({ step: 'Leyendo clientes…', current: 40, total: 100, status: 'running', message: `${rawClientes.length} clientes encontrados` });
+        onProgress({ step: 'Leyendo clientes…', percent: 40, detail: `${rawClientes.length} clientes encontrados` });
       } catch (e) {
         errores.push(`Cliente.nx1: ${String(e)}`);
       }
     }
 
     // ── PASO 2: CATEGORÍAS ───────────────────────────────────────────────
-    onProgress({ step: 'Importando categorías…', current: 45, total: 100, status: 'running', message: '' });
+    onProgress({ step: 'Importando categorías…', percent: 45 });
 
     // Recopilar TODAS las categorías: de Categoria.nx1 + las que aparecen en productos
     const allCatNames = new Set<string>();
@@ -167,7 +165,7 @@ export async function importNixtarBackup(
     })();
 
     // ── PASO 3: PRODUCTOS ────────────────────────────────────────────────
-    onProgress({ step: 'Importando productos…', current: 55, total: 100, status: 'running', message: `Procesando ${rawProducts.length} productos…` });
+    onProgress({ step: 'Importando productos…', percent: 55, detail: `Procesando ${rawProducts.length} productos…` });
 
     const codigosUsados = new Set<string>();
 
@@ -185,7 +183,7 @@ export async function importNixtarBackup(
 
       for (let i = 0; i < rawProducts.length; i++) {
         const raw = rawProducts[i];
-        if (!raw.nombre || raw.precioVenta <= 0) { skipped++; continue; }
+        if (!raw.nombre) { skipped++; continue; }
 
         const mapped = mapProducto(raw, i);
         // Código único
@@ -216,11 +214,11 @@ export async function importNixtarBackup(
       }
     })();
 
-    onProgress({ step: 'Importando productos…', current: 75, total: 100, status: 'running', message: `${productosInserted} productos importados` });
+    onProgress({ step: 'Importando productos…', percent: 75, detail: `${productosInserted} productos importados` });
 
     // ── PASO 4: CLIENTES ─────────────────────────────────────────────────
     if (rawClientes.length > 0) {
-      onProgress({ step: 'Importando clientes…', current: 85, total: 100, status: 'running', message: `${rawClientes.length} clientes…` });
+      onProgress({ step: 'Importando clientes…', percent: 85, detail: `${rawClientes.length} clientes…` });
 
       db.transaction(() => {
         const insertCli = db.prepare(`
@@ -240,9 +238,8 @@ export async function importNixtarBackup(
 
     onProgress({
       step: 'Importación completa',
-      current: 100, total: 100,
-      status: 'done',
-      message: `${productosInserted} productos · ${categoriasInserted} categorías · ${clientesInserted} clientes`,
+      percent: 100,
+      detail: `${productosInserted} productos · ${categoriasInserted} categorías · ${clientesInserted} clientes`,
     });
 
     return {

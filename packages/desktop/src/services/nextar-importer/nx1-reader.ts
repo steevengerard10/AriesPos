@@ -30,18 +30,28 @@ const PAGE_SIZE = 4096;
 const NXHD = Buffer.from('NXHD');
 
 // Unidades de medida reconocidas por Nextar (campo fk_descr_unidade / Unid)
+// IMPORTANTE: Nextar es software brasileño → usa "Unidade", "Cx", "Pç", etc.
 const UNIT_SET = new Set([
+  // ── Portugués (Nextar nativo) ───────────────────────────────────────────
+  'Unidade', 'unidade', 'Un', 'un',
+  'Cx', 'cx', 'Caixa', 'caixa',
+  'Pç', 'pç', 'Peça', 'peça',
+  'Frasco', 'frasco', 'Frascos', 'frascos',
+  'Pct', 'pct', 'Pacote', 'pacote',
+  'Kg', 'kg', 'Lts', 'lts', 'Lt', 'lt', 'Ml', 'ml',
+  'Gr', 'gr',
+  // ── Español ────────────────────────────────────────────────────────────
   'Pieza', 'pieza', 'Pza', 'pza', 'Piezas', 'piezas',
-  'Kg', 'kg', 'Kilo', 'kilo', 'Kilogramo', 'kilogramo', 'Kilogramos', 'kilogramos',
-  'Litro', 'litro', 'Litros', 'litros', 'Lt', 'lt', 'Lts', 'lts',
+  'Kilo', 'kilo', 'Kilogramo', 'kilogramo', 'Kilogramos', 'kilogramos',
+  'Litro', 'litro', 'Litros', 'litros',
   'Unid', 'unid', 'Unidad', 'unidad', 'Unidades', 'unidades', 'Und', 'und',
   'Caja', 'caja', 'Cajas', 'cajas',
   'Pack', 'pack', 'Packs', 'packs',
   'Fardo', 'fardo', 'Fardos', 'fardos',
   'Docena', 'docena', 'Docenas', 'docenas',
-  'Gramo', 'gramo', 'Gramos', 'gramos', 'Gr', 'gr', 'Grs', 'grs',
+  'Gramo', 'gramo', 'Gramos', 'gramos', 'Grs', 'grs',
   'Metro', 'metro', 'Metros', 'metros', 'Mt', 'mt', 'Mts', 'mts',
-  'Mililitro', 'mililitro', 'Mililitros', 'mililitros', 'Ml', 'ml', 'ML', 'mL',
+  'Mililitro', 'mililitro', 'Mililitros', 'mililitros', 'ML', 'mL',
   'Lata', 'lata', 'Latas', 'latas',
   'Botella', 'botella', 'Botellas', 'botellas',
   'Bolsa', 'bolsa', 'Bolsas', 'bolsas',
@@ -64,17 +74,18 @@ function hasAsciiControlChars(s: string): boolean {
  * Solo permite caracteres típicos de nombres de productos; rechaza símbolos binarios.
  */
 function isValidProductName(s: string): boolean {
-  if (s.length < 4 || s.length > 80) return false;
+  // Longitud: entre 2 y 120 chars
+  if (s.length < 2 || s.length > 120) return false;
   // El primer carácter debe ser letra o dígito
   if (!/^[a-zA-ZáéíóúñüäöïçàèÁÉÍÓÚÑÜÄÖÏÇÀÈ0-9]/.test(s)) return false;
   // Solo caracteres típicos de nombres de productos
-  const valid = /^[a-zA-ZáéíóúñüäöïçàèÁÉÍÓÚÑÜÄÖÏÇÀÈìùÌÙ0-9\s\-.,()\/'&+°%ºª¡¿]+$/.test(s);
+  const valid = /^[a-zA-ZáéíóúñüäöïçàèÁÉÍÓÚÑÜÄÖÏÇÀÈìùÌÙ0-9\s\-.,()\/\'&+°%ºª¡¿!#@]+$/.test(s);
   if (!valid) return false;
-  // Al menos 3 letras
+  // Al menos 2 letras
   const letters = s.split('').filter(c => /[a-zA-ZáéíóúñüäöïçàèÁÉÍÓÚÑÜÄÖÏÇÀÈ]/i.test(c)).length;
-  if (letters < 3) return false;
-  // Al menos 40% del string deben ser letras (filtra strings tipo "1234 AB" con pocos chars)
-  return (letters / s.length) >= 0.40;
+  if (letters < 2) return false;
+  // Al menos 25% letras (permite "7UP", "9 de Julio", "2L Coca", etc.)
+  return (letters / s.length) >= 0.25;
 }
 
 /** Lee string null-terminated UTF-16LE a partir de `offset`. Devuelve [texto, próximo_offset] */
@@ -135,27 +146,32 @@ export interface RawCliente {
 
 // ── Extractor de PRODUCTOS ────────────────────────────────────────────────────
 /**
- * Estrategia U1/U2 (ancla doble por unidad de medida):
+ * Estrategia EAN (ancla por código de barras):
  *
- * En el formato NX1, cada registro de producto contiene la unidad TWO VECES:
- *   [fk_descr_unidade] = U1 ("Pieza", "Kg", etc.)
- *   ...varios campos binarios y strings...
- *   [Descricao] = nombre del producto
- *   [Unid]      = U2 (misma/similar unidad)
- *   [Preco]     = Int64LE precio × 10000
+ * Análisis del backup real reveló que el formato tiene DOS variantes de registro:
  *
- * Buscar dos strings de UNIT_SET dentro de 600 bytes es muy confiable:
- * prácticamente imposible por coincidencia en datos binarios.
+ * Variante A (con código interno y unidad):
+ *   [categoria][proveedor][Unidad1][cod_interno][EAN][Nombre][Unidad2][Int64LE precio×10000]
  *
- * El nombre del producto es el ÚLTIMO string válido entre U1 y U2.
- * El EAN es cualquier string de 7-14 dígitos entre U1 y U2.
- * La categoría es el string legible que precede a U1.
+ * Variante B (sin código interno, EAN duplicado):
+ *   [categoria][proveedor][EAN][EAN][Nombre][...]
+ *
+ * La estrategia U1/U2 sólo encontraba la Variante A (~459 productos).
+ * La estrategia EAN encuentra ambas variantes (~2091 productos).
+ *
+ * Ancla: string de 7-14 dígitos (EAN/barcode).
+ *   - Si el siguiente string es el mismo EAN (duplicado), el nombre está 2 posiciones después.
+ *   - Si no hay duplicado, el nombre está 1 posición después.
+ *   - Precio: Int64LE tras Unidad2 (si existe), dividido por 10000.
  */
 export function extractProductsFromBuffer(data: Buffer): RawProduct[] {
   const products: RawProduct[] = [];
   const totalPages = Math.floor(data.length / PAGE_SIZE);
 
   type StrEntry = { start: number; end: number; text: string };
+
+  const EAN_RE = /^\d{7,14}$/;
+  const HAS_LETTER = /[a-zA-Z]/;
 
   for (let p = 0; p < totalPages; p++) {
     const page = data.slice(p * PAGE_SIZE, (p + 1) * PAGE_SIZE);
@@ -167,106 +183,114 @@ export function extractProductsFromBuffer(data: Buffer): RawProduct[] {
     while (i < PAGE_SIZE - 4) {
       const lo = page[i];
       const hi = (i + 1 < PAGE_SIZE) ? page[i + 1] : 0;
-      if (hi !== 0 || lo < 0x20 || lo > 0x7e) { i++; continue; }
+      const isAsciiPrintable = lo >= 0x20 && lo <= 0x7E;
+      const isLatin1Accented = lo >= 0xC0 && lo <= 0xFF;
+      if (hi !== 0 || (!isAsciiPrintable && !isLatin1Accented)) { i++; continue; }
       const [text, nextI] = readUtf16le(page, i);
       const t = text.trim();
-      if (t.length >= 1) strs.push({ start: i, end: nextI, text: t });
+      if (t.length >= 2) strs.push({ start: i, end: nextI, text: t });
       i = nextI;
     }
 
     if (strs.length === 0) continue;
 
-    // Buscar pares U1/U2: dos strings de UNIT_SET dentro de 600 bytes
-    // REQUISITOS para evitar falsos positivos:
-    //   1. U1 y U2 deben ser el MISMO string (Nextar siempre repite la unidad)
-    //   2. La unidad debe tener >= 3 chars (excluye "Un", "gr", "ml", "kg", etc.)
+    // Ancla EAN: buscar código de barras (7-14 dígitos) y extraer nombre siguiente
     let k = 0;
     while (k < strs.length) {
-      const u1 = strs[k];
-      if (!UNIT_SET.has(u1.text) || u1.text.length < 3) { k++; continue; }
+      const eanEntry = strs[k];
 
-      // Buscar U2 dentro de 600 bytes desde U1_end
-      let consumed = false;
-      for (let m = k + 1; m < strs.length; m++) {
-        const u2 = strs[m];
-        if (u2.start > u1.end + 600) break;
-        // U2 debe ser la misma unidad que U1 (case-insensitive)
-        if (u2.text.toLowerCase() !== u1.text.toLowerCase()) continue;
+      if (!EAN_RE.test(eanEntry.text)) { k++; continue; }
 
-        // Par U1(k) / U2(m) encontrado.
-        // Extraer nombre, EAN y categoría entre ellos.
-        let nombre = '';
-        let eanText: string | null = null;
+      // Detectar EAN duplicado (Variante B): el nombre está 2 posiciones después
+      const isDup = k + 1 < strs.length && strs[k + 1].text === eanEntry.text;
+      const nameIdx = isDup ? k + 2 : k + 1;
 
-        for (let n = k + 1; n < m; n++) {
-          const raw = strs[n].text;
-          if (/^\d{7,14}$/.test(raw)) {
-            eanText = raw;
-          } else if (!UNIT_SET.has(raw)) {
-            const t = fixEncoding(raw);
-            if (isValidProductName(t)) {
-              nombre = t; // último string válido antes de U2 = Descricao
-            }
-          }
+      if (nameIdx >= strs.length) { k += (isDup ? 3 : 2); continue; }
+
+      const nameEntry = strs[nameIdx];
+      const rawName = nameEntry.text;
+
+      if (!HAS_LETTER.test(rawName) || rawName.length < 3) { k++; continue; }
+
+      const nombre = fixEncoding(rawName);
+      if (!isValidProductName(nombre)) { k++; continue; }
+
+      // Buscar unidad hacia atrás (hasta 8 posiciones) y categoría
+      let unitStr = '';
+      let categoria = '';
+      for (let back = 1; back <= 8 && k - back >= 0; back++) {
+        const prev = strs[k - back].text;
+        if (UNIT_SET.has(prev)) {
+          if (!unitStr) unitStr = prev;
+        } else if (!/^\d/.test(prev) && prev.length >= 3 && !categoria) {
+          const c = fixEncoding(prev);
+          if (isValidProductName(c)) categoria = c;
         }
-
-        if (nombre) {
-          // Precio = Int64LE inmediatamente después de U2
-          const raw64 = readInt64LE(page, u2.end);
-          const pv = raw64 / 10000.0;
-          if (pv >= 1 && pv <= 500_000) {
-            const precio = Math.round(pv * 100) / 100;
-            const unitStr = u1.text.toLowerCase();
-
-            // Categoría: string legible anterior a U1 (hasta 6 posiciones atrás)
-            let categoria = '';
-            for (let n = k - 1; n >= 0 && n >= k - 6; n--) {
-              const t = fixEncoding(strs[n].text);
-              if (!UNIT_SET.has(strs[n].text) && !/^\d/.test(strs[n].text) &&
-                  t.length >= 3 && t.length <= 60 && isValidProductName(t)) {
-                categoria = t;
-                break;
-              }
-            }
-
-            products.push({
-              codigo: eanText || `NXT-${products.length + 1}`,
-              codigoBarras: eanText,
-              nombre,
-              categoria,
-              precioVenta: precio,
-              precioCosto: 0,
-              stockActual: 0,
-              unidadMedida: unitStr,
-              fraccionable: FRACCIONABLE_UNITS.has(unitStr),
-            });
-          }
-        }
-
-        // Avanzar el cursor externo al índice de U2 (la siguiente iteración lo salta)
-        k = m;
-        consumed = true;
-        break;
       }
 
-      if (!consumed) k++;
+      // Buscar unidad hacia adelante (hasta 3 posiciones tras el nombre)
+      let unit2Str = '';
+      let u2End = -1;
+      for (let fwd = 1; fwd <= 3; fwd++) {
+        if (nameIdx + fwd < strs.length) {
+          const nxt = strs[nameIdx + fwd].text;
+          if (UNIT_SET.has(nxt)) {
+            unit2Str = nxt;
+            u2End = strs[nameIdx + fwd].end;
+            break;
+          }
+        }
+      }
+
+      const finalUnit = unitStr || unit2Str;
+
+      // Precio: Int64LE × 10000 inmediatamente después de Unidad2
+      let precio = 0;
+      if (u2End >= 0 && u2End + 8 <= PAGE_SIZE) {
+        const raw64 = readInt64LE(page, u2End);
+        const pv = raw64 / 10000.0;
+        if (pv >= 1 && pv <= 500_000) {
+          precio = Math.round(pv * 100) / 100;
+        }
+      }
+
+      const unitLower = finalUnit ? finalUnit.toLowerCase() : 'unidad';
+
+      // Codigo interno: en Variante A está 1 posición antes del EAN (string de hasta 8 dígitos, no EAN)
+      let codigoInterno = '';
+      if (!isDup && k - 1 >= 0) {
+        const prevText = strs[k - 1].text;
+        if (/^\d{1,8}$/.test(prevText) && !EAN_RE.test(prevText)) {
+          codigoInterno = prevText;
+        }
+      }
+
+      products.push({
+        codigo: codigoInterno,
+        codigoBarras: eanEntry.text,
+        nombre,
+        categoria,
+        precioVenta: precio,
+        precioCosto: 0,
+        stockActual: 0,
+        unidadMedida: unitLower,
+        fraccionable: FRACCIONABLE_UNITS.has(unitLower),
+      });
+
+      k += (isDup ? 3 : 2);
     }
   }
 
-  // Dedup por nombre (primera ocurrencia = precio de venta)
-  const byNombre = new Map<string, RawProduct>();
-  for (const p of products) {
-    const key = p.nombre.toLowerCase().trim();
-    if (!byNombre.has(key)) byNombre.set(key, p);
-  }
-  const unique = [...byNombre.values()];
-
-  // Dedup adicional por EAN
+  // Dedup: primero por EAN, luego por nombre
   const eanSeen = new Set<string>();
-  return unique.filter(p => {
-    if (!p.codigoBarras) return true;
-    if (eanSeen.has(p.codigoBarras)) return false;
-    eanSeen.add(p.codigoBarras);
+  const nameSeen = new Set<string>();
+  return products.filter(p => {
+    const ean = p.codigoBarras || '';
+    const nameKey = p.nombre.toLowerCase().trim();
+    if (ean && eanSeen.has(ean)) return false;
+    if (nameSeen.has(nameKey)) return false;
+    if (ean) eanSeen.add(ean);
+    nameSeen.add(nameKey);
     return true;
   });
 }

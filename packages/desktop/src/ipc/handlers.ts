@@ -195,31 +195,28 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('productos:limpiarBasura', () => {
     const db = getDb();
-    const { validateProductName } = require('../services/nextar-importer/language-detector');
-    type ValidationResult = { isValid: boolean; language: string; reason?: string };
 
-    // Placeholders genéricos que también eliminamos
-    const PLACEHOLDERS = new Set([
-      'sin nombre', 'sin descripcion', 'sin desc', 'producto',
-      'undefined', 'null', 'n/a', 'na', 'sin nombre de producto',
-    ]);
+    // Regla simple y directa:
+    // Un nombre de producto válido para Argentina solo usa chars del rango
+    // Latin Basic + Latin-1 + Latin Extended-A/B (codepoints 0–591 = U+024F).
+    // Cualquier char fuera de ese rango (ej: ‰ U+2030, … U+2026, œ U+0153, etc.)
+    // proviene de datos binarios del backup Nextar y debe eliminarse.
+    function esBasura(nombre: string): boolean {
+      if (!nombre || nombre.trim().length === 0) return true;
+      for (const c of nombre) {
+        const cp = c.codePointAt(0)!;
+        // Control chars (< 32) o high-latin binario (> 591)
+        if (cp < 32 || cp > 591) return true;
+      }
+      return false;
+    }
 
     const todos = db.prepare(`SELECT id, nombre FROM productos`).all() as { id: number; nombre: string }[];
     const basura: number[] = [];
-    let eliminadosEs = 0, eliminadosPt = 0, eliminadosEn = 0, eliminadosBasura = 0;
 
     for (const p of todos) {
-      const n = (p.nombre || '').trim();
-      // Placeholder vacío o nombre genérico
-      if (PLACEHOLDERS.has(n.toLowerCase())) { basura.push(p.id); eliminadosBasura++; continue; }
-      const result: ValidationResult = validateProductName(n);
-      if (!result.isValid) {
+      if (esBasura(p.nombre || '')) {
         basura.push(p.id);
-        if (result.language === 'pt') eliminadosPt++;
-        else if (result.language === 'en') eliminadosEn++;
-        else eliminadosBasura++;
-      } else {
-        eliminadosEs; // producto válido, no eliminar
       }
     }
 
@@ -235,7 +232,7 @@ export function registerIpcHandlers(): void {
       }
     })();
 
-    return { deleted: basura.length, pt: eliminadosPt, en: eliminadosEn, basura: eliminadosBasura };
+    return { deleted: basura.length, pt: 0, en: 0, basura: basura.length };
   });
 
   ipcMain.handle('productos:deleteMany', (_e, ids: number[]) => {
@@ -479,13 +476,29 @@ export function registerIpcHandlers(): void {
   });
 
   ipcMain.handle('nextar:importBackup', async (event, zipPath?: string) => {
-    const { importNixtarBackup } = require('../services/nextar-importer');
+    const { importNixtarBackup, findLatestZip } = require('../services/nextar-importer');
     const sendProgress = (p: unknown) => {
       if (!event.sender.isDestroyed()) {
         event.sender.send('nextar:progress', p);
       }
     };
-    return importNixtarBackup(zipPath || undefined, sendProgress);
+    // Si no se pasó ruta, buscar en ubicaciones habituales del backup de Nextar
+    let resolvedPath: string | null = zipPath || null;
+    if (!resolvedPath) {
+      const searchDirs: string[] = [
+        'C:\\Nex\\backup',
+        path.join(app.getPath('desktop'), 'Backup nextar'),
+        app.getPath('desktop'),
+        path.join(app.getPath('home'), 'Backup nextar'),
+        app.getPath('documents'),
+        path.join(app.getPath('userData'), 'backups'),
+      ];
+      for (const dir of searchDirs) {
+        const found: string | null = findLatestZip(dir);
+        if (found) { resolvedPath = found; break; }
+      }
+    }
+    return importNixtarBackup(resolvedPath, sendProgress);
   });
 
   // ── CATEGORIAS ────────────────────────────────────────────────
