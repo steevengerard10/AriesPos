@@ -12,6 +12,7 @@ import {
   extractProductsFromBuffer,
   extractCategoriasFromBuffer,
   extractClientesFromBuffer,
+  debugDumpStrings,
 } from './nx1-reader';
 import { mapProducto } from './mappers/produto.mapper';
 import { mapCategoria } from './mappers/categoria.mapper';
@@ -95,6 +96,12 @@ export async function importNixtarBackup(
       try {
         const data = fs.readFileSync(files['produto.nx1']);
         rawProducts = extractProductsFromBuffer(data);
+        // DEBUG: si no se encontraron productos, volcar strings de las primeras páginas
+        if (rawProducts.length === 0) {
+          const debugStrings = debugDumpStrings(data, 8);
+          console.log('[nx1-debug] 0 productos encontrados. Strings en Produto.nx1:');
+          debugStrings.forEach(s => console.log(' ', s));
+        }
         onProgress({ step: 'Leyendo productos…', current: 20, total: 100, status: 'running', message: `${rawProducts.length} productos encontrados` });
       } catch (e) {
         errores.push(`Produto.nx1: ${String(e)}`);

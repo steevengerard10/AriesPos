@@ -955,9 +955,19 @@ export function startServer(): void {
 }
 
 export function emitToWeb(event: string, data: unknown): void {
+  // Emitir a clientes web/móvil vía Socket.IO
   if (io) {
     io.emit(event, data);
   }
+  // Notificar también al renderer Electron local (modo servidor)
+  try {
+    const { BrowserWindow } = require('electron');
+    for (const win of (BrowserWindow.getAllWindows() as Electron.BrowserWindow[])) {
+      if (!win.isDestroyed()) {
+        win.webContents.send(event, data);
+      }
+    }
+  } catch { /* ignorar si electron no está disponible */ }
 }
 
 function getDashboardStats() {

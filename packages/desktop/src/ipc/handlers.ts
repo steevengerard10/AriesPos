@@ -186,6 +186,58 @@ export function registerIpcHandlers(): void {
     return { success: true };
   });
 
+  ipcMain.handle('productos:deleteAll', () => {
+    const db = getDb();
+    db.prepare(`DELETE FROM productos`).run();
+    try { db.prepare(`DELETE FROM sqlite_sequence WHERE name='productos'`).run(); } catch { /* ok */ }
+    return { success: true };
+  });
+
+  ipcMain.handle('productos:deleteMany', (_e, ids: number[]) => {
+    if (!ids || ids.length === 0) return { deleted: 0 };
+    const db = getDb();
+    const placeholders = ids.map(() => '?').join(',');
+    const result = db.prepare(`DELETE FROM productos WHERE id IN (${placeholders})`).run(...ids);
+    return { deleted: result.changes };
+  });
+
+  ipcMain.handle('productos:loadSeed', () => {
+    const db = getDb();
+    const { seedProductos } = require('../services/seed-productos');
+    const items: Array<{ nombre: string; categoria: string; precio_venta: number; codigo_barras?: string; unidad_medida?: string; marca?: string }> = seedProductos;
+    let inserted = 0;
+    db.transaction(() => {
+      for (const item of items) {
+        // Buscar o crear categoría
+        let catId: number | null = null;
+        const cat = db.prepare(`SELECT id FROM categorias WHERE lower(nombre)=lower(?)`).get(item.categoria) as { id: number } | undefined;
+        if (cat) {
+          catId = cat.id;
+        } else {
+          const r = db.prepare(`INSERT OR IGNORE INTO categorias (nombre, color) VALUES (?,?)`).run(item.categoria, '#6366f1');
+          catId = r.lastInsertRowid as number || null;
+        }
+        // Insertar producto (ignorar si ya existe por nombre)
+        const exists = db.prepare(`SELECT id FROM productos WHERE lower(nombre)=lower(?)`).get(item.nombre);
+        if (!exists) {
+          const codigo = item.codigo_barras || `SEED-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+          db.prepare(`INSERT INTO productos (nombre, codigo, codigo_barras, categoria_id, precio_venta, precio_costo, precio2, precio3, stock_actual, stock_minimo, unidad_medida, fraccionable, en_catalogo, activo, marca, proveedor)
+            VALUES (?,?,?,?,?,0,0,0,0,0,?,0,1,1,?,'')`).run(
+            item.nombre,
+            codigo,
+            item.codigo_barras || '',
+            catId,
+            item.precio_venta,
+            item.unidad_medida || 'unidad',
+            item.marca || '',
+          );
+          inserted++;
+        }
+      }
+    })();
+    return { inserted };
+  });
+
   ipcMain.handle('productos:importCSV', (_e, csvData: string) => {
     const db = getDb();
     const lines = csvData.split('\n').filter(l => l.trim());
@@ -771,7 +823,10 @@ export function registerIpcHandlers(): void {
     `).get(id) as Record<string, unknown>;
 
     const items = db.prepare(`
-      SELECT vi.*, p.nombre as producto_nombre, p.codigo as producto_codigo
+      SELECT vi.*,
+        p.nombre as producto_nombre,
+        p.codigo as producto_codigo,
+        p.precio_venta as precio_actual
       FROM venta_items vi
       LEFT JOIN productos p ON p.id = vi.producto_id
       WHERE vi.venta_id = ?

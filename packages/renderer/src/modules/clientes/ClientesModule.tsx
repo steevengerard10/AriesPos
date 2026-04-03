@@ -28,6 +28,7 @@ interface VentaItem {
   producto_nombre: string;
   cantidad: number;
   precio_unitario: number;
+  precio_actual: number | null;  // precio actual del producto (puede diferir del precio en la venta)
   total: number;
 }
 
@@ -417,18 +418,35 @@ export const ClientesModule: React.FC = () => {
                             <p className="text-xs text-slate-500 text-center py-2">Sin detalle de productos</p>
                           ) : (
                             <div className="space-y-1">
-                              {items.map((item, idx) => (
-                                <div key={idx} className="flex items-center justify-between text-xs">
-                                  <div className="flex items-center gap-1.5 text-slate-300 flex-1 min-w-0">
-                                    <Package size={11} className="text-slate-500 shrink-0" />
-                                    <span className="truncate">{item.producto_nombre || 'Producto eliminado'}</span>
+                              {items.map((item, idx) => {
+                                const precioViejoDistinto =
+                                  item.precio_actual !== null &&
+                                  item.precio_actual !== undefined &&
+                                  Math.abs(item.precio_actual - item.precio_unitario) >= 0.01;
+                                return (
+                                  <div key={idx} className="flex items-center justify-between text-xs">
+                                    <div className="flex items-center gap-1.5 text-slate-300 flex-1 min-w-0">
+                                      <Package size={11} className="text-slate-500 shrink-0" />
+                                      <span className="truncate">{item.producto_nombre || 'Producto eliminado'}</span>
+                                    </div>
+                                    <div className="flex items-center gap-3 shrink-0 ml-2">
+                                      <span className="text-slate-400">x{item.cantidad % 1 === 0 ? item.cantidad : item.cantidad.toFixed(2)}</span>
+                                      {/* Precio unitario — con tachado si cambió */}
+                                      <span className="font-mono w-24 text-right">
+                                        {precioViejoDistinto ? (
+                                          <span className="flex flex-col items-end gap-0.5">
+                                            <span className="line-through text-slate-500 text-[10px]">{formatCurrency(item.precio_unitario)}</span>
+                                            <span className="text-amber-400 font-semibold">{formatCurrency(item.precio_actual!)}</span>
+                                          </span>
+                                        ) : (
+                                          <span className="text-slate-300">{formatCurrency(item.precio_unitario)}</span>
+                                        )}
+                                      </span>
+                                      <span className="font-mono text-slate-300 w-20 text-right">{formatCurrency(item.total)}</span>
+                                    </div>
                                   </div>
-                                  <div className="flex items-center gap-3 shrink-0 ml-2">
-                                    <span className="text-slate-400">x{item.cantidad % 1 === 0 ? item.cantidad : item.cantidad.toFixed(2)}</span>
-                                    <span className="font-mono text-slate-300 w-20 text-right">{formatCurrency(item.total)}</span>
-                                  </div>
-                                </div>
-                              ))}
+                                );
+                              })}
                               {v.observaciones && (
                                 <div className="text-xs text-slate-500 italic pt-1 border-t border-slate-600/40 mt-1">
                                   {v.observaciones}

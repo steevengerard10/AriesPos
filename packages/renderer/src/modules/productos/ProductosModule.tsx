@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Plus, Search, Grid, List, Upload, Download, Edit, Trash2,
-  Package, Tag, BarChart2, RefreshCw, Image, X, Check, AlertCircle, FileText, Globe, Loader2
+  Package, Tag, BarChart2, RefreshCw, Image, X, Check, AlertCircle, FileText, Globe, Loader2, Database, Eraser, CheckSquare, Square
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { productosAPI, categoriasAPI, appAPI } from '../../lib/api';
@@ -83,6 +83,10 @@ export const ProductosModule: React.FC = () => {
   const [margenPct, setMargenPct] = useState('');
   const [buscandoWeb, setBuscandoWeb] = useState(false);
   const [showBusquedaWeb, setShowBusquedaWeb] = useState(false);
+  const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
+  const [loadingSeed, setLoadingSeed] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [confirmDeleteSelected, setConfirmDeleteSelected] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const csvRef = useRef<HTMLInputElement>(null);
 
@@ -126,6 +130,14 @@ export const ProductosModule: React.FC = () => {
   };
 
   useEffect(() => { loadData(0); }, [searchQuery, selectedCategoria, stockBajoOnly]);
+
+  // Escuchar evento de sincronización desde servidor (modo cliente: polling cada 20s)
+  useEffect(() => {
+    const w = window as unknown as { electron?: { on: (ch: string, cb: () => void) => (() => void) } };
+    if (!w.electron) return;
+    const cleanup = w.electron.on('producto:actualizado', () => loadData(0));
+    return cleanup;
+  }, []);
 
   const handleSave = async () => {
     try {
@@ -182,9 +194,56 @@ export const ProductosModule: React.FC = () => {
 
   const handleDelete = async (id: number) => {
     await productosAPI.delete(id);
-toast.success(t('prod.deactivated'));
+    toast.success(t('prod.deactivated'));
     setConfirmDelete(null);
     loadData();
+  };
+
+  const handleDeleteAll = async () => {
+    await productosAPI.deleteAll();
+    toast.success('Todos los productos eliminados');
+    setConfirmDeleteAll(false);
+    loadData();
+  };
+
+  const toggleSelect = (id: number) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === filtered.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(filtered.map(p => p.id)));
+    }
+  };
+
+  const clearSelection = () => setSelectedIds(new Set());
+
+  const handleDeleteSelected = async () => {
+    if (selectedIds.size === 0) return;
+    await productosAPI.deleteMany(Array.from(selectedIds));
+    toast.success(`${selectedIds.size} producto${selectedIds.size > 1 ? 's' : ''} eliminado${selectedIds.size > 1 ? 's' : ''}`);
+    setSelectedIds(new Set());
+    setConfirmDeleteSelected(false);
+    loadData();
+  };
+
+  const handleLoadSeed = async () => {
+    setLoadingSeed(true);
+    try {
+      const r = await productosAPI.loadSeed() as { inserted: number };
+      toast.success(`${r.inserted} productos precargados`);
+      loadData();
+    } catch {
+      toast.error('Error al cargar productos');
+    } finally {
+      setLoadingSeed(false);
+    }
   };
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -552,6 +611,20 @@ toast.success(t('prod.deactivated'));
           <button className="btn-secondary btn btn-sm" onClick={() => setShowBusquedaWeb(true)} title="Carga masiva de productos buscando en internet">
             <Globe size={14} /> Buscar en Web
           </button>
+          <button
+            className="btn-secondary btn btn-sm"
+            onClick={handleLoadSeed}
+            disabled={loadingSeed}
+            title="Cargar productos precargados (Coca-Cola, PepsiCo, Arcor, Terrabusi, Yerbas)">
+            {loadingSeed ? <Loader2 size={14} className="animate-spin" /> : <Database size={14} />}
+            Productos Base
+          </button>
+          <button
+            className="btn btn-sm bg-red-900 hover:bg-red-800 text-red-200 border border-red-700"
+            onClick={() => setConfirmDeleteAll(true)}
+            title="Eliminar TODOS los productos">
+            <Eraser size={14} /> Borrar Todo
+          </button>
           <button className="btn-secondary btn btn-sm" onClick={() => setShowImportNextar(true)} title="Importar productos desde archivo CSV de Nextar">
             <FileText size={14} /> {t('prod.nextar')}
           </button>
@@ -612,6 +685,25 @@ toast.success(t('prod.deactivated'));
         <button className="btn-ghost btn p-2" onClick={() => loadData(0)}><RefreshCw size={16} /></button>
       </div>
 
+      {/* Barra de selección activa */}
+      {selectedIds.size > 0 && (
+        <div className="shrink-0 mx-6 mb-3 flex items-center gap-3 px-4 py-2.5 rounded-lg border"
+          style={{ background: 'rgba(239,68,68,0.08)', borderColor: 'rgba(239,68,68,0.35)' }}>
+          <span className="text-sm font-medium" style={{ color: '#f87171' }}>
+            {selectedIds.size} producto{selectedIds.size > 1 ? 's' : ''} seleccionado{selectedIds.size > 1 ? 's' : ''}
+          </span>
+          <button
+            className="ml-auto btn btn-sm"
+            style={{ background: 'rgba(239,68,68,0.15)', color: '#f87171', border: '1px solid rgba(239,68,68,0.4)' }}
+            onClick={() => setConfirmDeleteSelected(true)}>
+            <Trash2 size={13} /> Eliminar seleccionados
+          </button>
+          <button className="btn-ghost btn btn-sm text-slate-400" onClick={clearSelection}>
+            <X size={13} /> Cancelar
+          </button>
+        </div>
+      )}
+
       {/* Content */}
       <div className="flex-1 overflow-auto px-6 pb-6">
         {loading ? (
@@ -624,7 +716,15 @@ toast.success(t('prod.deactivated'));
         ) : viewMode === 'grid' ? (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
             {filtered.map((p) => (
-              <div key={p.id} className={`card group relative overflow-hidden hover:border-blue-600/50 transition-all ${!p.activo ? 'opacity-50' : ''}`}>
+              <div key={p.id} className={`card group relative overflow-hidden hover:border-blue-600/50 transition-all ${!p.activo ? 'opacity-50' : ''} ${selectedIds.has(p.id) ? 'border-red-500/50 bg-red-950/10' : ''}`}>
+                {/* Checkbox selección */}
+                <button
+                  onClick={() => toggleSelect(p.id)}
+                  className="absolute top-2 left-2 z-10 text-slate-500 hover:text-red-400 transition-colors"
+                  style={{ opacity: selectedIds.has(p.id) ? 1 : undefined }}
+                >
+                  {selectedIds.has(p.id) ? <CheckSquare size={16} className="text-red-400" /> : <Square size={16} className="opacity-0 group-hover:opacity-100 transition-opacity" />}
+                </button>
                 {/* Imagen */}
                 <div className="h-32 bg-slate-700 rounded-lg mb-3 flex items-center justify-center overflow-hidden">
                   {p.imagen_path ? (
@@ -675,6 +775,15 @@ toast.success(t('prod.deactivated'));
             <table className="w-full">
               <thead>
                 <tr className="border-b border-slate-700">
+                  <th className="table-header w-10">
+                    <button onClick={toggleSelectAll} className="text-slate-400 hover:text-white transition-colors">
+                      {selectedIds.size > 0 && selectedIds.size === filtered.length
+                        ? <CheckSquare size={16} className="text-red-400" />
+                        : selectedIds.size > 0
+                          ? <CheckSquare size={16} className="text-red-300 opacity-60" />
+                          : <Square size={16} />}
+                    </button>
+                  </th>
                   <th className="table-header">{t('prod.col.product')}</th>
                   <th className="table-header">{t('prod.col.code')}</th>
                   <th className="table-header">{t('prod.col.category')}</th>
@@ -688,7 +797,13 @@ toast.success(t('prod.deactivated'));
               </thead>
               <tbody>
                 {filtered.map((p) => (
-                  <tr key={p.id} className={`table-row ${!p.activo ? 'opacity-50' : ''}`}>
+                  <tr key={p.id}
+                    className={`table-row ${!p.activo ? 'opacity-50' : ''} ${selectedIds.has(p.id) ? 'bg-red-950/20' : ''}`}>
+                    <td className="table-cell w-10">
+                      <button onClick={() => toggleSelect(p.id)} className="text-slate-500 hover:text-red-400 transition-colors">
+                        {selectedIds.has(p.id) ? <CheckSquare size={15} className="text-red-400" /> : <Square size={15} />}
+                      </button>
+                    </td>
                     <td className="table-cell">
                       <div className="font-medium text-white">{p.nombre}</div>
                       {p.fraccionable && <span className="badge badge-blue text-[10px]">Fraccionable</span>}
@@ -756,6 +871,24 @@ toast.success(t('prod.deactivated'));
         message={t('prod.deactivateMsg')}
         onConfirm={() => confirmDelete && handleDelete(confirmDelete)}
         onCancel={() => setConfirmDelete(null)}
+      />
+
+      {/* Confirm borrar TODOS */}
+      <ConfirmDialog
+        isOpen={confirmDeleteAll}
+        title="Eliminar todos los productos"
+        message={`¿Seguro querés eliminar los ${totalProductos} productos? Esta acción no se puede deshacer.`}
+        onConfirm={handleDeleteAll}
+        onCancel={() => setConfirmDeleteAll(false)}
+      />
+
+      {/* Confirm borrar seleccionados */}
+      <ConfirmDialog
+        isOpen={confirmDeleteSelected}
+        title={`Eliminar ${selectedIds.size} producto${selectedIds.size > 1 ? 's' : ''}`}
+        message={`¿Seguro querés eliminar los ${selectedIds.size} productos seleccionados? Esta acción no se puede deshacer.`}
+        onConfirm={handleDeleteSelected}
+        onCancel={() => setConfirmDeleteSelected(false)}
       />
 
       {/* Modal importar desde Nextar */}

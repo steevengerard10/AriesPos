@@ -64,15 +64,17 @@ function hasAsciiControlChars(s: string): boolean {
  * Solo permite caracteres típicos de nombres de productos; rechaza símbolos binarios.
  */
 function isValidProductName(s: string): boolean {
-  if (s.length < 3 || s.length > 80) return false;
+  if (s.length < 4 || s.length > 80) return false;
   // El primer carácter debe ser letra o dígito
   if (!/^[a-zA-ZáéíóúñüäöïçàèÁÉÍÓÚÑÜÄÖÏÇÀÈ0-9]/.test(s)) return false;
-  // Solo caracteres típicos de nombres de productos (letras, dígitos, espacios, guion, punto, coma, paréntesis, slash, &, +, ', °, %)
+  // Solo caracteres típicos de nombres de productos
   const valid = /^[a-zA-ZáéíóúñüäöïçàèÁÉÍÓÚÑÜÄÖÏÇÀÈìùÌÙ0-9\s\-.,()\/'&+°%ºª¡¿]+$/.test(s);
   if (!valid) return false;
   // Al menos 3 letras
   const letters = s.split('').filter(c => /[a-zA-ZáéíóúñüäöïçàèÁÉÍÓÚÑÜÄÖÏÇÀÈ]/i.test(c)).length;
-  return letters >= 3;
+  if (letters < 3) return false;
+  // Al menos 40% del string deben ser letras (filtra strings tipo "1234 AB" con pocos chars)
+  return (letters / s.length) >= 0.40;
 }
 
 /** Lee string null-terminated UTF-16LE a partir de `offset`. Devuelve [texto, próximo_offset] */
@@ -175,17 +177,21 @@ export function extractProductsFromBuffer(data: Buffer): RawProduct[] {
     if (strs.length === 0) continue;
 
     // Buscar pares U1/U2: dos strings de UNIT_SET dentro de 600 bytes
+    // REQUISITOS para evitar falsos positivos:
+    //   1. U1 y U2 deben ser el MISMO string (Nextar siempre repite la unidad)
+    //   2. La unidad debe tener >= 3 chars (excluye "Un", "gr", "ml", "kg", etc.)
     let k = 0;
     while (k < strs.length) {
       const u1 = strs[k];
-      if (!UNIT_SET.has(u1.text)) { k++; continue; }
+      if (!UNIT_SET.has(u1.text) || u1.text.length < 3) { k++; continue; }
 
       // Buscar U2 dentro de 600 bytes desde U1_end
       let consumed = false;
       for (let m = k + 1; m < strs.length; m++) {
         const u2 = strs[m];
         if (u2.start > u1.end + 600) break;
-        if (!UNIT_SET.has(u2.text)) continue;
+        // U2 debe ser la misma unidad que U1 (case-insensitive)
+        if (u2.text.toLowerCase() !== u1.text.toLowerCase()) continue;
 
         // Par U1(k) / U2(m) encontrado.
         // Extraer nombre, EAN y categoría entre ellos.
@@ -263,6 +269,36 @@ export function extractProductsFromBuffer(data: Buffer): RawProduct[] {
     eanSeen.add(p.codigoBarras);
     return true;
   });
+}
+
+// ── DIAGNÓSTICO ───────────────────────────────────────────────────────────────
+
+/**
+ * Lee los primeros `maxPages` NXHD pages y devuelve todos los strings
+ * UTF-16LE encontrados (>= 3 chars). Útil para depurar qué hay en el archivo.
+ */
+export function debugDumpStrings(data: Buffer, maxPages = 5): string[] {
+  const result: string[] = [];
+  const totalPages = Math.floor(data.length / PAGE_SIZE);
+  let pagesScanned = 0;
+
+  for (let p = 0; p < totalPages && pagesScanned < maxPages; p++) {
+    const page = data.slice(p * PAGE_SIZE, (p + 1) * PAGE_SIZE);
+    if (!page.slice(0, 4).equals(NXHD)) continue;
+    pagesScanned++;
+
+    let i = 4;
+    while (i < PAGE_SIZE - 4) {
+      const lo = page[i];
+      const hi = (i + 1 < PAGE_SIZE) ? page[i + 1] : 0;
+      if (hi !== 0 || lo < 0x20 || lo > 0x7e) { i++; continue; }
+      const [text, nextI] = readUtf16le(page, i);
+      const t = text.trim();
+      if (t.length >= 3) result.push(`[p${p} @${i}] "${t}"`);
+      i = nextI;
+    }
+  }
+  return result;
 }
 
 // ── Extractor de CATEGORÍAS ───────────────────────────────────────────────────

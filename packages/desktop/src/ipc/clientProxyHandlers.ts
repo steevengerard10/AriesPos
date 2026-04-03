@@ -110,6 +110,15 @@ export function registerClientProxyHandlers(serverIP: string, port: number, serv
   ipcMain.handle('productos:delete', (_e, id: number) =>
     del(`/api/sync/productos/${id}`));
 
+  ipcMain.handle('productos:deleteAll', () =>
+    del('/api/sync/productos/all'));
+
+  ipcMain.handle('productos:deleteMany', (_e, ids: number[]) =>
+    post('/api/sync/productos/delete-many', { ids }));
+
+  ipcMain.handle('productos:loadSeed', () =>
+    post('/api/sync/productos/seed', {}));
+
   ipcMain.handle('productos:truncate', () =>
     del('/api/sync/productos/all'));
 
@@ -444,6 +453,29 @@ export function registerClientProxyHandlers(serverIP: string, port: number, serv
   // ── LICENSE (local a cada PC) ──────────────────────────────────────────
   // Los handlers de licencia quedan en main.ts (son locales por PC)
   // No registrar aquí para evitar duplicado — main.ts los registra antes.
+
+  // ── POLLING DE SINCRONIZACIÓN ─────────────────────────────────────────────
+  // Cada 20 segundos consulta el servidor si hubo cambios en productos.
+  // Si el timestamp cambió, emite 'producto:actualizado' al renderer para que recargue.
+  let _lastProductTs = '';
+  const _syncInterval = setInterval(async () => {
+    try {
+      const result = await get('/api/sync/productos/last-update') as { ts: string };
+      if (result.ts && result.ts !== _lastProductTs) {
+        if (_lastProductTs !== '') {
+          // Hubo un cambio — notificar a todas las ventanas del renderer
+          BrowserWindow.getAllWindows().forEach(win => {
+            win.webContents.send('producto:actualizado', { reload: true });
+          });
+        }
+        _lastProductTs = result.ts;
+      }
+    } catch { /* servidor no disponible — ignorar */ }
+  }, 20_000);
+
+  // Limpiar el interval cuando la app se cierre
+  const { app } = require('electron');
+  app.once('before-quit', () => clearInterval(_syncInterval));
 }
 
 function mapProduct(p: Record<string, unknown>) {

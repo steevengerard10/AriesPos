@@ -11,6 +11,7 @@
 import { Router, Request, Response } from 'express';
 import { Server as SocketIOServer } from 'socket.io';
 import { getDb } from '../database/db';
+import { seedProductos } from '../services/seed-productos';
 
 type EmitFn = (event: string, data: unknown) => void;
 type ExportFiadosFn = (db: ReturnType<typeof getDb>) => string;
@@ -24,7 +25,30 @@ export function createSyncRouter(io: SocketIOServer, exportFiadosToExcel: Export
 
   function emit(event: string, data: unknown): void {
     io.emit(event, data);
+    // Notificar también al renderer local
+    try {
+      const { BrowserWindow } = require('electron');
+      for (const win of (BrowserWindow.getAllWindows() as import('electron').BrowserWindow[])) {
+        if (!win.isDestroyed()) win.webContents.send(event, data);
+      }
+    } catch { /* ignorar */ }
   }
+
+  // ── ENDPOINT DE DETECCIÓN DE CAMBIOS (para polling de clientes) ────────────
+  router.get('/last-changed', (_req, res) => {
+    const db = getDb();
+    const row = db.prepare(`
+      SELECT MAX(updated_at) as ts
+      FROM (
+        SELECT MAX(updated_at) as updated_at FROM productos
+        UNION ALL
+        SELECT MAX(created_at) as updated_at FROM ventas
+        UNION ALL
+        SELECT MAX(updated_at) as updated_at FROM clientes
+      )
+    `).get() as { ts: string | null };
+    res.json({ ts: row?.ts || new Date().toISOString() });
+  });
 
   // ── PRODUCTOS ──────────────────────────────────────────────────────────────
 
@@ -84,7 +108,12 @@ export function createSyncRouter(io: SocketIOServer, exportFiadosToExcel: Export
       || db.prepare(`SELECT p.*, c.nombre as categoria_nombre FROM productos p LEFT JOIN categorias c ON p.categoria_id = c.id WHERE p.codigo = ? AND p.activo = 1`).get(code);
     res.json(p || null);
   });
-
+  // Endpoint para polling de sincronización: devuelve el updated_at más reciente de productos
+  router.get('/productos/last-update', (_req, res) => {
+    const db = getDb();
+    const row = db.prepare(`SELECT MAX(updated_at) as ts FROM productos`).get() as { ts: string | null };
+    res.json({ ts: row.ts || new Date(0).toISOString() });
+  });
   router.get('/productos/:id', (req, res) => {
     const db = getDb();
     const p = db.prepare(`SELECT p.*, c.nombre as categoria_nombre FROM productos p LEFT JOIN categorias c ON p.categoria_id = c.id WHERE p.id = ?`).get(parseInt(req.params.id));
@@ -144,6 +173,43 @@ export function createSyncRouter(io: SocketIOServer, exportFiadosToExcel: Export
     })();
     emit('producto:actualizado', { reload: true });
     res.json({ success: true });
+  });
+
+  router.post('/productos/delete-many', (req, res) => {
+    const { ids } = req.body as { ids: number[] };
+    if (!ids || ids.length === 0) { res.json({ deleted: 0 }); return; }
+    const db = getDb();
+    const placeholders = ids.map(() => '?').join(',');
+    const result = db.prepare(`DELETE FROM productos WHERE id IN (${placeholders})`).run(...ids);
+    emit('producto:actualizado', { reload: true });
+    res.json({ deleted: result.changes });
+  });
+
+  router.post('/productos/seed', (_req, res) => {
+    const db = getDb();
+    let inserted = 0;
+    db.transaction(() => {
+      for (const item of seedProductos) {
+        let catId: number | null = null;
+        const cat = db.prepare(`SELECT id FROM categorias WHERE lower(nombre)=lower(?)`).get(item.categoria) as { id: number } | undefined;
+        if (cat) {
+          catId = cat.id;
+        } else {
+          const r = db.prepare(`INSERT OR IGNORE INTO categorias (nombre, color) VALUES (?,?)`).run(item.categoria, '#6366f1');
+          catId = r.lastInsertRowid as number || null;
+        }
+        const exists = db.prepare(`SELECT id FROM productos WHERE lower(nombre)=lower(?)`).get(item.nombre);
+        if (!exists) {
+          db.prepare(`INSERT INTO productos (nombre, codigo, codigo_barras, categoria_id, precio_venta, precio_costo, precio2, precio3, stock_actual, stock_minimo, unidad_medida, fraccionable, en_catalogo, activo, marca, proveedor) VALUES (?,?,?,?,?,0,0,0,0,0,?,0,1,1,?,'')`).run(
+            item.nombre, item.codigo_barras || '', item.codigo_barras || '',
+            catId, item.precio_venta, item.unidad_medida || 'unidad', item.marca || '',
+          );
+          inserted++;
+        }
+      }
+    })();
+    emit('producto:actualizado', { reload: true });
+    res.json({ inserted });
   });
 
   router.delete('/productos/:id', (req, res) => {
@@ -377,7 +443,13 @@ export function createSyncRouter(io: SocketIOServer, exportFiadosToExcel: Export
       LEFT JOIN usuarios u ON v.vendedor_id = u.id WHERE v.id = ?
     `).get(id) as Record<string, unknown>;
     if (!venta) { res.status(404).json({ error: 'Venta no encontrada' }); return; }
-    const items = db.prepare(`SELECT vi.*, p.nombre as producto_nombre, p.codigo as producto_codigo FROM venta_items vi LEFT JOIN productos p ON p.id = vi.producto_id WHERE vi.venta_id = ?`).all(id);
+    const items = db.prepare(`
+      SELECT vi.*, p.nombre as producto_nombre, p.codigo as producto_codigo,
+        p.precio_venta as precio_actual
+      FROM venta_items vi
+      LEFT JOIN productos p ON p.id = vi.producto_id
+      WHERE vi.venta_id = ?
+    `).all(id);
     res.json({ ...venta, items });
   });
 
