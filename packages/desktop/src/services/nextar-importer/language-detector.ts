@@ -6,11 +6,19 @@
  *   'pt'     → campo del sistema Nextar en portugués brasileño (ELIMINAR)
  *   'en'     → término técnico interno de NexusDB (ELIMINAR)
  *   'basura' → fragmento binario sin sentido (ELIMINAR)
+ *
+ * REGLAS CONSERVADORAS:
+ *  - Solo coincidencia EXACTA con diccionarios conocidos (nunca substring)
+ *  - Para "símbolos": detectar chars fuera del rango válido español/productos
+ *  - NO usar detectLanguage con .includes() porque mata productos válidos
+ *    (ej: "Nativo" contiene "ativo" → falso positivo PT)
  */
 
 export type Language = 'es' | 'pt' | 'en' | 'basura';
 
-// ── TÉRMINOS TÉCNICOS DE NEXUSDB (inglés) ─────────────────────────────────────
+// ── TÉRMINOS TÉCNICOS DE NEXUSDB (inglés) — solo coincidencia EXACTA ──────────
+// ⚠️ NO incluir palabras ambiguas como 'ok', 'ver', 'id', 'ref', 'stream', 'blob'
+//    porque podrían aparecer en nombres de productos reales.
 const NEXUSDB_TECHNICAL = new Set([
   'streambescriptor', 'streamdescriptor', 'tnxbasestreamdescriptor',
   'filesdescriptor', 'tnxfilesdescriptor', 'tnxfiledescriptor',
@@ -22,24 +30,16 @@ const NEXUSDB_TECHNICAL = new Set([
   'tnxbaserecordcompressiondescriptor', 'tnxautoguiddefaultvaluedescriptor',
   'nexusdb', 'nxsh', 'bdvd', 'nxhd', 'nxhm',
   'sequential access index', 'data/datadict file',
-  'stream', 'blob', 'record', 'autoinc',
-  'smap', 'iuid', 'irecver', 'blobok_v2', 'userqd',
-  'google inc', 'srgb',
-  // Strings cortos técnicos
-  'ok', 'ver', 'id', 'ref', 'idx', 'seq', 'tmp', 'buf',
-  'ptr', 'hdr', 'fld', 'tbl', 'col',
+  'blobok_v2', 'userqd', 'google inc', 'srgb',
 ]);
 
-// Prefijos que indican origen NexusDB
+// Prefijos binarios que indican origen NexusDB — solo los muy específicos
 const NEXUSDB_PREFIXES = [
-  'Tnx', 'nxt', 'NX!', 'NXSH', 'BDVD', 'NXHD', 'NXHM',
-  'BlobOk', 'RecVer', 'catRec', 'firRec', 'cloudID',
-  'USERQD', 'SMAP', 'IUID',
+  'Tnx', 'NX!', 'NXSH', 'BDVD', 'NXHD', 'NXHM',
 ];
 
-// ── CAMPOS DEL SISTEMA NEXTAR (portugués brasileño) ───────────────────────────
+// ── CAMPOS DEL SISTEMA NEXTAR (portugués brasileño) — solo coincidencia EXACTA ─
 const NEXTAR_SYSTEM_FIELDS = new Set([
-  // Tabla Produto
   'produto', 'produtos',
   'categoria', 'subcategoria', 'especie',
   'caixa', 'tran', 'cliente', 'clientes',
@@ -73,11 +73,10 @@ const NEXTAR_SYSTEM_FIELDS = new Set([
   'motivo', 'numerolote', 'quantidadelote',
   'cadastrorapido', 'incluidoem', 'alteradoem', 'alteradopor',
   'codanp', 'descanp',
-  'combo', 'notax', 'integracao', 'integracaoid',
+  'notax', 'integracao', 'integracaoid',
   'precototal', 'custototal',
   'exportar', 'departamentoid',
   'recver', 'catrecver', 'firecver', 'catok', 'firok', 'dinc',
-  // Otras tablas
   'inventario', 'inventarioitens',
   'alteracaopreco', 'alteracaoprecoitens',
   'prodfor', 'produtovalidade',
@@ -85,32 +84,9 @@ const NEXTAR_SYSTEM_FIELDS = new Set([
   'debito', 'credito', 'cotacao',
 ]);
 
-// Palabras portuguesas que indican campo de sistema (aunque no estén en la lista exacta)
-const PT_KEYWORDS = [
-  'descricao', 'preco', 'estoque', 'produto', 'fornecedor',
-  'ativo', 'unidade', 'categoria', 'especie', 'caixa',
-  'fracionado', 'inclusao', 'alteracao', 'codigonum',
-  'precovenda', 'precocusto', 'estoquemin', 'estoquemax',
-];
-
-// Palabras técnicas inglesas que indican NexusDB
-const EN_KEYWORDS = [
-  'descriptor', 'sequential', 'nexusdb', 'blobok',
-  'recver', 'smap', 'iuid',
-];
-
-// ── PALABRAS CORTAS VÁLIDAS EN ESPAÑOL ────────────────────────────────────────
-const VALID_SHORT_ES = new Set([
-  // Marcas / productos reales de 3 chars
-  'pan', 'sal', 'ajo', 'ron', 'gin', 'gel', 'gas',
-  'luz', 'red', 'sol', 'don', 'los', 'las',
-  'max', 'top', 'box', 'mix', 'set', 'kit', 'duo', 'eco',
-  'bio', 'pro', 'fit', 'new', 'hot', 'dry', 'off',
-  'low', 'big', 'zero', 'plus', 'lite',
-  'cafe', 'mate', 'flan', 'tuco', 'seven', 'seven up',
-  // Marcas argentinas conocidas
-  'ala', 'ace', 'dus', 'rin',
-]);
+// Caracteres válidos en un nombre de producto (español / latinoamérica)
+// Cualquier char FUERA de este rango es sospechoso
+const VALID_PRODUCT_CHAR_RE = /[a-zA-Z0-9áéíóúñüÁÉÍÓÚÑÜàèìòùÀÈÌÒÙâêîôûÂÊÎÔÛãõÃÕäöïÄÖÏ\s\-_\.,()\/%#@'"&+!?¡¿:;°×ªº]/;
 
 // ── FUNCIÓN PRINCIPAL ─────────────────────────────────────────────────────────
 
@@ -124,101 +100,54 @@ export function validateProductName(raw: string): ValidationResult {
   const s = raw.trim();
   const sLow = s.toLowerCase();
 
-  // Vacío
+  // 1. Vacío
   if (s.length === 0) return { isValid: false, language: 'basura', reason: 'vacío' };
 
-  // Demasiado corto (< 3 chars)
-  if (s.length < 3) return { isValid: false, language: 'basura', reason: 'muy corto' };
+  // 2. Demasiado corto (< 2 chars)
+  if (s.length < 2) return { isValid: false, language: 'basura', reason: 'muy corto' };
 
-  // Demasiado largo (> 120 chars)
-  if (s.length > 120) return { isValid: false, language: 'basura', reason: 'demasiado largo' };
+  // 3. Demasiado largo (> 150 chars)
+  if (s.length > 150) return { isValid: false, language: 'basura', reason: 'demasiado largo' };
 
-  // Solo dígitos = EAN / código numérico
+  // 4. Solo dígitos = EAN / código numérico
   if (/^\d+$/.test(s)) return { isValid: false, language: 'basura', reason: 'código numérico EAN' };
 
-  // Sin ninguna letra
-  if (!/[a-zA-ZáéíóúñüÁÉÍÓÚÑÜ]/.test(s)) {
-    return { isValid: false, language: 'basura', reason: 'sin letras' };
-  }
-
-  // Caracteres de control (binario)
-  if ([...s].some(c => { const cp = c.codePointAt(0)!; return cp < 0x20 || (cp >= 0x80 && cp <= 0x9F); })) {
+  // 5. Caracteres de control (binario)
+  if ([...s].some(c => { const cp = c.codePointAt(0)!; return cp < 0x20 || (cp >= 0x7F && cp <= 0x9F); })) {
     return { isValid: false, language: 'basura', reason: 'caracteres de control' };
   }
 
-  // Prefijos técnicos NexusDB
+  // 6. Alto porcentaje de símbolos fuera del charset español válido
+  //    Cualquier char que no sea letra, dígito, puntuación o acento normal
+  //    es sospechoso. Si >25% del nombre son esos chars → basura binaria.
+  const charArr = [...s];
+  const symbolCount = charArr.filter(c => !VALID_PRODUCT_CHAR_RE.test(c)).length;
+  if (symbolCount > 0 && symbolCount / charArr.length > 0.25) {
+    return { isValid: false, language: 'basura', reason: `símbolos inválidos (${symbolCount}/${charArr.length})` };
+  }
+
+  // 7. Sin ninguna letra reconocible
+  if (!/[a-zA-ZáéíóúñüÁÉÍÓÚÑÜàèìòùâêîôûãõäöï]/.test(s)) {
+    return { isValid: false, language: 'basura', reason: 'sin letras' };
+  }
+
+  // 8. Prefijos binarios NexusDB
   for (const prefix of NEXUSDB_PREFIXES) {
     if (s.startsWith(prefix)) {
       return { isValid: false, language: 'en', reason: `prefijo NexusDB: ${prefix}` };
     }
   }
 
-  // Campo del sistema Nextar (portugués) — match exacto
-  if (NEXTAR_SYSTEM_FIELDS.has(sLow)) {
-    return { isValid: false, language: 'pt', reason: 'campo del sistema Nextar' };
-  }
-
-  // Término técnico NexusDB completo
+  // 9. Coincidencia EXACTA con términos técnicos NexusDB
   if (NEXUSDB_TECHNICAL.has(sLow)) {
     return { isValid: false, language: 'en', reason: 'término técnico NexusDB' };
   }
 
-  // Keywords portuguesas (sub-string)
-  for (const kw of PT_KEYWORDS) {
-    if (sLow === kw || sLow.startsWith(kw + ' ') || sLow.startsWith(kw + '_')) {
-      return { isValid: false, language: 'pt', reason: `keyword portuguesa: ${kw}` };
-    }
+  // 10. Coincidencia EXACTA con campos del sistema Nextar (portugués)
+  if (NEXTAR_SYSTEM_FIELDS.has(sLow)) {
+    return { isValid: false, language: 'pt', reason: 'campo del sistema Nextar' };
   }
 
-  // Keywords inglesas técnicas (sub-string al inicio)
-  for (const kw of EN_KEYWORDS) {
-    if (sLow.startsWith(kw)) {
-      return { isValid: false, language: 'en', reason: `keyword técnica inglesa: ${kw}` };
-    }
-  }
-
-  // Strings de 3–4 chars: solo válidos si son palabras conocidas o tienen sentido
-  if (s.length <= 4) {
-    if (VALID_SHORT_ES.has(sLow)) {
-      return { isValid: true, language: 'es' };
-    }
-    // Patrón "letra+número" o "número+letra" = basura binaria
-    if (/^[A-Z][0-9]$/.test(s) || /^[0-9][A-Z]$/.test(s)) {
-      return { isValid: false, language: 'basura', reason: 'par letra+número binario' };
-    }
-    // Si tiene menos del 75% letras en 3-4 chars, es sospechoso
-    const letters = [...s].filter(c => /[a-zA-ZáéíóúñüÁÉÍÓÚÑÜ]/i.test(c)).length;
-    if (letters < s.length * 0.75) {
-      return { isValid: false, language: 'basura', reason: 'demasiados no-letras en string corto' };
-    }
-  }
-
-  // Ratio de letras: mínimo 30% para strings largos
-  const letters = [...s].filter(c => /[a-zA-ZáéíóúñüÁÉÍÓÚÑÜ]/i.test(c)).length;
-  if (letters < 2) return { isValid: false, language: 'basura', reason: 'menos de 2 letras' };
-  if (s.length > 5 && (letters / s.length) < 0.30) {
-    return { isValid: false, language: 'basura', reason: 'ratio letras muy bajo' };
-  }
-
-  // Primer carácter debe ser letra o dígito
-  if (!/^[a-zA-ZáéíóúñüÁÉÍÓÚÑÜ0-9]/.test(s)) {
-    return { isValid: false, language: 'basura', reason: 'empieza con símbolo' };
-  }
-
-  // Detectar idioma del string válido
-  const lang = detectLanguage(sLow);
-  if (lang === 'pt') return { isValid: false, language: 'pt', reason: 'texto en portugués técnico' };
-  if (lang === 'en') return { isValid: false, language: 'en', reason: 'texto técnico en inglés' };
-
+  // 11. Producto válido en español ✓
   return { isValid: true, language: 'es' };
-}
-
-function detectLanguage(sLow: string): Language {
-  for (const kw of PT_KEYWORDS) {
-    if (sLow.includes(kw)) return 'pt';
-  }
-  for (const kw of EN_KEYWORDS) {
-    if (sLow.includes(kw)) return 'en';
-  }
-  return 'es';
 }
