@@ -93,7 +93,13 @@ export function SetupScreen({ onComplete }: SetupScreenProps) {
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
       color: '#e2e8f0',
-    }}>
+      WebkitAppRegion: 'no-drag',
+    } as React.CSSProperties}
+      onClick={e => {
+        const t = e.target as HTMLElement;
+        if (t.tagName === 'INPUT') t.focus();
+      }}
+    >
       <div style={{
         background: '#1e293b',
         border: '1px solid #334155',
@@ -101,7 +107,8 @@ export function SetupScreen({ onComplete }: SetupScreenProps) {
         padding: '40px 36px',
         width: 420,
         maxWidth: '90vw',
-      }}>
+        WebkitAppRegion: 'no-drag',
+      } as React.CSSProperties}>
         {/* Logo */}
         <div style={{ textAlign: 'center', marginBottom: 28 }}>
           <img
@@ -277,18 +284,26 @@ export function SetupScreen({ onComplete }: SetupScreenProps) {
                 <div style={{ fontSize: 11, color: '#64748b', fontWeight: 700, marginBottom: 5, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                   IP del servidor
                 </div>
+                <div style={{ fontSize: 11, color: '#475569', marginBottom: 6 }}>
+                  La IP aparece en la pantalla del servidor en Configuración → Servidor web
+                </div>
                 <input
                   type="text"
                   value={ip}
                   onChange={e => { setIp(e.target.value); setError(''); }}
                   placeholder="ej: 192.168.1.10"
+                  autoFocus
                   style={{
                     width: '100%', padding: '10px 12px',
                     background: '#0f172a', border: '1px solid #334155',
                     borderRadius: 9, color: '#e2e8f0', fontSize: 14,
                     outline: 'none', fontVariantNumeric: 'tabular-nums',
-                  }}
+                    boxSizing: 'border-box',
+                    WebkitUserSelect: 'text',
+                    userSelect: 'text',
+                  } as React.CSSProperties}
                   onKeyDown={e => e.key === 'Enter' && testAndConnect()}
+                  onClick={e => (e.target as HTMLInputElement).focus()}
                 />
               </div>
 

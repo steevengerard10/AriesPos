@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Settings, Save, Server, Printer, Database, Upload, Download, RefreshCw,
-  Check, AlertTriangle, ExternalLink, Copy, Wifi, Globe, CreditCard, Plus, Trash2, Archive, Palette, ShieldCheck, Lock, Eye, EyeOff
+  Check, AlertTriangle, ExternalLink, Copy, Wifi, Globe, CreditCard, Plus, Trash2, Archive, Palette, ShieldCheck, Lock, Eye, EyeOff, RotateCcw
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { configAPI, backupAPI, appAPI, productosAPI, firmaAPI } from '../../lib/api';
@@ -68,6 +68,9 @@ export const ConfiguracionModule: React.FC = () => {
   const csvRef = useRef<HTMLInputElement>(null);
   const jsonRef = useRef<HTMLInputElement>(null);
   const [showImportNixtar, setShowImportNixtar] = useState(false);
+  const [showResetModal, setShowResetModal] = useState(false);
+  const [resetConfirmText, setResetConfirmText] = useState('');
+  const [resetting, setResetting] = useState(false);
 
   // ── Firma del propietario ──
   const [firmaEstado, setFirmaEstado] = useState<{ registrada: boolean; nombre: string; fecha: string } | null>(null);
@@ -183,6 +186,20 @@ export const ConfiguracionModule: React.FC = () => {
     setFirmaNombre(''); setFirmaClave('');
     setFirmaMode('ver');
     const e = await firmaAPI.estado(); setFirmaEstado(e);
+  };
+
+  const handleResetOperacional = async () => {
+    setResetting(true);
+    try {
+      await (window as unknown as { electron: { invoke: (c: string, ...a: unknown[]) => Promise<unknown> } }).electron.invoke('db:resetOperacional');
+      toast.success('Datos operacionales eliminados. Se creó un backup previo.');
+      setShowResetModal(false);
+      setResetConfirmText('');
+    } catch {
+      toast.error('Error al reiniciar los datos');
+    } finally {
+      setResetting(false);
+    }
   };
 
   const handleCambiarFirma = async () => {
@@ -369,6 +386,32 @@ export const ConfiguracionModule: React.FC = () => {
                     </button>
                   </div>
                 ))}
+              </div>
+            </div>
+
+            {/* ZONA DE PELIGRO */}
+            <div className="border border-red-800 rounded-xl p-5 bg-red-950/30">
+              <div className="flex items-center gap-2 mb-1">
+                <AlertTriangle size={18} className="text-red-400" />
+                <h3 className="text-sm font-bold text-red-400 uppercase tracking-wider">Zona de peligro</h3>
+              </div>
+              <p className="text-xs text-slate-400 mb-4">
+                Estas acciones son irreversibles. Antes de ejecutarlas se crea un backup automático.
+              </p>
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <div className="text-sm font-semibold text-white">Reiniciar datos operacionales</div>
+                  <div className="text-xs text-slate-400 mt-0.5">
+                    Borra <strong className="text-slate-300">ventas, cajas, libro de caja y cuentas a pagar</strong>.<br />
+                    Conserva productos, clientes, categorías, combos y configuración.
+                  </div>
+                </div>
+                <button
+                  className="shrink-0 flex items-center gap-2 px-4 py-2 rounded-lg bg-red-700 hover:bg-red-600 text-white text-sm font-semibold transition-colors"
+                  onClick={() => { setShowResetModal(true); setResetConfirmText(''); }}
+                >
+                  <RotateCcw size={15} /> Reiniciar
+                </button>
               </div>
             </div>
           </div>
@@ -723,6 +766,58 @@ export const ConfiguracionModule: React.FC = () => {
       </div>
 
       {showImportNixtar && <ImportNixtarModal onClose={() => setShowImportNixtar(false)} />}
+
+      {/* Modal de confirmación para reiniciar datos operacionales */}
+      {showResetModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70" onClick={() => setShowResetModal(false)}>
+          <div className="bg-slate-900 border border-red-700 rounded-2xl p-8 w-full max-w-md shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3 mb-4">
+              <AlertTriangle size={24} className="text-red-400 shrink-0" />
+              <h2 className="text-lg font-bold text-white">¿Reiniciar datos operacionales?</h2>
+            </div>
+            <p className="text-sm text-slate-300 mb-2">
+              Esta acción <strong className="text-red-400">eliminará permanentemente</strong>:
+            </p>
+            <ul className="text-sm text-slate-400 list-disc list-inside mb-4 space-y-1">
+              <li>Todas las ventas e ítems de ventas</li>
+              <li>Todos los movimientos de stock</li>
+              <li>Todas las sesiones y movimientos de caja</li>
+              <li>Todo el libro de caja (días, turnos, egresos)</li>
+              <li>Todas las cuentas a pagar</li>
+            </ul>
+            <p className="text-sm text-green-400 mb-5">
+              ✓ Se conservarán productos, clientes, categorías, combos y configuración.<br />
+              ✓ Se creará un backup automático antes de borrar.
+            </p>
+            <p className="text-sm text-slate-300 mb-2">
+              Escribí <strong className="text-red-400">REINICIAR</strong> para confirmar:
+            </p>
+            <input
+              className="w-full px-3 py-2 rounded-lg bg-slate-800 border border-slate-600 text-white text-sm mb-4 focus:outline-none focus:border-red-500"
+              placeholder="Escribí REINICIAR"
+              value={resetConfirmText}
+              onChange={(e) => setResetConfirmText(e.target.value)}
+              autoFocus
+            />
+            <div className="flex gap-3">
+              <button
+                className="flex-1 px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-sm font-semibold transition-colors"
+                onClick={() => setShowResetModal(false)}
+              >
+                Cancelar
+              </button>
+              <button
+                className="flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-red-700 hover:bg-red-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold transition-colors"
+                disabled={resetConfirmText.trim().toUpperCase() !== 'REINICIAR' || resetting}
+                onClick={handleResetOperacional}
+              >
+                <RotateCcw size={15} />
+                {resetting ? 'Reiniciando...' : 'Confirmar reinicio'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <input ref={jsonRef} type="file" accept=".json" className="hidden" onChange={handleImportJSON} />
       <input ref={csvRef} type="file" accept=".csv,.txt" className="hidden" onChange={async (e) => {

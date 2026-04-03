@@ -1418,6 +1418,35 @@ export function registerIpcHandlers(): void {
     return { path, success: true };
   });
 
+  ipcMain.handle('db:resetOperacional', async () => {
+    const db = getDb();
+    // Primero hacer backup de seguridad
+    try { await autoBackup(); } catch { /* ignorar si falla backup */ }
+    // Borrar todos los datos operacionales en orden (respetando FK)
+    db.transaction(() => {
+      db.prepare('DELETE FROM libro_caja_egresos').run();
+      db.prepare('DELETE FROM libro_caja_billetes').run();
+      db.prepare('DELETE FROM libro_caja_turnos').run();
+      db.prepare('DELETE FROM libro_caja_dias').run();
+      db.prepare('DELETE FROM caja_movimientos').run();
+      db.prepare('DELETE FROM caja_sesiones').run();
+      db.prepare('DELETE FROM venta_items').run();
+      db.prepare('DELETE FROM stock_movimientos').run();
+      db.prepare('DELETE FROM ventas').run();
+      db.prepare('DELETE FROM cuentas_pagar').run();
+      // Reiniciar contadores de auto-increment
+      const tablasReset = [
+        'ventas', 'venta_items', 'stock_movimientos',
+        'caja_sesiones', 'caja_movimientos', 'cuentas_pagar',
+        'libro_caja_dias', 'libro_caja_turnos', 'libro_caja_billetes', 'libro_caja_egresos',
+      ];
+      for (const tabla of tablasReset) {
+        db.prepare('DELETE FROM sqlite_sequence WHERE name = ?').run(tabla);
+      }
+    })();
+    return { success: true };
+  });
+
   // ── EXPORT / IMPORT JSON ────────────────────────────────────────────────
   ipcMain.handle('export:allJSON', () => {
     const db = getDb();
