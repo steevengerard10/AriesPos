@@ -185,6 +185,46 @@ export function createSyncRouter(io: SocketIOServer, exportFiadosToExcel: Export
     res.json({ deleted: result.changes });
   });
 
+  router.post('/productos/limpiar-basura', (_req, res) => {
+    const db = getDb();
+    const { validateProductName } = require('../services/nextar-importer/language-detector');
+    type ValidationResult = { isValid: boolean; language: string; reason?: string };
+
+    const PLACEHOLDERS = new Set([
+      'sin nombre', 'sin descripcion', 'sin desc', 'producto',
+      'undefined', 'null', 'n/a', 'na',
+    ]);
+
+    const todos = db.prepare(`SELECT id, nombre FROM productos`).all() as { id: number; nombre: string }[];
+    const basura: number[] = [];
+    let eliminadosPt = 0, eliminadosEn = 0, eliminadosBasura = 0;
+
+    for (const p of todos) {
+      const n = (p.nombre || '').trim();
+      if (PLACEHOLDERS.has(n.toLowerCase())) { basura.push(p.id); eliminadosBasura++; continue; }
+      const result: ValidationResult = validateProductName(n);
+      if (!result.isValid) {
+        basura.push(p.id);
+        if (result.language === 'pt') eliminadosPt++;
+        else if (result.language === 'en') eliminadosEn++;
+        else eliminadosBasura++;
+      }
+    }
+
+    if (basura.length > 0) {
+      const CHUNK = 500;
+      db.transaction(() => {
+        for (let i = 0; i < basura.length; i += CHUNK) {
+          const chunk = basura.slice(i, i + CHUNK);
+          const placeholders = chunk.map(() => '?').join(',');
+          db.prepare(`DELETE FROM productos WHERE id IN (${placeholders})`).run(...chunk);
+        }
+      })();
+      emit('producto:actualizado', { reload: true });
+    }
+    res.json({ deleted: basura.length, pt: eliminadosPt, en: eliminadosEn, basura: eliminadosBasura });
+  });
+
   router.post('/productos/seed', (_req, res) => {
     const db = getDb();
     let inserted = 0;

@@ -11,6 +11,7 @@ import { Modal, ConfirmDialog } from '../../components/shared/Modal';
 import { ImportNextarModal } from '../../components/modals/ImportNextarModal';
 import { BusquedaWebModal } from '../../components/modals/BusquedaWebModal';
 import { formatCurrency, downloadCSV } from '../../lib/utils';
+import { CleanupPanel } from './CleanupPanel';
 
 interface Producto {
   id: number;
@@ -84,6 +85,7 @@ export const ProductosModule: React.FC = () => {
   const [buscandoWeb, setBuscandoWeb] = useState(false);
   const [showBusquedaWeb, setShowBusquedaWeb] = useState(false);
   const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
+  const [showCleanupPanel, setShowCleanupPanel] = useState(false);
   const [loadingSeed, setLoadingSeed] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [confirmDeleteSelected, setConfirmDeleteSelected] = useState(false);
@@ -205,6 +207,8 @@ export const ProductosModule: React.FC = () => {
     setConfirmDeleteAll(false);
     loadData();
   };
+
+  // eslint-disable-next-line @typescript-eslint/no-empty-function
 
   const toggleSelect = (id: number) => {
     setSelectedIds(prev => {
@@ -620,6 +624,12 @@ export const ProductosModule: React.FC = () => {
             Productos Base
           </button>
           <button
+            className="btn btn-sm bg-orange-900 hover:bg-orange-800 text-orange-200 border border-orange-700"
+            onClick={() => setShowCleanupPanel(v => !v)}
+            title="Eliminar productos con nombres inválidos (símbolos, basura del importador)">
+            <Eraser size={14} /> Limpiar Basura
+          </button>
+          <button
             className="btn btn-sm bg-red-900 hover:bg-red-800 text-red-200 border border-red-700"
             onClick={() => setConfirmDeleteAll(true)}
             title="Eliminar TODOS los productos">
@@ -881,6 +891,19 @@ export const ProductosModule: React.FC = () => {
         onConfirm={handleDeleteAll}
         onCancel={() => setConfirmDeleteAll(false)}
       />
+
+      {/* Panel limpiar basura */}
+      {showCleanupPanel && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-xl">
+            <CleanupPanel onDone={() => { loadData(0); setShowCleanupPanel(false); }} />
+            <button
+              className="w-full mt-2 btn btn-sm btn-secondary"
+              onClick={() => setShowCleanupPanel(false)}
+            >Cerrar</button>
+          </div>
+        </div>
+      )}
 
       {/* Confirm borrar seleccionados */}
       <ConfirmDialog

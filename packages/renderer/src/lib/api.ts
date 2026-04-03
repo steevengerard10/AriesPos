@@ -41,6 +41,7 @@ export const productosAPI = {
   delete: (id: number) => invoke('productos:delete', id),
   deleteAll: () => invoke<{ success: boolean }>('productos:deleteAll'),
   deleteMany: (ids: number[]) => invoke<{ deleted: number }>('productos:deleteMany', ids),
+  limpiarBasura: () => invoke<{ deleted: number; pt: number; en: number; basura: number }>('productos:limpiarBasura'),
   loadSeed: () => invoke<{ inserted: number }>('productos:loadSeed'),
   importCSV: (csvData: string) => invoke<{ imported: number; errors: number }>('productos:importCSV', csvData),
   saveImage: (productoId: number, imageData: string) => invoke('productos:saveImage', productoId, imageData),

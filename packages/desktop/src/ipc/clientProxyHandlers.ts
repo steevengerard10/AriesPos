@@ -116,6 +116,9 @@ export function registerClientProxyHandlers(serverIP: string, port: number, serv
   ipcMain.handle('productos:deleteMany', (_e, ids: number[]) =>
     post('/api/sync/productos/delete-many', { ids }));
 
+  ipcMain.handle('productos:limpiarBasura', () =>
+    post('/api/sync/productos/limpiar-basura', {}));
+
   ipcMain.handle('productos:loadSeed', () =>
     post('/api/sync/productos/seed', {}));
 

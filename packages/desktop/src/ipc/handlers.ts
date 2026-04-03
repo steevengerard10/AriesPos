@@ -193,6 +193,51 @@ export function registerIpcHandlers(): void {
     return { success: true };
   });
 
+  ipcMain.handle('productos:limpiarBasura', () => {
+    const db = getDb();
+    const { validateProductName } = require('../services/nextar-importer/language-detector');
+    type ValidationResult = { isValid: boolean; language: string; reason?: string };
+
+    // Placeholders genéricos que también eliminamos
+    const PLACEHOLDERS = new Set([
+      'sin nombre', 'sin descripcion', 'sin desc', 'producto',
+      'undefined', 'null', 'n/a', 'na', 'sin nombre de producto',
+    ]);
+
+    const todos = db.prepare(`SELECT id, nombre FROM productos`).all() as { id: number; nombre: string }[];
+    const basura: number[] = [];
+    let eliminadosEs = 0, eliminadosPt = 0, eliminadosEn = 0, eliminadosBasura = 0;
+
+    for (const p of todos) {
+      const n = (p.nombre || '').trim();
+      // Placeholder vacío o nombre genérico
+      if (PLACEHOLDERS.has(n.toLowerCase())) { basura.push(p.id); eliminadosBasura++; continue; }
+      const result: ValidationResult = validateProductName(n);
+      if (!result.isValid) {
+        basura.push(p.id);
+        if (result.language === 'pt') eliminadosPt++;
+        else if (result.language === 'en') eliminadosEn++;
+        else eliminadosBasura++;
+      } else {
+        eliminadosEs; // producto válido, no eliminar
+      }
+    }
+
+    if (basura.length === 0) return { deleted: 0, pt: 0, en: 0, basura: 0 };
+
+    // Borrar en lotes de 500 (límite SQLite = 999 variables)
+    const CHUNK = 500;
+    db.transaction(() => {
+      for (let i = 0; i < basura.length; i += CHUNK) {
+        const chunk = basura.slice(i, i + CHUNK);
+        const phs = chunk.map(() => '?').join(',');
+        db.prepare(`DELETE FROM productos WHERE id IN (${phs})`).run(...chunk);
+      }
+    })();
+
+    return { deleted: basura.length, pt: eliminadosPt, en: eliminadosEn, basura: eliminadosBasura };
+  });
+
   ipcMain.handle('productos:deleteMany', (_e, ids: number[]) => {
     if (!ids || ids.length === 0) return { deleted: 0 };
     const db = getDb();
