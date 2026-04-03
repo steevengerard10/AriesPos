@@ -35,7 +35,7 @@ const UNIT_SET = new Set([
   'Lt', 'lt', 'Un', 'un', 'Unid', 'unid', 'Caja', 'caja',
   'Pack', 'pack', 'Fardo', 'fardo', 'Docena', 'docena',
   'Gramo', 'gramo', 'Gr', 'gr', 'Metro', 'metro', 'Mt', 'mt',
-  'Mililitro', 'ml', 'ML', 'mL',
+  'Mililitro', 'ml', 'ML', 'mL', 'Lata', 'lata', 'Botella', 'botella',
 ]);
 
 const FRACCIONABLE_UNITS = new Set(['kg', 'gramo', 'gr', 'litro', 'lt', 'ml', 'metro', 'mt']);
@@ -45,6 +45,22 @@ function hasAsciiControlChars(s: string): boolean {
     if (s.charCodeAt(i) <= 0x1f) return true;
   }
   return false;
+}
+
+/**
+ * Verifica que el string sea un nombre de producto válido (español).
+ * Rechaza nombres con símbolos raros provenientes de datos binarios/imagen.
+ */
+function isValidProductName(s: string): boolean {
+  if (s.length < 3) return false;
+  // El primer carácter debe ser letra o dígito (no '@', '*', etc.)
+  if (!/^[a-zA-ZáéíóúñüäöïçàèÁÉÍÓÚÑÜÄÖÏÇÀÈ0-9]/.test(s)) return false;
+  // Solo caracteres válidos en nombres de productos (español)
+  const valid = /^[\x20-\x7EáéíóúñüäöïçàèÁÉÍÓÚÑÜÄÖÏÇÀÈìùÌÙ°ºª¡¿]+$/.test(s);
+  if (!valid) return false;
+  // Al menos 2 letras
+  const letters = s.split('').filter(c => /[a-záéíóúñüäöïçàèÁÉÍÓÚÑÜÄÖÏÇÀÈ]/i.test(c)).length;
+  return letters >= 2;
 }
 
 /** Lee string null-terminated UTF-16LE a partir de `offset`. Devuelve [texto, próximo_offset] */
@@ -111,135 +127,146 @@ export interface RawCliente {
  *    dentro de un rango de 500 bytes
  * 3. El precio Int64LE está en U2_end (inmediatamente después)
  * 4. El nombre del producto (Descricao) es el último string entre U1_end y U2_start
- * 5. El código de barras (EanGtin) es el string numérico de 7-14 dígitos en ese mismo rango
- * 6. La categoría está en los strings ANTES de U1 en la página
+ * 5. El EAN/código es el string numérico de 7-14 dígitos que precede al nombre
+ * 6. La categoría está en los strings ANTES del EAN en la página
  */
 export function extractProductsFromBuffer(data: Buffer): RawProduct[] {
   const products: RawProduct[] = [];
   const totalPages = Math.floor(data.length / PAGE_SIZE);
 
+  type StrEntry = { start: number; end: number; text: string };
+
   for (let p = 0; p < totalPages; p++) {
     const page = data.slice(p * PAGE_SIZE, (p + 1) * PAGE_SIZE);
     if (!page.slice(0, 4).equals(NXHD)) continue;
 
+    // ── PASO 1: Recopilar todos los strings UTF-16LE de la página ────────
+    // Avanzamos PAST cada string completo para evitar substrings duplicados.
+    const strs: StrEntry[] = [];
     let i = 4;
-    while (i < PAGE_SIZE - 30) {
+    while (i < PAGE_SIZE - 4) {
       const lo = page[i];
       const hi = (i + 1 < PAGE_SIZE) ? page[i + 1] : 0;
-
-      // Detectar inicio de WideString UTF-16LE: byte legible seguido de 0x00
       if (hi !== 0 || lo < 0x20 || lo > 0x7e) { i++; continue; }
+      const [text, nextI] = readUtf16le(page, i);
+      const t = text.trim();
+      if (t.length >= 1) strs.push({ start: i, end: nextI, text: t });
+      i = nextI;
+    }
 
-      const [unitText, u1End] = readUtf16le(page, i);
-      const unitClean = unitText.trim();
+    // ── PASO 2: Estructura verificada: [EAN][nombre][unidad o 4B binario][precio] ──
+    // Usamos EAN como ancla principal — el nombre siempre viene justo después.
+    const tryAddProduct = (
+      eanText: string | null,
+      nombreRaw: string,
+      nameEnd: number,
+      nextStrAfterName: StrEntry | undefined,
+      catCandidateEnd: number,
+    ) => {
+      const nombre = fixEncoding(nombreRaw);
+      if (!nombre || nombre.length < 3 || !isValidProductName(nombre)) return false;
 
-      if (!UNIT_SET.has(unitClean)) { i++; continue; }
+      let precio = 0;
+      let unitStr = 'unidad';
 
-      // Tenemos U1 (fk_descr_unidade). Ahora buscar U2 (Unid) hacia adelante.
-      // U2 debe ser el mismo string de unidad dentro de 500 bytes.
-      const searchEnd = Math.min(u1End + 500, PAGE_SIZE - 8);
-      let u2Start = -1;
-      let u2End = -1;
+      // Caso A: el string después del nombre es una unidad de medida
+      if (nextStrAfterName && UNIT_SET.has(nextStrAfterName.text) &&
+        nextStrAfterName.start >= nameEnd && nextStrAfterName.start <= nameEnd + 6) {
+        unitStr = nextStrAfterName.text.toLowerCase();
+        const raw = readInt64LE(page, nextStrAfterName.end);
+        const pv = raw / 10000.0;
+        if (pv >= 1 && pv <= 100_000) precio = Math.round(pv * 100) / 100;
+      }
 
-      let j = u1End;
-      while (j < searchEnd - 2) {
-        const lj = page[j];
-        const hj = (j + 1 < PAGE_SIZE) ? page[j + 1] : 0;
-        if (hj !== 0 || lj < 0x20 || lj > 0x7e) { j++; continue; }
-        const [s2, s2End] = readUtf16le(page, j);
-        if (s2.trim() === unitClean) {
-          u2Start = j;
-          u2End = s2End;
+      // Caso B: 4 bytes binarios después del nombre → precio inmediatamente
+      if (precio === 0) {
+        const raw = readInt64LE(page, nameEnd + 4);
+        const pv = raw / 10000.0;
+        if (pv >= 1 && pv <= 100_000) precio = Math.round(pv * 100) / 100;
+      }
+
+      // Caso C: precio directo sin campo intermedio
+      if (precio === 0) {
+        const raw = readInt64LE(page, nameEnd);
+        const pv = raw / 10000.0;
+        if (pv >= 1 && pv <= 100_000) precio = Math.round(pv * 100) / 100;
+      }
+
+      if (precio === 0) return false;
+
+      // Categoría: primer string legible antes del ancla (EAN o código)
+      let categoria = '';
+      for (const s of strs) {
+        if (s.end < catCandidateEnd - 30 && s.end >= catCandidateEnd - 600 &&
+          !UNIT_SET.has(s.text) && !/^\d/.test(s.text) &&
+          s.text.length >= 3 && s.text.length <= 60 && isValidProductName(fixEncoding(s.text))) {
+          categoria = fixEncoding(s.text);
           break;
         }
-        j++;
       }
-
-      if (u2Start === -1) { i = u1End; continue; }
-
-      // Leer precio después de U2
-      if (u2End + 8 > PAGE_SIZE) { i = u2End; continue; }
-      const rawPrice = readInt64LE(page, u2End);
-      const precioVenta = rawPrice / 10000.0;
-
-      if (precioVenta < 0.5 || precioVenta > 5_000_000) { i = u1End; continue; }
-
-      // Escanear strings entre U1_end y U2_start para encontrar nombre y EAN
-      let nombre = '';
-      let codigoBarras = '';
-      let codigoInterno = '';
-
-      let k = u1End;
-      while (k < u2Start - 2) {
-        const lk = page[k];
-        const hk = (k + 1 < PAGE_SIZE) ? page[k + 1] : 0;
-        if (hk !== 0 || lk < 0x20 || lk > 0x7e) { k++; continue; }
-        const [s, sEnd] = readUtf16le(page, k);
-        const sTrim = s.trim();
-        if (sTrim.length >= 2) {
-          if (/^\d{7,14}$/.test(sTrim)) {
-            // Código de barras  (EAN/GTIN)
-            codigoBarras = sTrim;
-          } else if (/^\d+$/.test(sTrim) && sTrim.length <= 6) {
-            // Código interno numérico corto
-            codigoInterno = sTrim;
-          } else if (sTrim.length >= 3 && sTrim.length <= 120 && !hasAsciiControlChars(sTrim) && !UNIT_SET.has(sTrim)) {
-            // Nombre (tomamos el ÚLTIMO string legible antes de U2)
-            nombre = fixEncoding(sTrim);
-          }
-        }
-        k = sEnd;
-      }
-
-      if (!nombre || nombre.length < 2) { i = u1End; continue; }
-
-      // Buscar categoría en los strings ANTES de U1 en la página
-      let categoria = '';
-      const searchCatStart = Math.max(4, i - 600);
-      let m = searchCatStart;
-      const strsBefore: string[] = [];
-      while (m < i) {
-        const lm = page[m];
-        const hm = (m + 1 < PAGE_SIZE) ? page[m + 1] : 0;
-        if (hm !== 0 || lm < 0x20 || lm > 0x7e) { m++; continue; }
-        const [sc, scEnd] = readUtf16le(page, m);
-        const scTrim = fixEncoding(sc.trim());
-        if (scTrim.length >= 2 && scTrim.length <= 50 && !hasAsciiControlChars(scTrim) && !UNIT_SET.has(scTrim) && !/^\d+$/.test(scTrim)) {
-          strsBefore.push(scTrim);
-        }
-        m = scEnd;
-      }
-      if (strsBefore.length > 0) {
-        // La categoría suele ser el primer string o uno de los primeros
-        // Las marcas/proveedores son los últimos antes de U1
-        categoria = strsBefore[0] || '';
-      }
-
-      const unidLower = unitClean.toLowerCase();
-      const fraccionable = FRACCIONABLE_UNITS.has(unidLower);
 
       products.push({
-        codigo: codigoBarras || codigoInterno || `NXT-${products.length + 1}`,
-        codigoBarras: codigoBarras || null,
+        codigo: eanText || `NXT-${products.length + 1}`,
+        codigoBarras: eanText,
         nombre,
         categoria,
-        precioVenta: Math.round(precioVenta * 100) / 100,
+        precioVenta: precio,
         precioCosto: 0,
         stockActual: 0,
-        unidadMedida: unidLower,
-        fraccionable,
+        unidadMedida: unitStr,
+        fraccionable: FRACCIONABLE_UNITS.has(unitStr),
       });
+      return true;
+    };
 
-      i = u2End + 8; // Saltar más allá del precio para evitar re-analizar
+    for (let k = 0; k < strs.length; k++) {
+      const anchor = strs[k].text;
+
+      // Ancla 1: EAN (7-14 dígitos)
+      if (/^\d{7,14}$/.test(anchor)) {
+        // El nombre es el próximo string legible válido (máx. 3 strings hacia adelante)
+        for (let m = k + 1; m < Math.min(k + 4, strs.length); m++) {
+          const t = strs[m].text;
+          if (isValidProductName(fixEncoding(t)) && !UNIT_SET.has(t)) {
+            tryAddProduct(anchor, t, strs[m].end, strs[m + 1], strs[k].start);
+            break;
+          }
+        }
+        continue;
+      }
+
+      // Ancla 2: código interno corto (3-6 dígitos) — para productos sin EAN
+      if (/^\d{3,6}$/.test(anchor)) {
+        // Verificar que el siguiente string NO sea un EAN (eso indicaría que
+        // este código es el Codigo interno de un producto que SÍ tiene EAN, ya capturado)
+        const nextAnchor = strs[k + 1];
+        if (nextAnchor && /^\d{7,14}$/.test(nextAnchor.text)) continue;
+
+        for (let m = k + 1; m < Math.min(k + 5, strs.length); m++) {
+          const t = strs[m].text;
+          if (isValidProductName(fixEncoding(t)) && !UNIT_SET.has(t)) {
+            tryAddProduct(null, t, strs[m].end, strs[m + 1], strs[k].start);
+            break;
+          }
+        }
+      }
     }
   }
 
-  // Deduplicar por (nombre normalizado, precio)
-  const seen = new Map<string, boolean>();
-  return products.filter((p) => {
-    const key = `${p.nombre.toLowerCase().trim()}|${p.precioVenta}`;
-    if (seen.has(key)) return false;
-    seen.set(key, true);
+  // Dedup por nombre (primera ocurrencia = precio de venta)
+  const byNombre = new Map<string, RawProduct>();
+  for (const p of products) {
+    const k = p.nombre.toLowerCase().trim();
+    if (!byNombre.has(k)) byNombre.set(k, p);
+  }
+  const unique = [...byNombre.values()];
+
+  // Dedup adicional por EAN: si dos productos tienen el mismo EAN, dejar solo el primero
+  const eanSeen = new Set<string>();
+  return unique.filter(p => {
+    if (!p.codigoBarras) return true;
+    if (eanSeen.has(p.codigoBarras)) return false;
+    eanSeen.add(p.codigoBarras);
     return true;
   });
 }
