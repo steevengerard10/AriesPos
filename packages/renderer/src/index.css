@@ -12,26 +12,8 @@
   --bg4:     #1f2535;
   --border:  #2a3148;
   --border2: #3a4460;
-  --accent:  #4f8ef7;
-  --accent2: #7c3aed;
-  --accent3: #10b981;
-  --warn:    #f59e0b;
-  --danger:  #ef4444;
-  --text:    #e2e8f0;
-  --text2:   #94a3b8;
-  --text3:   #64748b;
-}
-
-/* ── Tema Claro ── */
-[data-theme="claro"] {
-  --bg:      #f0f2f5;
-  --bg2:     #ffffff;
-  --bg3:     #e8ecf0;
-  --bg4:     #dde3ea;
-  --border:  #cbd5e1;
-  --border2: #94a3b8;
-  --accent:  #2563eb;
-  --accent2: #7c3aed;
+  --accent:  #be3278;
+  --accent2: #8b2158;
   --accent3: #059669;
   --warn:    #d97706;
   --danger:  #dc2626;
@@ -48,8 +30,8 @@
   --bg4:     #1a1a1a;
   --border:  #222222;
   --border2: #333333;
-  --accent:  #4f8ef7;
-  --accent2: #7c3aed;
+  --accent:  #be3278;
+  --accent2: #8b2158;
   --accent3: #10b981;
   --warn:    #f59e0b;
   --danger:  #ef4444;

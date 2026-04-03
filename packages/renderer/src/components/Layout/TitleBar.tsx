@@ -1,4 +1,5 @@
 import React from 'react';
+import AriesLogo from '../../assets/aries_logo.svg';
 
 export default function TitleBar() {
   return (
@@ -13,20 +14,12 @@ export default function TitleBar() {
       }}
     >
       {/* Logo + nombre */}
-      <div className="titlebar-no-drag flex items-center gap-2.5 pointer-events-none">
-        {/* Ícono ARIES */}
-        <div
-          className="flex items-center justify-center rounded-md text-white font-black text-xs"
-          style={{
-            width: 22,
-            height: 22,
-            background: 'linear-gradient(135deg, var(--accent) 0%, var(--accent2) 100%)',
-            fontSize: 10,
-            letterSpacing: 0,
-          }}
-        >
-          A
-        </div>
+      <div className="titlebar-no-drag flex items-center gap-2 pointer-events-none">
+        <img
+          src={AriesLogo}
+          alt="ARIESPos"
+          style={{ width: 20, height: 20, objectFit: 'contain', filter: 'drop-shadow(0 0 4px rgba(190,50,120,0.5))' }}
+        />
         <span
           style={{
             fontFamily: "'Syne', sans-serif",

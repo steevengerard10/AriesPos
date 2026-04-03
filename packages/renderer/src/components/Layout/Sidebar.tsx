@@ -7,6 +7,7 @@ import {
 import { cn } from '../../lib/utils';
 import { useAppStore } from '../../store/useAppStore';
 import { useTranslation } from 'react-i18next';
+import AriesLogo from '../../assets/aries_logo.svg';
 
 interface NavItem {
   id: string;
@@ -92,17 +93,16 @@ export default function Sidebar() {
         title={sidebarCollapsed ? t('sidebar.expand') : t('sidebar.collapse')}
       >
         <div className="flex items-center gap-2.5 overflow-hidden">
-          <div
-            className="shrink-0 flex items-center justify-center rounded-lg text-white font-black"
+          <img
+            src={AriesLogo}
+            alt="ARIESPos"
             style={{
               width: 30, height: 30,
-              background: 'linear-gradient(135deg, var(--accent) 0%, var(--accent2) 100%)',
-              fontSize: 13,
-              boxShadow: '0 2px 8px rgba(79,142,247,0.4)',
+              objectFit: 'contain',
+              flexShrink: 0,
+              filter: 'drop-shadow(0 0 5px rgba(190,50,120,0.5))',
             }}
-          >
-            A
-          </div>
+          />
           {!sidebarCollapsed && (
             <span className="font-bold whitespace-nowrap" style={{ fontFamily: "'Syne', sans-serif", fontSize: 14, color: 'var(--text)' }}>
               ARIES<span style={{ color: 'var(--accent)' }}>Pos</span>

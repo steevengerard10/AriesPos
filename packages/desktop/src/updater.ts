@@ -24,9 +24,10 @@ autoUpdater.logger = {
 
 // Descargar automáticamente en background
 autoUpdater.autoDownload = true;
-// NO instalar automáticamente al cerrar — el usuario elige cuándo instalar
-// (evita el loop de "siempre descarga al abrir" cuando la instalación silenciosa falla)
-autoUpdater.autoInstallOnAppQuit = false;
+// Instalar automáticamente al cerrar — esto rompe el loop de re-descarga:
+// si el update se descargó pero el usuario no hizo clic en "Instalar ahora",
+// al cerrar la app se instala solo y la próxima apertura ya tiene versión nueva.
+autoUpdater.autoInstallOnAppQuit = true;
 
 export function initAutoUpdater(mainWindow: BrowserWindow): void {
   // Verificar actualizaciones al iniciar (silencioso si no hay nada)

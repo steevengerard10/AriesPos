@@ -1,6 +1,6 @@
 {
   "name": "@ariespos/desktop",
-  "version": "1.0.26",
+  "version": "1.0.28",
   "private": true,
   "main": "dist/main.js",
   "scripts": {
@@ -73,6 +73,10 @@
       {
         "from": "../../packages/renderer/dist",
         "to": "renderer"
+      },
+      {
+        "from": "../../packages/renderer/src/assets/aries_logo.svg",
+        "to": "logo/aries_logo.svg"
       }
     ],
     "win": {

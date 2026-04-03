@@ -1,0 +1,39 @@
+<svg viewBox="0 0 200 240" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Sombra exterior -->
+  <defs>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+  </defs>
+
+  <!-- Forma exterior completa del logo ARIES (flecha/cursor apuntando arriba) -->
+  <!-- Panel superior izquierdo (gris oscuro) -->
+  <polygon points="100,6  44,108  75,88" fill="#374151" stroke="white" stroke-width="2.5"/>
+  <!-- Panel superior derecho (magenta) -->
+  <polygon points="100,6  156,108  125,88  100,68" fill="#be3278" stroke="white" stroke-width="2.5"/>
+  <!-- Panel superior centro (gris medio) -->
+  <polygon points="100,6   100,68  75,88" fill="#6b7280" stroke="white" stroke-width="2.5"/>
+
+  <!-- Panel medio izquierdo ext (magenta) -->
+  <polygon points="44,108  18,180  62,155  75,88" fill="#be3278" stroke="white" stroke-width="2.5"/>
+  <!-- Panel medio centro izq (gris plata) -->
+  <polygon points="75,88   62,155  100,128  100,68" fill="#9ca3af" stroke="white" stroke-width="2.5"/>
+  <!-- Panel medio centro der (gris claro) -->
+  <polygon points="100,68  100,128  138,155  125,88" fill="#6b7280" stroke="white" stroke-width="2.5"/>
+  <!-- Panel medio right ext (magenta) -->
+  <polygon points="125,88  138,155  182,180  156,108" fill="#be3278" stroke="white" stroke-width="2.5"/>
+
+  <!-- Panel inferior izq grande (gris) -->
+  <polygon points="18,180  6,234   88,234  100,195 62,155" fill="#4b5563" stroke="white" stroke-width="2.5"/>
+  <!-- Panel inferior centro izq (gris plata) -->
+  <polygon points="62,155  100,195  100,128" fill="#9ca3af" stroke="white" stroke-width="2.5"/>
+  <!-- Panel inferior centro der (magenta oscuro, pequeño triángulo) -->
+  <polygon points="100,128  100,195  138,155" fill="#8b2158" stroke="white" stroke-width="2.5"/>
+  <!-- Panel inferior der grande (magenta) -->
+  <polygon points="138,155  100,195  112,234  194,234  182,180" fill="#be3278" stroke="white" stroke-width="2.5"/>
+
+  <!-- Borde exterior sutil -->
+  <polygon points="100,6  182,180  194,234  112,234  100,195  88,234  6,234  18,180" 
+           fill="none" stroke="white" stroke-width="3" stroke-linejoin="round"/>
+</svg>

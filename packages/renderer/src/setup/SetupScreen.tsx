@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { appAPI, networkAPI } from '../lib/api';
+import AriesLogo from '../assets/aries_logo.svg';
 
 interface SetupScreenProps {
   onComplete: () => void;
@@ -103,15 +104,19 @@ export function SetupScreen({ onComplete }: SetupScreenProps) {
       }}>
         {/* Logo */}
         <div style={{ textAlign: 'center', marginBottom: 28 }}>
-          <div style={{
-            width: 56, height: 56,
-            background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)',
-            borderRadius: 16, display: 'inline-flex',
-            alignItems: 'center', justifyContent: 'center',
-            fontWeight: 900, fontSize: 24, color: 'white', marginBottom: 12,
-          }}>A</div>
+          <img
+            src={AriesLogo}
+            alt="ARIESPos"
+            style={{
+              width: 72, height: 72,
+              objectFit: 'contain',
+              margin: '0 auto 12px',
+              display: 'block',
+              filter: 'drop-shadow(0 4px 20px rgba(190,50,120,0.5))',
+            }}
+          />
           <div style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-0.02em' }}>
-            ARIES<span style={{ color: '#3b82f6' }}>Pos</span>
+            ARIES<span style={{ color: '#be3278' }}>Pos</span>
           </div>
           <div style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>Configuración inicial</div>
         </div>
@@ -129,7 +134,7 @@ export function SetupScreen({ onComplete }: SetupScreenProps) {
                 onClick={setServer}
                 style={{
                   padding: '14px 20px', borderRadius: 12,
-                  background: '#3b82f6', color: 'white',
+                  background: '#be3278', color: 'white',
                   border: 'none', cursor: 'pointer',
                   fontWeight: 700, fontSize: 14, textAlign: 'left',
                 }}

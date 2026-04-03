@@ -12,8 +12,48 @@ import { isLicensed, validateLicenseKey, saveLicense, readSavedLicense } from '.
 let mainWindow: BrowserWindow | null = null;
 let posWindow: BrowserWindow | null = null;
 let networkWindow: BrowserWindow | null = null;
+let splashWindow: BrowserWindow | null = null;
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
+
+function createSplash(): void {
+  const logoPath = app.isPackaged
+    ? path.join(process.resourcesPath, 'logo', 'aries_logo.svg')
+    : path.join(__dirname, '../../packages/renderer/src/assets/aries_logo.svg');
+
+  splashWindow = new BrowserWindow({
+    width: 380,
+    height: 440,
+    frame: false,
+    transparent: true,
+    alwaysOnTop: true,
+    center: true,
+    resizable: false,
+    skipTaskbar: true,
+    icon: path.join(__dirname, '../assets/icon.ico'),
+    webPreferences: { contextIsolation: true, nodeIntegration: false },
+  });
+
+  const logoUrl = `file://${logoPath.replace(/\\/g, '/')}`;
+  splashWindow.loadURL(`data:text/html;charset=utf-8,<!DOCTYPE html>
+<html><body style="margin:0;background:transparent;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;height:100vh;
+  font-family:'Segoe UI',sans-serif;-webkit-app-region:drag">
+  <img src="${logoUrl}" style="width:120px;height:120px;object-fit:contain;
+    filter:drop-shadow(0 0 24px rgba(190,50,120,0.7))" />
+  <p style="color:#e2e8f0;font-size:20px;font-weight:700;margin:18px 0 4px;
+    letter-spacing:0.08em">ARIES<span style="color:#be3278">POS</span></p>
+  <p style="color:#64748b;font-size:11px;margin:0">Iniciando sistema...</p>
+  <div style="margin-top:22px;width:180px;height:3px;background:#1a1f2e;
+    border-radius:2px;overflow:hidden">
+    <div style="height:100%;background:linear-gradient(90deg,#8b2158,#be3278);
+      border-radius:2px;animation:ld 2.2s ease-in-out forwards" id="b"></div>
+  </div>
+  <style>@keyframes ld{0%{width:0}60%{width:65%}100%{width:100%}}</style>
+</body></html>`);
+
+  splashWindow.on('closed', () => { splashWindow = null; });
+}
 
 function createMainWindow(): void {
   mainWindow = new BrowserWindow({
@@ -34,7 +74,7 @@ function createMainWindow(): void {
       nodeIntegration: false,
       sandbox: false,
     },
-    icon: path.join(__dirname, '../assets/icon.png'),
+    icon: path.join(__dirname, process.platform === 'win32' ? '../assets/icon.ico' : '../assets/icon.png'),
     show: false,
   });
 
@@ -98,7 +138,7 @@ export function createPosWindow(): void {
       nodeIntegration: false,
       sandbox: false,
     },
-    icon: path.join(__dirname, '../assets/icon.png'),
+    icon: path.join(__dirname, process.platform === 'win32' ? '../assets/icon.ico' : '../assets/icon.png'),
     show: false,
   });
 
@@ -364,7 +404,19 @@ app.whenReady().then(async () => {
   }
 
   // Crear ventana principal (siempre carga el renderer de escritorio)
-  createMainWindow();
+  // En producción mostramos el splash mientras carga
+  if (app.isPackaged) {
+    createSplash();
+    createMainWindow();
+    mainWindow?.once('ready-to-show', () => {
+      setTimeout(() => {
+        splashWindow?.close();
+        mainWindow?.show();
+      }, 1200);
+    });
+  } else {
+    createMainWindow();
+  }
 
   // Actualizaciones automáticas (solo en producción)
   if (app.isPackaged && mainWindow) {

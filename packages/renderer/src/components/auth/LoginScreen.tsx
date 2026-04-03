@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import toast from 'react-hot-toast';
 import { useAppStore } from '../../store/useAppStore';
 import { usuariosAPI } from '../../lib/api';
+import AriesLogo from '../../assets/aries_logo.svg';
 
 interface LoginResult {
   id: number;
@@ -49,14 +50,24 @@ export const LoginScreen: React.FC = () => {
   };
 
   return (
-    <div className="flex h-screen items-center justify-center bg-slate-900 bg-[radial-gradient(ellipse_at_center,_#1e3a5f_0%,_#0f172a_70%)]">
+    <div className="flex h-screen items-center justify-center" style={{ background: '#0d0f14', backgroundImage: 'radial-gradient(ellipse at center, #1a1028 0%, #0d0f14 70%)' }}>
       <div className="w-80 space-y-8">
         {/* Logo */}
         <div className="text-center">
-          <div className="w-20 h-20 bg-blue-600 rounded-3xl flex items-center justify-center text-white font-black text-4xl mx-auto shadow-2xl shadow-blue-600/40">
-            A
-          </div>
-          <h1 className="text-3xl font-black text-white mt-4 tracking-tight">ARIESPos</h1>
+          <img
+            src={AriesLogo}
+            alt="ARIESPos"
+            style={{
+              width: 80, height: 80,
+              objectFit: 'contain',
+              margin: '0 auto 16px',
+              display: 'block',
+              filter: 'drop-shadow(0 4px 20px rgba(190,50,120,0.55))',
+            }}
+          />
+          <h1 className="text-3xl font-black text-white mt-4 tracking-tight">
+            ARIES<span style={{ color: '#be3278' }}>Pos</span>
+          </h1>
           <p className="text-slate-400 text-sm mt-1 tracking-widest uppercase">Punto de Venta</p>
         </div>
 
@@ -73,14 +84,15 @@ export const LoginScreen: React.FC = () => {
               onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 8))}
               onKeyDown={handleKeyPress}
               autoFocus
-              className="w-full bg-slate-800 border border-slate-600 rounded-xl px-5 py-4 text-center text-2xl font-mono tracking-[0.5em] text-white focus:outline-none focus:border-blue-500 transition-colors placeholder:text-slate-600 placeholder:tracking-normal placeholder:text-base"
+              className="w-full bg-slate-800 border border-slate-600 rounded-xl px-5 py-4 text-center text-2xl font-mono tracking-[0.5em] text-white focus:outline-none focus:border-[#be3278] transition-colors placeholder:text-slate-600 placeholder:tracking-normal placeholder:text-base"
             />
             {/* Indicadores de dígitos */}
             <div className="flex justify-center gap-2 mt-3">
               {Array.from({ length: Math.max(4, pin.length) }).map((_, i) => (
                 <div
                   key={i}
-                  className={`w-2.5 h-2.5 rounded-full transition-all ${i < pin.length ? 'bg-blue-500 scale-110' : 'bg-slate-600'}`}
+                  className={`w-2.5 h-2.5 rounded-full transition-all ${i < pin.length ? 'scale-110' : 'bg-slate-600'}`}
+                  style={i < pin.length ? { backgroundColor: '#be3278' } : {}}
                 />
               ))}
             </div>
@@ -89,7 +101,8 @@ export const LoginScreen: React.FC = () => {
           <button
             onClick={handleLogin}
             disabled={loading || pin.length < 4}
-            className="w-full py-4 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 disabled:text-slate-500 text-white rounded-xl font-bold text-lg transition-all active:scale-95 shadow-lg shadow-blue-600/30"
+            className="w-full py-4 text-white rounded-xl font-bold text-lg transition-all active:scale-95 shadow-lg disabled:bg-slate-700 disabled:text-slate-500"
+            style={loading || pin.length < 4 ? {} : { background: '#be3278', boxShadow: '0 4px 20px rgba(190,50,120,0.35)' }}
           >
             {loading ? (
               <span className="flex items-center justify-center gap-2">
