@@ -1,6 +1,6 @@
 {
   "name": "@ariespos/desktop",
-  "version": "1.0.43",
+  "version": "1.0.45",
   "private": true,
   "main": "dist/main.js",
   "scripts": {

@@ -163,17 +163,6 @@ export const POSWindow: React.FC = () => {
 
       const result = await ventasAPI.crear(payload) as { id: number; numero: string; venta: Record<string, unknown> };
 
-      // Imprimir ticket
-      const allConfig = await configAPI.getAll() as Record<string, string>;
-      const ticketHTML = generateTicketHTML(result.venta as Record<string, unknown>, cart as unknown as Record<string, unknown>[], allConfig);
-      const printWindow = window.open('', '_blank', 'width=400,height=600');
-      if (printWindow) {
-        printWindow.document.write(ticketHTML);
-        printWindow.document.close();
-        printWindow.print();
-        printWindow.close();
-      }
-
       toast.success(
         tipoOperacion === 'venta' ? `${t('pos.saleSaved')} #${result.numero}` :
         tipoOperacion === 'pedido' ? `${t('pos.orderSaved')} #${result.numero}` :
@@ -183,6 +172,19 @@ export const POSWindow: React.FC = () => {
 
       setShowPayment(false);
       resetSale();
+
+      // Imprimir ticket (fuera del try/catch principal para que un fallo al imprimir no cancele la venta)
+      try {
+        const allConfig = await configAPI.getAll() as Record<string, string>;
+        const ticketHTML = generateTicketHTML(result.venta as Record<string, unknown>, cart as unknown as Record<string, unknown>[], allConfig);
+        const printWindow = window.open('', '_blank', 'width=400,height=600');
+        if (printWindow) {
+          printWindow.document.write(ticketHTML);
+          printWindow.document.close();
+          printWindow.print();
+          printWindow.close();
+        }
+      } catch { /* no interrumpir si falla la impresión */ }
     } catch (err) {
       toast.error(t('pos.saleError'));
       console.error(err);

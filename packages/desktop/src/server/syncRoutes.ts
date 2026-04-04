@@ -476,6 +476,114 @@ export function createSyncRouter(io: SocketIOServer, exportFiadosToExcel: Export
 
   // ── VENTAS ──────────────────────────────────────────────────────────────
 
+  router.post('/ventas', (req: Request, res: Response) => {
+    const db = getDb();
+    const payload = req.body as {
+      items: { producto_id: number; cantidad: number; precio_unitario: number; descuento: number }[];
+      metodo_pago: string;
+      metodos_pago_mixto?: { metodo: string; monto: number }[];
+      cliente_id: number | null;
+      vendedor_id?: number | null;
+      es_fiado: boolean;
+      descuento: number;
+      tipo: string;
+      observaciones: string;
+    };
+
+    if (!payload?.items?.length) {
+      res.status(400).json({ error: 'items requeridos' });
+      return;
+    }
+
+    try {
+      const numero = `V${Date.now()}`;
+      const ahora = new Date();
+      const fecha = ahora.toISOString().split('T')[0];
+      const hora = ahora.toTimeString().split(' ')[0];
+      const tipo = payload.tipo || 'venta';
+      const descuento = payload.descuento || 0;
+      const subtotal = payload.items.reduce((s, i) => s + i.precio_unitario * i.cantidad, 0);
+      const total = Math.max(0, subtotal - descuento);
+
+      const sesionActiva = db.prepare(
+        `SELECT id FROM caja_sesiones WHERE fecha_cierre IS NULL ORDER BY id DESC LIMIT 1`
+      ).get() as { id: number } | undefined;
+
+      let ventaId = 0;
+
+      db.transaction(() => {
+        const result = db.prepare(`
+          INSERT INTO ventas (numero, tipo, estado, fecha, hora, cliente_id, vendedor_id,
+            subtotal, descuento, total, metodo_pago, es_fiado, observaciones)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          numero, tipo,
+          tipo === 'venta' ? (payload.es_fiado ? 'fiado' : 'completada') : 'abierto',
+          fecha, hora,
+          payload.cliente_id || null,
+          payload.vendedor_id || null,
+          subtotal, descuento, total,
+          payload.metodo_pago,
+          payload.es_fiado ? 1 : 0,
+          payload.observaciones || ''
+        );
+        ventaId = result.lastInsertRowid as number;
+
+        for (const item of payload.items) {
+          const itemTotal = item.precio_unitario * item.cantidad - (item.descuento || 0);
+          db.prepare(`
+            INSERT INTO venta_items (venta_id, producto_id, cantidad, precio_unitario, descuento, total)
+            VALUES (?, ?, ?, ?, ?, ?)
+          `).run(ventaId, item.producto_id, item.cantidad, item.precio_unitario, item.descuento || 0, itemTotal);
+
+          if (tipo === 'venta') {
+            const prod = db.prepare(`SELECT stock_actual FROM productos WHERE id = ?`).get(item.producto_id) as { stock_actual: number } | undefined;
+            const previo = prod?.stock_actual ?? 0;
+            const nuevo = previo - item.cantidad;
+            db.prepare(`UPDATE productos SET stock_actual = stock_actual - ?, updated_at = datetime('now') WHERE id = ?`).run(item.cantidad, item.producto_id);
+            db.prepare(`
+              INSERT INTO stock_movimientos (producto_id, tipo, cantidad, motivo, venta_id, stock_previo, stock_nuevo)
+              VALUES (?, 'salida', ?, ?, ?, ?, ?)
+            `).run(item.producto_id, item.cantidad, payload.es_fiado ? `Fiado #${numero}` : `Venta #${numero}`, ventaId, previo, nuevo);
+          }
+        }
+
+        if (tipo === 'venta' && !payload.es_fiado && sesionActiva) {
+          if (payload.metodos_pago_mixto && payload.metodos_pago_mixto.length > 0) {
+            for (const mp of payload.metodos_pago_mixto) {
+              db.prepare(`
+                INSERT INTO caja_movimientos (sesion_id, tipo, monto, descripcion, metodo_pago, venta_id)
+                VALUES (?, 'ingreso', ?, ?, ?, ?)
+              `).run(sesionActiva.id, mp.monto, `Venta #${numero}`, mp.metodo, ventaId);
+            }
+          } else {
+            db.prepare(`
+              INSERT INTO caja_movimientos (sesion_id, tipo, monto, descripcion, metodo_pago, venta_id)
+              VALUES (?, 'ingreso', ?, ?, ?, ?)
+            `).run(sesionActiva.id, total, `Venta #${numero}`, payload.metodo_pago, ventaId);
+          }
+        }
+      })();
+
+      const ventaCompleta = db.prepare(
+        `SELECT v.*, c.nombre as cliente_nombre FROM ventas v LEFT JOIN clientes c ON v.cliente_id = c.id WHERE v.id = ?`
+      ).get(ventaId) as Record<string, unknown>;
+
+      emit('venta:nueva', { venta: ventaCompleta, total });
+      emit('producto:actualizado', { reload: true });
+
+      if (payload.es_fiado && payload.cliente_id) {
+        emit('fiados:list-changed', { clienteId: payload.cliente_id });
+        try { exportFiadosToExcel(db); } catch { /* silencioso */ }
+      }
+
+      res.json({ id: ventaId, numero, venta: ventaCompleta });
+    } catch (err) {
+      console.error('[POST /api/sync/ventas]', err);
+      res.status(500).json({ error: 'Error interno al crear la venta' });
+    }
+  });
+
   router.get('/ventas/historico', (req, res) => {
     const db = getDb();
     const { desde, hasta, tipo, cliente_id, vendedor_id } = req.query as Record<string, string>;
