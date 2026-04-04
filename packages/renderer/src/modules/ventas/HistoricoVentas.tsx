@@ -3,7 +3,7 @@ import {
   ShoppingBag, Search, RefreshCw, RotateCcw, Eye, Edit2, Check
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { ventasAPI } from '../../lib/api';
+import { ventasAPI, onEvent } from '../../lib/api';
 import { Modal } from '../../components/shared/Modal';
 import { formatCurrency, formatDate } from '../../lib/utils';
 import { useTranslation } from 'react-i18next';
@@ -92,6 +92,12 @@ export const HistoricoVentas: React.FC = () => {
   };
 
   useEffect(() => { loadData(); }, [desde, hasta]);
+
+  // Recargar cuando el servidor notifica nueva venta (usado en modo cliente/red)
+  useEffect(() => {
+    const cleanup = onEvent('venta:nueva', () => loadData());
+    return cleanup;
+  }, [desde, hasta]);
 
   const handleVerDetalle = async (v: Venta) => {
     const detalle = await ventasAPI.getById(v.id) as Venta;

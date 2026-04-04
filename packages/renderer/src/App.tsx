@@ -27,6 +27,7 @@ import { useAlertMonitorStore } from './store/useAlertMonitorStore';
 import { SetupScreen } from './setup/SetupScreen';
 import NetworkSetupWindow from './screens/NetworkSetupWindow';
 import { LicenseScreen } from './screens/LicenseScreen';
+import { ConnectionLostScreen } from './screens/ConnectionLostScreen';
 import { UpdateNotification } from './components/shared/UpdateNotification';
 import './i18n';
 import i18n from './i18n';
@@ -170,6 +171,8 @@ const App: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [showSetup, setShowSetup] = useState(false);
   const [licensed, setLicensed] = useState<boolean | null>(null);
+  const [connectionLost, setConnectionLost] = useState(false);
+  const [connectionServerIP, setConnectionServerIP] = useState('');
 
   // Aplicar tema guardado al montar y cuando cambia
   useEffect(() => {
@@ -196,6 +199,11 @@ const App: React.FC = () => {
           return;
         }
 
+        // Si es modo cliente, guardar la IP del servidor para mostrar en pantalla de conexión perdida
+        if (appCfg?.mode === 'client' && appCfg.serverIP) {
+          setConnectionServerIP(appCfg.serverIP);
+        }
+
         const [cfg, ipInfo] = await Promise.all([
           configAPI.getAll() as Promise<Record<string, string>>,
           appAPI.getServerInfo(),
@@ -217,9 +225,19 @@ const App: React.FC = () => {
     init();
   }, []);
 
+  // Escuchar eventos de conexión (solo relevante en modo cliente)
+  useEffect(() => {
+    if (!connectionServerIP) return;
+    const cleanup = onEvent('connection:status', (status: unknown) => {
+      setConnectionLost(status === 'disconnected');
+    });
+    return cleanup;
+  }, [connectionServerIP]);
+
   if (loading) return <SplashScreen />;
   if (licensed === false) return <LicenseScreen onActivated={() => setLicensed(true)} />;
   if (showSetup) return <SetupScreen onComplete={() => setShowSetup(false)} />;
+  if (connectionLost) return <ConnectionLostScreen serverIP={connectionServerIP} />;
 
     return (
       <HashRouter

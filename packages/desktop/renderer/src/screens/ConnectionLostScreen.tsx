@@ -26,7 +26,11 @@ export const ConnectionLostScreen = ({ serverIP }: { serverIP: string }) => {
         Reintentando conexión... (intento {attempts})
       </div>
       <button
-        onClick={() => window.electronAPI.resetConfig()}
+        onClick={() => {
+        ;(window as any).electron.invoke('app:resetAppConfig').then(() => {
+          ;(window as any).electron.invoke('app:restart')
+        })
+      }}
         className={styles.button}
       >
         Cambiar configuración de servidor

@@ -968,6 +968,11 @@ export function emitToWeb(event: string, data: unknown): void {
       }
     }
   } catch { /* ignorar si electron no está disponible */ }
+  // Marcar cambio en configuracion para que el polling de clientes lo detecte
+  try {
+    const db = getDb();
+    db.prepare(`INSERT OR REPLACE INTO configuracion (clave, valor) VALUES ('last_data_change', ?)`).run(new Date().toISOString());
+  } catch { /* ignorar */ }
 }
 
 function getDashboardStats() {

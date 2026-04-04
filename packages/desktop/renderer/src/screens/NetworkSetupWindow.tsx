@@ -10,7 +10,7 @@ const NetworkSetupWindow = () => {
   const handleConnect = () => {
     setStatus('connecting');
     setError('');
-    window.electronAPI.saveNetworkConfig({ mode, serverIP, port })
+    ;(window as any).electron.invoke('app:setAppConfig', { mode, serverIP, port })
       .then(() => {
         setStatus('connected');
       })

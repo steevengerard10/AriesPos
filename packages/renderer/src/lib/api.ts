@@ -217,6 +217,8 @@ export const appAPI = {
   switchToClientMode: (data: { ip: string; port: number; terminalName: string }) => invoke('app:switchToClientMode', data),
   testServerConnection: (data: { ip: string; port: number }) => invoke<{ ok: boolean; error?: string }>('app:testServerConnection', data),
   validateAdminCode: (code: string) => invoke<boolean>('app:validateAdminCode', code),
+  resetAppConfig: () => invoke('app:resetAppConfig'),
+  restartApp: () => invoke('app:restart'),
 };
 
 // ── LIBRO DE CAJA ──────────────────────────────────────────────────

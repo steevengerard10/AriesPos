@@ -13,11 +13,11 @@ function AppRouterInner() {
 
   useEffect(() => {
     // Escuchar cambios de conexión desde preload
-    const remove = window.electronAPI.onConnectionChange((status: string) => {
+    const remove = (window as any).electron.onConnectionChange((status: string) => {
       setConnectionStatus(status as any)
       if ((status === 'disconnected' || status === 'reconnecting') && location.pathname !== '/offline') {
         // Obtener IP del servidor desde config
-        window.electronAPI.getAppMode().then((config: any) => {
+        ;(window as any).electron.invoke('app:getAppConfig').then((config: any) => {
           setServerIP(config.serverIP || '')
           navigate('/offline', { replace: true })
         })

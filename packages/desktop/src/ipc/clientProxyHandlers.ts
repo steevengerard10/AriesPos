@@ -458,23 +458,52 @@ export function registerClientProxyHandlers(serverIP: string, port: number, serv
   // No registrar aquí para evitar duplicado — main.ts los registra antes.
 
   // ── POLLING DE SINCRONIZACIÓN ─────────────────────────────────────────────
-  // Cada 20 segundos consulta el servidor si hubo cambios en productos.
-  // Si el timestamp cambió, emite 'producto:actualizado' al renderer para que recargue.
-  let _lastProductTs = '';
+  // Cada 5 segundos consulta el servidor si hubo cambios en productos o ventas.
+  // Si el timestamp cambió, emite los eventos al renderer para que recargue.
+  // También monitorea el estado de conexión y avisa al renderer cuando cae o vuelve.
+  let _lastTs = '';
+  let _failCount = 0;
+  let _connectionLost = false;
+
+  function broadcastToWindows(event: string, data: unknown) {
+    BrowserWindow.getAllWindows().forEach(win => {
+      if (!win.isDestroyed()) win.webContents.send(event, data);
+    });
+  }
+
   const _syncInterval = setInterval(async () => {
     try {
-      const result = await get('/api/sync/productos/last-update') as { ts: string };
-      if (result.ts && result.ts !== _lastProductTs) {
-        if (_lastProductTs !== '') {
-          // Hubo un cambio — notificar a todas las ventanas del renderer
-          BrowserWindow.getAllWindows().forEach(win => {
-            win.webContents.send('producto:actualizado', { reload: true });
-          });
-        }
-        _lastProductTs = result.ts;
+      const result = await get('/api/sync/last-changed') as { ts: string };
+      // Conexión recuperada
+      if (_connectionLost) {
+        _connectionLost = false;
+        _failCount = 0;
+        broadcastToWindows('connection:status', 'connected');
+        // Recargar todo tras reconexión
+        broadcastToWindows('producto:actualizado', { reload: true });
+        broadcastToWindows('venta:nueva', { reload: true });
+        broadcastToWindows('stock:actualizado', { reload: true });
+      } else {
+        _failCount = 0;
       }
-    } catch { /* servidor no disponible — ignorar */ }
-  }, 20_000);
+      if (result.ts && result.ts !== _lastTs) {
+        if (_lastTs !== '') {
+          // Hubo un cambio — notificar a todas las ventanas del renderer
+          broadcastToWindows('producto:actualizado', { reload: true });
+          broadcastToWindows('venta:nueva', { reload: true });
+          broadcastToWindows('stock:actualizado', { reload: true });
+        }
+        _lastTs = result.ts;
+      }
+    } catch {
+      _failCount++;
+      // Después de 2 fallos consecutivos, informar al renderer
+      if (_failCount >= 2 && !_connectionLost) {
+        _connectionLost = true;
+        broadcastToWindows('connection:status', 'disconnected');
+      }
+    }
+  }, 5_000);
 
   // Limpiar el interval cuando la app se cierre
   const { app } = require('electron');

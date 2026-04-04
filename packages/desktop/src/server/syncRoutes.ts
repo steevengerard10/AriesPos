@@ -32,22 +32,49 @@ export function createSyncRouter(io: SocketIOServer, exportFiadosToExcel: Export
         if (!win.isDestroyed()) win.webContents.send(event, data);
       }
     } catch { /* ignorar */ }
+    // Marcar cambio para que el polling de clientes lo detecte
+    markChanged();
+  }
+
+  // ── HELPER: marca un cambio en configuracion para que el polling lo detecte ──
+  function markChanged(): void {
+    try {
+      const db = getDb();
+      const ts = new Date().toISOString();
+      db.prepare(`INSERT OR REPLACE INTO configuracion (clave, valor) VALUES ('last_data_change', ?)`).run(ts);
+    } catch { /* ignorar */ }
   }
 
   // ── ENDPOINT DE DETECCIÓN DE CAMBIOS (para polling de clientes) ────────────
   router.get('/last-changed', (_req, res) => {
-    const db = getDb();
-    const row = db.prepare(`
-      SELECT MAX(updated_at) as ts
-      FROM (
-        SELECT MAX(updated_at) as updated_at FROM productos
-        UNION ALL
-        SELECT MAX(created_at) as updated_at FROM ventas
-        UNION ALL
-        SELECT MAX(updated_at) as updated_at FROM clientes
-      )
-    `).get() as { ts: string | null };
-    res.json({ ts: row?.ts || new Date().toISOString() });
+    try {
+      const db = getDb();
+      const candidates: string[] = ['1970-01-01'];
+      // Clave dedicada (se actualiza en cada emit/mutación)
+      try {
+        const cfgRow = db.prepare(`SELECT valor FROM configuracion WHERE clave = 'last_data_change'`).get() as { valor: string } | undefined;
+        if (cfgRow?.valor) candidates.push(cfgRow.valor);
+      } catch { /* ignorar */ }
+      // Fallback: MAX de timestamps de tablas
+      try {
+        const row = db.prepare(`
+          SELECT MAX(ts) as ts FROM (
+            SELECT COALESCE(MAX(updated_at), '1970-01-01') as ts FROM productos
+            UNION ALL
+            SELECT COALESCE(MAX(created_at), '1970-01-01') as ts FROM ventas
+            UNION ALL
+            SELECT COALESCE(MAX(created_at), '1970-01-01') as ts FROM clientes
+          )
+        `).get() as { ts: string | null };
+        if (row?.ts) candidates.push(row.ts);
+      } catch { /* ignorar */ }
+      // Devolver el más reciente
+      const ts = candidates.sort().pop()!;
+      res.json({ ts });
+    } catch (err) {
+      console.error('[syncRoutes] /last-changed error:', err);
+      res.json({ ts: new Date(0).toISOString() });
+    }
   });
 
   // ── PRODUCTOS ──────────────────────────────────────────────────────────────
@@ -380,6 +407,7 @@ export function createSyncRouter(io: SocketIOServer, exportFiadosToExcel: Export
       INSERT INTO clientes (nombre, apellido, telefono, email, direccion, documento, limite_credito)
       VALUES (@nombre, @apellido, @telefono, @email, @direccion, @documento, @limite_credito)
     `).run(data);
+    emit('cliente:actualizado', { id: result.lastInsertRowid });
     res.json({ id: result.lastInsertRowid });
   });
 
@@ -391,11 +419,13 @@ export function createSyncRouter(io: SocketIOServer, exportFiadosToExcel: Export
     if (!Object.keys(filtered).length) { res.json({ success: true }); return; }
     const fields = Object.keys(filtered).map(k => `${k} = @${k}`).join(', ');
     db.prepare(`UPDATE clientes SET ${fields} WHERE id = @id`).run({ ...filtered, id });
+    emit('cliente:actualizado', { id });
     res.json({ success: true });
   });
 
   router.delete('/clientes/:id', (req, res) => {
     getDb().prepare(`DELETE FROM clientes WHERE id = ?`).run(parseInt(req.params.id));
+    emit('cliente:actualizado', { reload: true });
     res.json({ success: true });
   });
 
