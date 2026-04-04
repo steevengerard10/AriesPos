@@ -91,6 +91,7 @@ export const ProductosModule: React.FC = () => {
   const [confirmDeleteSelected, setConfirmDeleteSelected] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const csvRef = useRef<HTMLInputElement>(null);
+  const ignoringSync = useRef(false);
 
   // Shortcut Insert o F2 para abrir formulario nuevo producto
   useEffect(() => {
@@ -137,17 +138,28 @@ export const ProductosModule: React.FC = () => {
   useEffect(() => {
     const w = window as unknown as { electron?: { on: (ch: string, cb: () => void) => (() => void) } };
     if (!w.electron) return;
-    const cleanup = w.electron.on('producto:actualizado', () => loadData(0));
+    const cleanup = w.electron.on('producto:actualizado', () => {
+      if (ignoringSync.current) return; // evitar reload cuando nosotros mismos guardamos
+      loadData(0);
+    });
     return cleanup;
   }, []);
 
   const handleSave = async () => {
     try {
       if (editingId) {
+        ignoringSync.current = true;
         await productosAPI.update(editingId, formData as unknown as Record<string, unknown>);
         if (pendingImage) {
           await productosAPI.saveImage(editingId, pendingImage);
         }
+        // Actualizar solo ese producto en el array local — sin recargar toda la lista ni perder el scroll
+        setProductos(prev => prev.map(p =>
+          p.id === editingId
+            ? { ...p, ...formData, imagen_path: pendingImage ? pendingImage : p.imagen_path }
+            : p
+        ));
+        setTimeout(() => { ignoringSync.current = false; }, 3000);
         toast.success(t('prod.updated'));
       } else {
         const result = await productosAPI.create(formData as unknown as Record<string, unknown>);
@@ -156,13 +168,13 @@ export const ProductosModule: React.FC = () => {
           await productosAPI.saveImage(newId, pendingImage);
         }
         toast.success(t('prod.created'));
+        loadData();
       }
       setShowForm(false);
       setEditingId(null);
       setFormData(defaultProducto);
       setPendingImage(null);
       setMargenPct('');
-      loadData();
     } catch (err) {
       toast.error(t('prod.saveError'));
     }
