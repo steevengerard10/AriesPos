@@ -1726,22 +1726,37 @@ export function registerIpcHandlers(): void {
     const totalEgresos = (db.prepare(`
       SELECT COALESCE(SUM(monto), 0) as total FROM libro_caja_egresos WHERE dia_id = ?
     `).get(dia.id) as { total: number }).total;
-    db.prepare(`UPDATE libro_caja_dias SET egresos = ?, updated_at = datetime('now') WHERE id = ?`)
-      .run(totalEgresos, dia.id);
 
-    return { id: result.lastInsertRowid, totalEgresos };
+    // Descontar del campo según medio_pago
+    if (medioPago === 'efectivo') {
+      db.prepare(`UPDATE libro_caja_dias SET egresos = ?, caja = MAX(0, COALESCE(caja, 0) - ?), updated_at = datetime('now') WHERE id = ?`)
+        .run(totalEgresos, data.monto, dia.id);
+    } else {
+      db.prepare(`UPDATE libro_caja_dias SET egresos = ?, transferencias = MAX(0, COALESCE(transferencias, 0) - ?), updated_at = datetime('now') WHERE id = ?`)
+        .run(totalEgresos, data.monto, dia.id);
+    }
+
+    const updatedDia = db.prepare(`SELECT caja, transferencias FROM libro_caja_dias WHERE id = ?`).get(dia.id) as { caja: number; transferencias: number };
+    return { id: result.lastInsertRowid, totalEgresos, caja: updatedDia.caja, transferencias: updatedDia.transferencias };
   });
 
   ipcMain.handle('librocaja:removeEgreso', (_e, egresoId: number, fecha: string) => {
     const db = getDb();
     const dia = db.prepare(`SELECT id FROM libro_caja_dias WHERE fecha = ?`).get(fecha) as { id: number } | undefined;
+    const egreso = db.prepare(`SELECT monto, medio_pago FROM libro_caja_egresos WHERE id = ?`).get(egresoId) as { monto: number; medio_pago: string } | undefined;
     db.prepare(`DELETE FROM libro_caja_egresos WHERE id = ?`).run(egresoId);
-    if (dia) {
+    if (dia && egreso) {
       const totalEgresos = (db.prepare(`
         SELECT COALESCE(SUM(monto), 0) as total FROM libro_caja_egresos WHERE dia_id = ?
       `).get(dia.id) as { total: number }).total;
-      db.prepare(`UPDATE libro_caja_dias SET egresos = ?, updated_at = datetime('now') WHERE id = ?`)
-        .run(totalEgresos, dia.id);
+      // Restaurar al campo correspondiente
+      if (egreso.medio_pago === 'efectivo') {
+        db.prepare(`UPDATE libro_caja_dias SET egresos = ?, caja = COALESCE(caja, 0) + ?, updated_at = datetime('now') WHERE id = ?`)
+          .run(totalEgresos, egreso.monto, dia.id);
+      } else {
+        db.prepare(`UPDATE libro_caja_dias SET egresos = ?, transferencias = COALESCE(transferencias, 0) + ?, updated_at = datetime('now') WHERE id = ?`)
+          .run(totalEgresos, egreso.monto, dia.id);
+      }
     }
     return { success: true };
   });

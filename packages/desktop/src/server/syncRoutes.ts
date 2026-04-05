@@ -1133,22 +1133,32 @@ export function createSyncRouter(io: SocketIOServer, exportFiadosToExcel: Export
     const db = getDb();
     const { fecha } = req.params;
     const { proveedor, monto, medio_pago = 'efectivo' } = req.body as { proveedor: string; monto: number; medio_pago?: string };
+    const medioPago = medio_pago === 'transferencia' ? 'transferencia' : 'efectivo';
     db.prepare(`INSERT OR IGNORE INTO libro_caja_dias (fecha) VALUES (?)`).run(fecha);
     const dia = db.prepare(`SELECT id FROM libro_caja_dias WHERE fecha = ?`).get(fecha) as { id: number };
-    const result = db.prepare(`INSERT INTO libro_caja_egresos (dia_id, proveedor, monto, medio_pago) VALUES (?, ?, ?, ?)`).run(dia.id, proveedor, monto, medio_pago);
+    const result = db.prepare(`INSERT INTO libro_caja_egresos (dia_id, proveedor, monto, medio_pago) VALUES (?, ?, ?, ?)`).run(dia.id, proveedor, monto, medioPago);
     const total = (db.prepare(`SELECT COALESCE(SUM(monto),0) as t FROM libro_caja_egresos WHERE dia_id = ?`).get(dia.id) as { t: number }).t;
-    db.prepare(`UPDATE libro_caja_dias SET egresos = ?, updated_at = datetime('now') WHERE id = ?`).run(total, dia.id);
-    res.json({ id: result.lastInsertRowid });
+    if (medioPago === 'efectivo') {
+      db.prepare(`UPDATE libro_caja_dias SET egresos = ?, caja = MAX(0, COALESCE(caja, 0) - ?), updated_at = datetime('now') WHERE id = ?`).run(total, monto, dia.id);
+    } else {
+      db.prepare(`UPDATE libro_caja_dias SET egresos = ?, transferencias = MAX(0, COALESCE(transferencias, 0) - ?), updated_at = datetime('now') WHERE id = ?`).run(total, monto, dia.id);
+    }
+    const updatedDia = db.prepare(`SELECT caja, transferencias FROM libro_caja_dias WHERE id = ?`).get(dia.id) as { caja: number; transferencias: number };
+    res.json({ id: result.lastInsertRowid, totalEgresos: total, caja: updatedDia.caja, transferencias: updatedDia.transferencias });
   });
 
   router.delete('/librocaja/egreso/:id', (req, res) => {
     const db = getDb();
     const id = parseInt(req.params.id);
-    const egreso = db.prepare(`SELECT dia_id, monto FROM libro_caja_egresos WHERE id = ?`).get(id) as { dia_id: number; monto: number } | undefined;
+    const egreso = db.prepare(`SELECT dia_id, monto, medio_pago FROM libro_caja_egresos WHERE id = ?`).get(id) as { dia_id: number; monto: number; medio_pago: string } | undefined;
     if (!egreso) { res.status(404).json({ error: 'Egreso no encontrado' }); return; }
     db.prepare(`DELETE FROM libro_caja_egresos WHERE id = ?`).run(id);
     const total = (db.prepare(`SELECT COALESCE(SUM(monto),0) as t FROM libro_caja_egresos WHERE dia_id = ?`).get(egreso.dia_id) as { t: number }).t;
-    db.prepare(`UPDATE libro_caja_dias SET egresos = ?, updated_at = datetime('now') WHERE id = ?`).run(total, egreso.dia_id);
+    if (egreso.medio_pago === 'efectivo') {
+      db.prepare(`UPDATE libro_caja_dias SET egresos = ?, caja = COALESCE(caja, 0) + ?, updated_at = datetime('now') WHERE id = ?`).run(total, egreso.monto, egreso.dia_id);
+    } else {
+      db.prepare(`UPDATE libro_caja_dias SET egresos = ?, transferencias = COALESCE(transferencias, 0) + ?, updated_at = datetime('now') WHERE id = ?`).run(total, egreso.monto, egreso.dia_id);
+    }
     res.json({ success: true });
   });
 

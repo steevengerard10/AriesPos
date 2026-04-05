@@ -138,7 +138,7 @@ export const useLibroCajaStore = create<LibroCajaState>((set, get) => ({
 
   addEgreso: async (proveedor, monto, medio_pago) => {
     const fecha = get().fechaSeleccionada;
-    const { id, totalEgresos } = await libroCajaAPI.addEgreso(fecha, { proveedor, monto, medio_pago });
+    const { id, totalEgresos, caja, transferencias } = await libroCajaAPI.addEgreso(fecha, { proveedor, monto, medio_pago });
     const nuevoEgreso: LibroCajaEgreso = {
       id: id as number,
       dia_id: get().diaActual?.id ?? 0,
@@ -149,7 +149,12 @@ export const useLibroCajaStore = create<LibroCajaState>((set, get) => ({
     };
     set(s => ({
       egresos: [nuevoEgreso, ...s.egresos],
-      diaActual: s.diaActual ? { ...s.diaActual, egresos: totalEgresos } : s.diaActual,
+      diaActual: s.diaActual ? {
+        ...s.diaActual,
+        egresos: totalEgresos,
+        caja: medio_pago === 'efectivo' ? caja : s.diaActual.caja,
+        transferencias: medio_pago === 'transferencia' ? transferencias : s.diaActual.transferencias,
+      } : s.diaActual,
     }));
     get().cargarHistorico();
   },

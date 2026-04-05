@@ -285,7 +285,7 @@ export const libroCajaAPI = {
   updateBilletes: (fecha: string, billetes: { denominacion: number; cantidad: number }[]) =>
     invoke<{ success: boolean }>('librocaja:updateBilletes', fecha, billetes),
   addEgreso: (fecha: string, data: { proveedor: string; monto: number; medio_pago: 'efectivo' | 'transferencia' }) =>
-    invoke<{ id: number; totalEgresos: number }>('librocaja:addEgreso', fecha, data),
+    invoke<{ id: number; totalEgresos: number; caja: number; transferencias: number }>('librocaja:addEgreso', fecha, data),
   removeEgreso: (egresoId: number, fecha: string) =>
     invoke<{ success: boolean }>('librocaja:removeEgreso', egresoId, fecha),
   exportExcel: (desde: string, hasta: string) =>
