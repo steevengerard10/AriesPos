@@ -2,7 +2,7 @@
 import {
   ShoppingCart, Users, Package, Archive, Wallet,
   BarChart2, CreditCard, HelpCircle, Settings,
-  ChevronRight, ChevronLeft, LayoutDashboard, Layers, PlayCircle, BookOpen,
+  ChevronRight, ChevronLeft, LayoutDashboard, Layers, PlayCircle, BookOpen, Lock,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useAppStore } from '../../store/useAppStore';
@@ -135,6 +135,7 @@ export default function Sidebar() {
                   {!sidebarCollapsed && (
                     <>
                       <span className="flex-1 truncate">{item.label}</span>
+                      {!enabled && !isAdmin && <Lock size={11} className="shrink-0 text-slate-500" />}
                       {item.badge && (
                         <span className={cn('badge text-xs', BADGE_COLORS[item.badgeColor ?? 'blue'])}>{item.badge}</span>
                       )}

@@ -44,6 +44,7 @@ const TABS = [
   { id: 'idioma', label: 'Idioma' },
   { id: 'apariencia', label: 'Apariencia' },
   { id: 'firma', label: 'Firma 🛡️' },
+  { id: 'acceso', label: 'Control de Acceso 🔐' },
 ];
 
 const TEMAS: { id: AppTheme; nombre: string; bg: string; bg2: string; accent: string; text: string; border: string }[] = [
@@ -57,7 +58,8 @@ const TEMAS: { id: AppTheme; nombre: string; bg: string; bg2: string; accent: st
 export const ConfiguracionModule: React.FC = () => {
   const [tab, setTab] = useState('negocio');
   const { t } = useTranslation();
-  const { theme, setTheme } = useAppStore();
+  const { theme, setTheme, currentUser } = useAppStore();
+  const isAdmin = currentUser?.rol === 'admin';
   const [config, setConfig] = useState<Record<string, string>>({});
   const [backups, setBackups] = useState<BackupInfo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -284,27 +286,7 @@ export const ConfiguracionModule: React.FC = () => {
           <div className="max-w-xl space-y-6">
             <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wider">Servidor Web</h2>
 
-            {/* NUEVO: Habilitar/deshabilitar módulos */}
-            <div className="bg-slate-800 border border-slate-700 rounded-xl p-5 mb-6">
-              <h3 className="text-sm font-semibold text-white mb-2">Módulos habilitados para cajeros</h3>
-              <div className="space-y-2">
-                {[{id:'ventas',nombre:'Ventas'},{id:'clientes',nombre:'Clientes'},{id:'stock',nombre:'Stock'},{id:'estadisticas',nombre:'Estadísticas'},{id:'caja',nombre:'Caja'},{id:'librocaja',nombre:'Libro Caja'},{id:'productos',nombre:'Productos'},{id:'configuracion',nombre:'Configuración'}].map((mod) => (
-                  <div key={mod.id} className="flex items-center gap-3">
-                    <input
-                      type="checkbox"
-                      id={`modulo_${mod.id}`}
-                      checked={config[`modulo_${mod.id}`] !== 'false'}
-                      onChange={e => setField(`modulo_${mod.id}`, e.target.checked ? 'true' : 'false')}
-                      className="w-4 h-4 rounded"
-                    />
-                    <label htmlFor={`modulo_${mod.id}`} className="text-sm text-slate-300 cursor-pointer">{mod.nombre}</label>
-                  </div>
-                ))}
-              </div>
-              <p className="text-xs text-slate-500 mt-2">Solo los módulos seleccionados estarán visibles y accesibles para los cajeros.</p>
-            </div>
-
-            <div className="bg-slate-800 border border-slate-700 rounded-xl p-5 space-y-4">
+            <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
               <div className="flex items-center gap-3">
                 <Wifi size={20} className="text-green-400" />
                 <div>
@@ -629,6 +611,93 @@ export const ConfiguracionModule: React.FC = () => {
               </span>
               {' — '}{IDIOMAS.find(l => l.code === i18n.language)?.name}
             </p>
+          </div>
+        )}
+
+        {/* ── CONTROL DE ACCESO ── */}
+        {tab === 'acceso' && (
+          <div className="max-w-xl space-y-5">
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-lg" style={{ background: 'rgba(79,142,247,0.12)', border: '1px solid rgba(79,142,247,0.25)' }}>
+                <Lock size={20} className="text-blue-400" />
+              </div>
+              <div>
+                <h2 className="font-bold text-base" style={{ color: 'var(--text)' }}>Control de Acceso</h2>
+                <p className="text-xs" style={{ color: 'var(--text3)' }}>
+                  Configurá qué módulos pueden usar los cajeros en esta PC.
+                </p>
+              </div>
+            </div>
+
+            {!isAdmin ? (
+              <div className="rounded-xl p-5 flex items-center gap-4" style={{ background: 'var(--bg3)', border: '1px solid var(--border)' }}>
+                <Lock size={22} className="text-slate-500 shrink-0" />
+                <div>
+                  <p className="font-semibold text-sm" style={{ color: 'var(--text)' }}>Solo administradores</p>
+                  <p className="text-xs mt-0.5" style={{ color: 'var(--text3)' }}>
+                    Necesitás iniciar sesión como administrador para modificar el acceso a módulos.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <>
+                {/* Módulos habilitados para cajeros */}
+                <div className="rounded-xl p-5 space-y-4" style={{ background: 'var(--bg3)', border: '1px solid var(--border)' }}>
+                  <h3 className="text-sm font-semibold" style={{ color: 'var(--text)' }}>Módulos habilitados para cajeros</h3>
+                  <p className="text-xs" style={{ color: 'var(--text3)' }}>
+                    Los módulos desactivados mostrarán un candado 🔒 para los cajeros y no podrán accederse.
+                  </p>
+                  <div className="space-y-3">
+                    {[
+                      { id: 'ventas',        nombre: 'Ventas',         desc: 'Historial y gestión de ventas' },
+                      { id: 'clientes',      nombre: 'Clientes',       desc: 'Gestión de clientes y fiados' },
+                      { id: 'productos',     nombre: 'Productos',      desc: 'ABM de productos y precios' },
+                      { id: 'stock',         nombre: 'Stock',          desc: 'Control de inventario' },
+                      { id: 'estadisticas',  nombre: 'Estadísticas',   desc: 'Reportes y análisis de ventas' },
+                      { id: 'caja',          nombre: 'Caja',           desc: 'Apertura y cierre de caja' },
+                      { id: 'librocaja',     nombre: 'Libro de Caja',  desc: 'Registro diario de movimientos' },
+                      { id: 'configuracion', nombre: 'Configuración',  desc: 'Ajustes del sistema' },
+                    ].map((mod) => (
+                      <div key={mod.id} className="flex items-center justify-between py-2 border-b border-slate-700/50 last:border-0">
+                        <div>
+                          <div className="text-sm font-medium" style={{ color: 'var(--text)' }}>{mod.nombre}</div>
+                          <div className="text-xs" style={{ color: 'var(--text3)' }}>{mod.desc}</div>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                          <input
+                            type="checkbox"
+                            className="sr-only peer"
+                            checked={config[`modulo_${mod.id}`] !== 'false'}
+                            onChange={e => setField(`modulo_${mod.id}`, e.target.checked ? 'true' : 'false')}
+                          />
+                          <div className="w-10 h-5 bg-slate-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-5 peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-500"></div>
+                        </label>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-xs text-amber-400 mt-1">⚠️ Guardá los cambios para que tomen efecto.</p>
+                </div>
+
+                {/* PIN de administrador */}
+                <div className="rounded-xl p-5 space-y-3" style={{ background: 'var(--bg3)', border: '1px solid var(--border)' }}>
+                  <h3 className="text-sm font-semibold" style={{ color: 'var(--text)' }}>Código de administrador</h3>
+                  <p className="text-xs" style={{ color: 'var(--text3)' }}>
+                    PIN numérico que identifica al administrador de esta caja. Dejalo en blanco para no usar código.
+                  </p>
+                  <div>
+                    <label className="label">Código / PIN</label>
+                    <input
+                      className="input max-w-xs font-mono tracking-widest"
+                      type="password"
+                      maxLength={12}
+                      placeholder="••••"
+                      value={config['pin_admin'] || ''}
+                      onChange={e => setField('pin_admin', e.target.value)}
+                    />
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         )}
 

@@ -527,7 +527,7 @@ const PanelDia: React.FC = () => {
               <div style={{ fontSize: 22, fontWeight: 800, color: '#22c55e', fontFamily: "'Syne', sans-serif" }}>
                 $ {fmt(totalEnCaja)}
               </div>
-              <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>Caja + Cambio + Caja Grande</div>
+              <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>Caja + Cambio + Caja Grande (descontados egresos)</div>
             </div>
           </div>
 

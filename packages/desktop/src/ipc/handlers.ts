@@ -1,6 +1,6 @@
 import { ipcMain, dialog, BrowserWindow } from 'electron';
 import { getDb } from '../database/db';
-import { emitToWeb } from '../server/index';
+import { emitToWeb, getActivePort } from '../server/index';
 import { manualBackup, restoreBackup, listBackups, autoBackup } from '../database/backup';
 import { importFromNextar } from '../utils/nextar-importer';
 import { importFromZip, findLatestZipInDir, importFromFolder } from '../utils/nx1-importer';
@@ -9,6 +9,26 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { VentaPayload } from '../types/index';
 import { exportFiadosToExcel, getFiadosExcelPath } from '../services/fiados-excel-backup';
+import * as os from 'os';
+
+/** Devuelve todas las IPs IPv4 reales (saltea adaptadores virtuales y loopback) */
+function getAllLocalIPs(): { name: string; address: string; preferred: boolean }[] {
+  const VIRTUAL = /virtualbox|vmware|vethernet|hyper-v|tap|pseudo|bluetooth|loopback|teredo|isatap|6to4/i;
+  const nets = os.networkInterfaces();
+  const results: { name: string; address: string; preferred: boolean }[] = [];
+  for (const [name, iface] of Object.entries(nets)) {
+    if (VIRTUAL.test(name)) continue;
+    for (const info of iface ?? []) {
+      if (info.family === 'IPv4' && !info.internal) {
+        const preferred = /^(192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/.test(info.address);
+        results.push({ name, address: info.address, preferred });
+      }
+    }
+  }
+  // Ordenar: primero las preferidas (LAN privadas), luego el resto
+  results.sort((a, b) => (b.preferred ? 1 : 0) - (a.preferred ? 1 : 0));
+  return results;
+}
 
 export function registerIpcHandlers(): void {
   // ── PRODUCTOS ────────────────────────────────────────────────
@@ -1722,22 +1742,23 @@ export function registerIpcHandlers(): void {
       INSERT INTO libro_caja_egresos (dia_id, proveedor, monto, medio_pago) VALUES (?, ?, ?, ?)
     `).run(dia.id, data.proveedor.trim(), data.monto, medioPago);
 
-    // Recalcular suma de egresos en el día
-    const totalEgresos = (db.prepare(`
-      SELECT COALESCE(SUM(monto), 0) as total FROM libro_caja_egresos WHERE dia_id = ?
+    // egresos solo acumula egresos en efectivo; transferencia afecta sus propios campos
+    const totalEgresosEfectivo = (db.prepare(`
+      SELECT COALESCE(SUM(monto), 0) as total FROM libro_caja_egresos WHERE dia_id = ? AND medio_pago = 'efectivo'
     `).get(dia.id) as { total: number }).total;
 
-    // Descontar del campo según medio_pago
     if (medioPago === 'efectivo') {
-      db.prepare(`UPDATE libro_caja_dias SET egresos = ?, caja = MAX(0, COALESCE(caja, 0) - ?), updated_at = datetime('now') WHERE id = ?`)
-        .run(totalEgresos, data.monto, dia.id);
+      // Sumar en egresos y restar de extra_caja (Caja Grande)
+      db.prepare(`UPDATE libro_caja_dias SET egresos = ?, extra_caja = MAX(0, COALESCE(extra_caja, 0) - ?), updated_at = datetime('now') WHERE id = ?`)
+        .run(totalEgresosEfectivo, data.monto, dia.id);
     } else {
-      db.prepare(`UPDATE libro_caja_dias SET egresos = ?, transferencias = MAX(0, COALESCE(transferencias, 0) - ?), updated_at = datetime('now') WHERE id = ?`)
-        .run(totalEgresos, data.monto, dia.id);
+      // Restar de transferencias, sumar en gastos_tarjeta
+      db.prepare(`UPDATE libro_caja_dias SET transferencias = MAX(0, COALESCE(transferencias, 0) - ?), gastos_tarjeta = COALESCE(gastos_tarjeta, 0) + ?, updated_at = datetime('now') WHERE id = ?`)
+        .run(data.monto, data.monto, dia.id);
     }
 
-    const updatedDia = db.prepare(`SELECT caja, transferencias FROM libro_caja_dias WHERE id = ?`).get(dia.id) as { caja: number; transferencias: number };
-    return { id: result.lastInsertRowid, totalEgresos, caja: updatedDia.caja, transferencias: updatedDia.transferencias };
+    const updatedDia = db.prepare(`SELECT extra_caja, egresos, transferencias, gastos_tarjeta FROM libro_caja_dias WHERE id = ?`).get(dia.id) as { extra_caja: number; egresos: number; transferencias: number; gastos_tarjeta: number };
+    return { id: result.lastInsertRowid, extra_caja: updatedDia.extra_caja, egresos: updatedDia.egresos, transferencias: updatedDia.transferencias, gastos_tarjeta: updatedDia.gastos_tarjeta };
   });
 
   ipcMain.handle('librocaja:removeEgreso', (_e, egresoId: number, fecha: string) => {
@@ -1746,16 +1767,15 @@ export function registerIpcHandlers(): void {
     const egreso = db.prepare(`SELECT monto, medio_pago FROM libro_caja_egresos WHERE id = ?`).get(egresoId) as { monto: number; medio_pago: string } | undefined;
     db.prepare(`DELETE FROM libro_caja_egresos WHERE id = ?`).run(egresoId);
     if (dia && egreso) {
-      const totalEgresos = (db.prepare(`
-        SELECT COALESCE(SUM(monto), 0) as total FROM libro_caja_egresos WHERE dia_id = ?
-      `).get(dia.id) as { total: number }).total;
-      // Restaurar al campo correspondiente
       if (egreso.medio_pago === 'efectivo') {
-        db.prepare(`UPDATE libro_caja_dias SET egresos = ?, caja = COALESCE(caja, 0) + ?, updated_at = datetime('now') WHERE id = ?`)
-          .run(totalEgresos, egreso.monto, dia.id);
+        // Restar de egresos y restaurar extra_caja (Caja Grande)
+        const totalEfectivo = (db.prepare(`SELECT COALESCE(SUM(monto), 0) as total FROM libro_caja_egresos WHERE dia_id = ? AND medio_pago = 'efectivo'`).get(dia.id) as { total: number }).total;
+        db.prepare(`UPDATE libro_caja_dias SET egresos = ?, extra_caja = COALESCE(extra_caja, 0) + ?, updated_at = datetime('now') WHERE id = ?`)
+          .run(totalEfectivo, egreso.monto, dia.id);
       } else {
-        db.prepare(`UPDATE libro_caja_dias SET egresos = ?, transferencias = COALESCE(transferencias, 0) + ?, updated_at = datetime('now') WHERE id = ?`)
-          .run(totalEgresos, egreso.monto, dia.id);
+        // Devolver a transferencias, restar de gastos_tarjeta
+        db.prepare(`UPDATE libro_caja_dias SET transferencias = COALESCE(transferencias, 0) + ?, gastos_tarjeta = MAX(0, COALESCE(gastos_tarjeta, 0) - ?), updated_at = datetime('now') WHERE id = ?`)
+          .run(egreso.monto, egreso.monto, dia.id);
       }
     }
     return { success: true };
@@ -1911,14 +1931,15 @@ export function registerIpcHandlers(): void {
 
   // ── NETWORK: obtener IP local ─────────────────────────────────────────
   ipcMain.handle('network:get-local-ip', () => {
-    const os = require('os') as typeof import('os');
-    const nets = os.networkInterfaces();
-    for (const name of Object.keys(nets)) {
-      for (const net of nets[name]!) {
-        if (net.family === 'IPv4' && !net.internal) return net.address;
-      }
-    }
-    return '127.0.0.1';
+    const ips = getAllLocalIPs();
+    return ips.length > 0 ? ips[0].address : '127.0.0.1';
+  });
+
+  // ── NETWORK: obtener todas las IPs + puerto activo del servidor ──────────
+  ipcMain.handle('network:server-info', () => {
+    const ips = getAllLocalIPs();
+    const port = getActivePort();
+    return { ips, port };
   });
 
   // Nota: license:check y license:activate se registran en main.ts (nivel global)

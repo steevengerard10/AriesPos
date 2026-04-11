@@ -138,7 +138,7 @@ export const useLibroCajaStore = create<LibroCajaState>((set, get) => ({
 
   addEgreso: async (proveedor, monto, medio_pago) => {
     const fecha = get().fechaSeleccionada;
-    const { id, totalEgresos, caja, transferencias } = await libroCajaAPI.addEgreso(fecha, { proveedor, monto, medio_pago });
+    const { id, extra_caja, egresos, transferencias, gastos_tarjeta } = await libroCajaAPI.addEgreso(fecha, { proveedor, monto, medio_pago });
     const nuevoEgreso: LibroCajaEgreso = {
       id: id as number,
       dia_id: get().diaActual?.id ?? 0,
@@ -151,9 +151,10 @@ export const useLibroCajaStore = create<LibroCajaState>((set, get) => ({
       egresos: [nuevoEgreso, ...s.egresos],
       diaActual: s.diaActual ? {
         ...s.diaActual,
-        egresos: totalEgresos,
-        caja: medio_pago === 'efectivo' ? caja : s.diaActual.caja,
-        transferencias: medio_pago === 'transferencia' ? transferencias : s.diaActual.transferencias,
+        extra_caja,
+        egresos,
+        transferencias,
+        gastos_tarjeta,
       } : s.diaActual,
     }));
     get().cargarHistorico();
@@ -163,9 +164,9 @@ export const useLibroCajaStore = create<LibroCajaState>((set, get) => ({
     const fecha = get().fechaSeleccionada;
     await libroCajaAPI.removeEgreso(egresoId, fecha);
     set(s => ({ egresos: s.egresos.filter(e => e.id !== egresoId) }));
-    // Recalcular egresos total
+    // Recargar día completo para reflejar cambios en extra_caja, transferencias, gastos_tarjeta
     const { dia } = await libroCajaAPI.getDia(fecha);
-    set(s => ({ diaActual: s.diaActual ? { ...s.diaActual, egresos: dia.egresos } : s.diaActual }));
+    set(s => ({ diaActual: s.diaActual ? { ...s.diaActual, ...dia } : s.diaActual }));
     get().cargarHistorico();
   },
 

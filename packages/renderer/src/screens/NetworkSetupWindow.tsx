@@ -1,28 +1,38 @@
 import React, { useState, useEffect } from 'react';
 import { appAPI, networkAPI } from '../lib/api';
 
-interface FoundServer {
-  ip: string;
-  port: number;
-  nombre: string;
-}
-
+interface FoundServer { ip: string; port: number; nombre: string; }
+interface LocalIP { name: string; address: string; preferred: boolean; }
 type Step = 'menu' | 'scan' | 'manual' | 'server-confirm' | 'done';
 
 const C = {
-  bg:      '#0f172a',
-  bg2:     '#1e293b',
-  bg3:     '#334155',
-  border:  '#334155',
-  text:    '#f1f5f9',
-  text2:   '#94a3b8',
-  accent:  '#4f8ef7',
-  green:   '#10b981',
-  red:     '#ef4444',
-  yellow:  '#f59e0b',
+  bg: '#0f172a', bg2: '#1e293b', bg3: '#334155', border: '#334155',
+  text: '#f1f5f9', text2: '#94a3b8', accent: '#4f8ef7',
+  green: '#10b981', red: '#ef4444', yellow: '#f59e0b', teal: '#0f766e',
 };
 
-const NetworkSetupWindow = () => {
+const card: React.CSSProperties = {
+  background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 12,
+  padding: '18px 22px', marginBottom: 12,
+};
+const btn = (color = C.accent): React.CSSProperties => ({
+  background: color, color: '#fff', border: 'none', borderRadius: 8,
+  padding: '10px 20px', fontWeight: 700, fontSize: 14, cursor: 'pointer', width: '100%',
+});
+const ghostBtn: React.CSSProperties = {
+  background: C.bg3, color: C.text2, border: 'none', borderRadius: 8,
+  padding: '10px 20px', fontWeight: 600, fontSize: 13, cursor: 'pointer', width: '100%',
+};
+const smBtn = (color = C.bg3): React.CSSProperties => ({
+  background: color, color: '#fff', border: 'none', borderRadius: 6,
+  padding: '6px 14px', fontWeight: 700, fontSize: 12, cursor: 'pointer',
+});
+const inputStyle: React.CSSProperties = {
+  background: C.bg3, border: `1px solid ${C.border}`, borderRadius: 8,
+  color: C.text, padding: '9px 12px', fontSize: 14, width: '100%', boxSizing: 'border-box',
+};
+
+const NetworkSetupWindow: React.FC = () => {
   const [step, setStep] = useState<Step>('menu');
   const [scanning, setScanning] = useState(false);
   const [servers, setServers] = useState<FoundServer[]>([]);
@@ -30,265 +40,277 @@ const NetworkSetupWindow = () => {
   const [manualPort, setManualPort] = useState('3001');
   const [testing, setTesting] = useState(false);
   const [testErr, setTestErr] = useState('');
-  const [localIP, setLocalIP] = useState('');
   const [currentMode, setCurrentMode] = useState<string | null>(null);
+  const [allIPs, setAllIPs] = useState<LocalIP[]>([]);
+  const [serverPort, setServerPort] = useState<number>(3001);
+  const [fwStatus, setFwStatus] = useState<'idle' | 'working' | 'ok' | 'error'>('idle');
+  const [fwError, setFwError] = useState('');
+  const [pingStatus, setPingStatus] = useState<'idle' | 'testing' | 'ok' | 'error'>('idle');
+  const [pingMs, setPingMs] = useState<number | null>(null);
+  const [copiedIP, setCopiedIP] = useState('');
 
   useEffect(() => {
-    // Cargar IP local y modo actual al abrir
-    appAPI.getAppConfig().then(cfg => {
-      setCurrentMode(cfg?.mode ?? null);
-    }).catch(() => {});
-    networkAPI.getLocalIP().then(ip => setLocalIP(ip)).catch(() => {});
+    appAPI.getAppConfig().then(cfg => setCurrentMode(cfg?.mode ?? null)).catch(() => {});
+    networkAPI.serverInfo().then(info => {
+      setAllIPs(info.ips);
+      setServerPort(info.port);
+    }).catch(() => {
+      networkAPI.getLocalIP().then(ip => setAllIPs([{ name: '', address: ip, preferred: true }])).catch(() => {});
+    });
   }, []);
 
-  // ── Escanear red ──────────────────────────────────────────────
-  const handleScan = async () => {
-    setScanning(true);
-    setServers([]);
-    setTestErr('');
-    try {
-      const found = await networkAPI.scan(3001);
-      setServers(found);
-    } catch {
-      setTestErr('Error al escanear la red');
-    } finally {
-      setScanning(false);
-    }
+  const primaryIP = allIPs.find(i => i.preferred)?.address || allIPs[0]?.address || '...';
+
+  const copyIP = (ip: string) => {
+    navigator.clipboard.writeText(ip).then(() => {
+      setCopiedIP(ip);
+      setTimeout(() => setCopiedIP(''), 2000);
+    }).catch(() => {});
   };
 
-  // ── Conectar a un servidor encontrado ─────────────────────────
+  const handleScan = async () => {
+    setScanning(true); setServers([]); setTestErr('');
+    try { const found = await networkAPI.scan(3001); setServers(found); }
+    catch { setTestErr('Error al escanear la red'); }
+    finally { setScanning(false); }
+  };
+
   const handleConnectTo = async (ip: string, port: number) => {
-    setTesting(true);
-    setTestErr('');
+    setTesting(true); setTestErr('');
     try {
       const res = await appAPI.testServerConnection({ ip, port });
-      if (!res?.ok) { setTestErr('No se pudo conectar a ese servidor'); setTesting(false); return; }
-      await appAPI.switchToClientMode({ ip, port, terminalName: `Terminal (${localIP})` });
+      if (!res?.ok) { setTestErr(`No se pudo conectar a ${ip}:${port}. Verificá firewall y que el servidor esté abierto.`); setTesting(false); return; }
+      await appAPI.switchToClientMode({ ip, port, terminalName: `Terminal (${primaryIP})` });
       setStep('done');
-    } catch (e: any) {
-      setTestErr(e?.message || 'Error de conexión');
-    } finally {
-      setTesting(false);
-    }
+    } catch (e: any) { setTestErr(e?.message || 'Error de conexión'); }
+    finally { setTesting(false); }
   };
 
-  // ── Conectar manual ──────────────────────────────────────────
-  const handleManualConnect = async () => {
-    if (!manualIP.trim()) { setTestErr('Ingresa la IP del servidor'); return; }
-    await handleConnectTo(manualIP.trim(), Number(manualPort) || 3001);
-  };
-
-  // ── Convertir esta PC en servidor ────────────────────────────
   const handleSetServer = async () => {
     try {
       await appAPI.setAppConfig({ mode: 'server', terminalName: 'Servidor principal' });
-      // Reiniciar la app para activar modo servidor con DB y Express
       await appAPI.restart();
-    } catch (e: any) {
-      setTestErr(e?.message || 'Error al configurar como servidor');
-    }
+    } catch (e: any) { setTestErr(e?.message || 'Error'); }
   };
 
-  // ─────────────────────────────────────────────────────────────
-  const card: React.CSSProperties = {
-    background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 12,
-    padding: '20px 24px', marginBottom: 12,
-  };
-  const btn = (color = C.accent): React.CSSProperties => ({
-    background: color, color: '#fff', border: 'none', borderRadius: 8,
-    padding: '10px 20px', fontWeight: 700, fontSize: 14, cursor: 'pointer', width: '100%',
-  });
-  const ghostBtn: React.CSSProperties = {
-    background: C.bg3, color: C.text2, border: 'none', borderRadius: 8,
-    padding: '10px 20px', fontWeight: 600, fontSize: 13, cursor: 'pointer', width: '100%',
-  };
-  const input: React.CSSProperties = {
-    background: C.bg3, border: `1px solid ${C.border}`, borderRadius: 8,
-    color: C.text, padding: '9px 12px', fontSize: 14, width: '100%', boxSizing: 'border-box',
+  const handleOpenFirewall = async () => {
+    setFwStatus('working'); setFwError('');
+    try {
+      const res = await networkAPI.openFirewall(serverPort);
+      setFwStatus(res?.success ? 'ok' : 'error');
+      if (!res?.success) setFwError(res?.error || 'No se pudo abrir el puerto');
+    } catch (e: any) { setFwStatus('error'); setFwError(e?.message || 'Error'); }
   };
 
-  // ── Pantalla de finalización ─────────────────────────────────
-  if (step === 'done') {
-    return (
-      <div style={{ background: C.bg, minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 32 }}>
-        <div style={{ textAlign: 'center' }}>
-          <div style={{ fontSize: 48, marginBottom: 16 }}>✅</div>
-          <h2 style={{ color: C.text, margin: '0 0 8px' }}>¡Configuración guardada!</h2>
-          <p style={{ color: C.text2, marginBottom: 24 }}>La aplicación se reiniciará para aplicar los cambios.</p>
-          <button style={btn(C.green)} onClick={() => window.close()}>Cerrar ventana</button>
-        </div>
+  const handlePing = async () => {
+    if (!manualIP.trim()) return;
+    setPingStatus('testing'); setPingMs(null);
+    try {
+      const res = await networkAPI.pingServer(manualIP.trim(), Number(manualPort) || 3001);
+      setPingStatus(res?.ok ? 'ok' : 'error');
+      if (res?.ok) setPingMs(res.ms ?? null);
+    } catch { setPingStatus('error'); }
+  };
+
+  if (step === 'done') return (
+    <div style={{ background: C.bg, minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 32 }}>
+      <div style={{ textAlign: 'center' }}>
+        <div style={{ fontSize: 48, marginBottom: 16 }}>✅</div>
+        <h2 style={{ color: C.text, margin: '0 0 8px' }}>¡Configuración guardada!</h2>
+        <p style={{ color: C.text2, marginBottom: 24 }}>La aplicación se reiniciará para aplicar los cambios.</p>
+        <button style={btn(C.green)} onClick={() => window.close()}>Cerrar ventana</button>
       </div>
-    );
-  }
+    </div>
+  );
 
-  // ── Menú principal ───────────────────────────────────────────
-  if (step === 'menu') {
-    return (
-      <div style={{ background: C.bg, minHeight: '100vh', padding: 32, color: C.text, fontFamily: "'Syne', sans-serif" }}>
-        <h2 style={{ margin: '0 0 4px', fontSize: 20 }}>⚙️ Configuración de Red</h2>
-        <p style={{ color: C.text2, fontSize: 13, margin: '0 0 24px' }}>
-          Esta PC: <strong style={{ color: C.accent }}>{localIP || '...'}</strong>
-          {currentMode && <> · Modo actual: <strong style={{ color: C.yellow }}>{currentMode}</strong></>}
-        </p>
+  const wrap: React.CSSProperties = { background: C.bg, minHeight: '100vh', padding: 28, color: C.text, fontFamily: "'Segoe UI', sans-serif", overflowY: 'auto' };
 
-        <div style={card}>
-          <div style={{ fontWeight: 700, marginBottom: 6 }}>🔍 Buscar servidor en la red</div>
-          <div style={{ color: C.text2, fontSize: 13, marginBottom: 14 }}>
-            Escanea automáticamente todas las PCs de tu red local para encontrar un servidor ARIESPos.
-          </div>
-          <button style={btn()} onClick={() => { setStep('scan'); handleScan(); }}>
-            Buscar servidores automáticamente
-          </button>
+  if (step === 'menu') return (
+    <div style={wrap}>
+      <h2 style={{ margin: '0 0 16px', fontSize: 20 }}>⚙️ Configuración de Red</h2>
+
+      {/* Panel de IPs */}
+      <div style={{ ...card, marginBottom: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, flexWrap: 'wrap' }}>
+          <span style={{ color: C.text2, fontSize: 13, fontWeight: 600 }}>Esta PC:</span>
+          {currentMode && (
+            <span style={{ background: currentMode === 'server' ? '#064e3b' : currentMode === 'client' ? '#1e3a5f' : C.bg3, color: currentMode === 'server' ? C.green : currentMode === 'client' ? C.accent : C.text2, borderRadius: 6, padding: '3px 10px', fontSize: 12, fontWeight: 700 }}>
+              {currentMode === 'server' ? '🖥️ SERVIDOR' : currentMode === 'client' ? '💻 CLIENTE' : currentMode}
+            </span>
+          )}
+          {currentMode === 'server' && serverPort !== 3001 && (
+            <span style={{ background: '#7c2d12', color: '#fdba74', borderRadius: 6, padding: '3px 10px', fontSize: 12, fontWeight: 700 }}>
+              ⚠️ Puerto activo: {serverPort} (¡no 3001!)
+            </span>
+          )}
         </div>
 
-        <div style={card}>
-          <div style={{ fontWeight: 700, marginBottom: 6 }}>✏️ Ingresar IP manualmente</div>
-          <div style={{ color: C.text2, fontSize: 13, marginBottom: 14 }}>
-            Si ya sabés la IP del servidor, podés conectarte directamente.
+        {allIPs.length === 0 && <div style={{ color: C.text2, fontSize: 13 }}>Detectando IPs...</div>}
+        {allIPs.map(ip => (
+          <div key={ip.address} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5, flexWrap: 'wrap' }}>
+            <span style={{ fontFamily: 'monospace', fontSize: 16, color: ip.preferred ? C.accent : C.text2, fontWeight: ip.preferred ? 700 : 400 }}>
+              {ip.address}
+              {currentMode === 'server' && <span style={{ color: C.text2, fontWeight: 400, fontSize: 13 }}>:{serverPort}</span>}
+            </span>
+            <span style={{ color: C.text2, fontSize: 11 }}>({ip.name || 'adaptador'})</span>
+            {ip.preferred && <span style={{ background: '#064e3b', color: C.green, fontSize: 11, borderRadius: 4, padding: '1px 6px' }}>recomendada</span>}
+            <button onClick={() => copyIP(ip.address)} style={{ ...smBtn(), padding: '3px 8px', fontSize: 11 }}>
+              {copiedIP === ip.address ? '✅' : '📋 Copiar'}
+            </button>
           </div>
-          <button style={ghostBtn} onClick={() => setStep('manual')}>
-            Conectar por IP manual
-          </button>
-        </div>
+        ))}
+        {allIPs.length > 1 && (
+          <div style={{ color: C.yellow, fontSize: 11, marginTop: 4 }}>
+            ⚠️ Múltiples adaptadores detectados. Usá la IP <strong>recomendada</strong> (la de tu red WiFi o cable compartida con la otra PC).
+          </div>
+        )}
+      </div>
 
-        <div style={card}>
-          <div style={{ fontWeight: 700, marginBottom: 6 }}>🖥️ Esta PC es el servidor</div>
-          <div style={{ color: C.text2, fontSize: 13, marginBottom: 14 }}>
-            Convertir esta PC en servidor. Las otras PCs se conectarán a <strong style={{ color: C.accent }}>{localIP || 'esta IP'}</strong>.
-          </div>
-          <button style={btn('#0f766e')} onClick={() => setStep('server-confirm')}>
+      <div style={card}>
+        <div style={{ fontWeight: 700, marginBottom: 6 }}>🔍 Buscar servidor automáticamente</div>
+        <div style={{ color: C.text2, fontSize: 13, marginBottom: 12 }}>Escanea la red local. Ambas PCs deben estar en la <strong>misma red WiFi o cable</strong>.</div>
+        <button style={btn()} onClick={() => { setStep('scan'); handleScan(); }}>Buscar servidores</button>
+      </div>
+
+      <div style={card}>
+        <div style={{ fontWeight: 700, marginBottom: 6 }}>✏️ Ingresar IP manualmente</div>
+        <div style={{ color: C.text2, fontSize: 13, marginBottom: 12 }}>Si ya sabés la IP del servidor, conectate directo. Usá el número que ves arriba en la PC servidor.</div>
+        <button style={ghostBtn} onClick={() => setStep('manual')}>Conectar por IP manual</button>
+      </div>
+
+      <div style={card}>
+        <div style={{ fontWeight: 700, marginBottom: 6 }}>🖥️ Esta PC es el servidor</div>
+        <div style={{ color: C.text2, fontSize: 13, marginBottom: 12 }}>
+          Las otras PCs se conectarán a <strong style={{ color: C.accent, fontFamily: 'monospace' }}>{primaryIP}:{serverPort}</strong>
+        </div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button style={{ ...btn(C.teal), width: 'auto', flex: 1 }} onClick={() => setStep('server-confirm')}>
             Configurar como servidor
           </button>
+          <button onClick={handleOpenFirewall} disabled={fwStatus === 'working'}
+            style={{ ...smBtn(fwStatus === 'ok' ? '#064e3b' : fwStatus === 'error' ? '#7f1d1d' : '#374151'), opacity: fwStatus === 'working' ? 0.6 : 1, padding: '8px 14px' }}>
+            {fwStatus === 'working' ? '⏳ Abriendo...' : fwStatus === 'ok' ? '✅ Puerto abierto' : fwStatus === 'error' ? '❌ Falló' : '🛡️ Reparar firewall'}
+          </button>
         </div>
+        {fwStatus === 'ok' && <div style={{ color: C.green, fontSize: 12, marginTop: 8 }}>✅ Puerto {serverPort} abierto en el firewall (todas las redes).</div>}
+        {fwStatus === 'error' && <div style={{ color: C.red, fontSize: 12, marginTop: 8 }}>❌ {fwError || 'Ejecutá ARIESPos como administrador e intentá de nuevo.'}</div>}
       </div>
-    );
-  }
 
-  // ── Escaneo automático ───────────────────────────────────────
-  if (step === 'scan') {
-    return (
-      <div style={{ background: C.bg, minHeight: '100vh', padding: 32, color: C.text, fontFamily: "'Syne', sans-serif" }}>
-        <button onClick={() => setStep('menu')} style={{ background: 'none', border: 'none', color: C.text2, cursor: 'pointer', marginBottom: 20, fontSize: 13 }}>
-          ← Volver
-        </button>
-        <h2 style={{ margin: '0 0 4px', fontSize: 20 }}>🔍 Buscar servidores</h2>
-        <p style={{ color: C.text2, fontSize: 13, margin: '0 0 20px' }}>Escaneando la red local en busca de servidores ARIESPos...</p>
+      <div style={{ background: '#1a2744', border: `1px solid #2d4a7a`, borderRadius: 10, padding: '12px 16px', fontSize: 12, color: '#93c5fd', lineHeight: 1.8 }}>
+        <strong>💡 Pasos para conectar:</strong><br/>
+        1. PC servidor: presioná <strong>"Reparar firewall"</strong> → aceptar el popup de Windows<br/>
+        2. Cerrá y abrí ARIESPos de nuevo en la PC servidor<br/>
+        3. PC cliente: anotá la IP que aparece arriba (en la PC servidor) → "IP manual" → probá conexión → Conectar<br/>
+        4. Ambas PCs deben estar en el <strong>mismo router/WiFi</strong>
+      </div>
+    </div>
+  );
 
-        {scanning && (
-          <div style={{ ...card, textAlign: 'center', color: C.text2 }}>
-            <div style={{ fontSize: 32, marginBottom: 8 }}>⏳</div>
-            <div>Escaneando {localIP ? localIP.replace(/\.\d+$/, '.0') : 'la red'}/24...</div>
-            <div style={{ fontSize: 12, marginTop: 6 }}>Esto puede tardar hasta 30 segundos</div>
+  if (step === 'scan') return (
+    <div style={wrap}>
+      <button onClick={() => setStep('menu')} style={{ background: 'none', border: 'none', color: C.text2, cursor: 'pointer', marginBottom: 20, fontSize: 13 }}>← Volver</button>
+      <h2 style={{ margin: '0 0 4px', fontSize: 20 }}>🔍 Buscar servidores</h2>
+      <p style={{ color: C.text2, fontSize: 13, margin: '0 0 20px' }}>Escaneando {primaryIP.replace(/\.\d+$/, '.0')}/24...</p>
+
+      {scanning && (
+        <div style={{ ...card, textAlign: 'center', color: C.text2 }}>
+          <div style={{ fontSize: 32, marginBottom: 8 }}>⏳</div>
+          <div>Escaneando ~254 IPs en la red... puede tardar 30 segundos</div>
+        </div>
+      )}
+
+      {!scanning && servers.length === 0 && (
+        <div style={{ ...card, textAlign: 'center' }}>
+          <div style={{ fontSize: 32, marginBottom: 8 }}>🔎</div>
+          <div style={{ color: C.text2, marginBottom: 12 }}>No se encontraron servidores ARIESPos.</div>
+          <div style={{ color: C.yellow, fontSize: 12, marginBottom: 16 }}>
+            Verificá: 1) ARIESPos abierto en el servidor 2) Firewall reparado en el servidor 3) Misma red WiFi/cable
           </div>
-        )}
+          <button style={btn()} onClick={handleScan}>Volver a escanear</button>
+          <button style={{ ...ghostBtn, marginTop: 8 }} onClick={() => setStep('manual')}>Ingresar IP manualmente</button>
+        </div>
+      )}
 
-        {!scanning && servers.length === 0 && (
-          <div style={{ ...card, textAlign: 'center' }}>
-            <div style={{ fontSize: 32, marginBottom: 8 }}>🔎</div>
-            <div style={{ color: C.text2, marginBottom: 16 }}>No se encontraron servidores ARIESPos en la red.</div>
-            <button style={btn()} onClick={handleScan}>Volver a escanear</button>
-            <button style={{ ...ghostBtn, marginTop: 8 }} onClick={() => setStep('manual')}>Ingresar IP manualmente</button>
+      {!scanning && servers.length > 0 && (
+        <>
+          <div style={{ color: C.green, fontWeight: 700, marginBottom: 12 }}>
+            ✅ {servers.length} servidor{servers.length !== 1 ? 'es' : ''} encontrado{servers.length !== 1 ? 's' : ''}
           </div>
-        )}
-
-        {!scanning && servers.length > 0 && (
-          <>
-            <div style={{ color: C.green, fontWeight: 700, marginBottom: 12 }}>
-              ✅ {servers.length} servidor{servers.length > 1 ? 'es' : ''} encontrado{servers.length > 1 ? 's' : ''}
-            </div>
-            {servers.map(s => (
-              <div key={`${s.ip}:${s.port}`} style={{ ...card, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <div>
-                  <div style={{ fontWeight: 700 }}>{s.nombre}</div>
-                  <div style={{ color: C.text2, fontSize: 13 }}>{s.ip}:{s.port}</div>
-                </div>
-                <button
-                  style={{ ...btn(), width: 'auto', padding: '8px 18px', opacity: testing ? 0.6 : 1 }}
-                  disabled={testing}
-                  onClick={() => handleConnectTo(s.ip, s.port)}
-                >
-                  {testing ? 'Conectando...' : 'Conectar'}
-                </button>
+          {servers.map(s => (
+            <div key={`${s.ip}:${s.port}`} style={{ ...card, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div>
+                <div style={{ fontWeight: 700 }}>{s.nombre}</div>
+                <div style={{ color: C.text2, fontSize: 13 }}>{s.ip}:{s.port}</div>
               </div>
-            ))}
-            <button style={{ ...ghostBtn, marginTop: 4 }} onClick={handleScan}>Volver a escanear</button>
-          </>
-        )}
+              <button style={{ ...btn(), width: 'auto', padding: '8px 18px', opacity: testing ? 0.6 : 1 }} disabled={testing} onClick={() => handleConnectTo(s.ip, s.port)}>
+                {testing ? 'Conectando...' : 'Conectar'}
+              </button>
+            </div>
+          ))}
+          <button style={{ ...ghostBtn, marginTop: 4 }} onClick={handleScan}>Volver a escanear</button>
+        </>
+      )}
 
-        {testErr && <div style={{ color: C.red, marginTop: 12, fontSize: 13 }}>{testErr}</div>}
-      </div>
-    );
-  }
+      {testErr && <div style={{ color: C.red, marginTop: 12, fontSize: 13 }}>{testErr}</div>}
+    </div>
+  );
 
-  // ── Manual ───────────────────────────────────────────────────
-  if (step === 'manual') {
-    return (
-      <div style={{ background: C.bg, minHeight: '100vh', padding: 32, color: C.text, fontFamily: "'Syne', sans-serif" }}>
-        <button onClick={() => setStep('menu')} style={{ background: 'none', border: 'none', color: C.text2, cursor: 'pointer', marginBottom: 20, fontSize: 13 }}>
-          ← Volver
-        </button>
-        <h2 style={{ margin: '0 0 20px', fontSize: 20 }}>✏️ Conectar por IP</h2>
+  if (step === 'manual') return (
+    <div style={wrap}>
+      <button onClick={() => setStep('menu')} style={{ background: 'none', border: 'none', color: C.text2, cursor: 'pointer', marginBottom: 20, fontSize: 13 }}>← Volver</button>
+      <h2 style={{ margin: '0 0 20px', fontSize: 20 }}>✏️ Conectar por IP</h2>
+      <div style={card}>
+        <label style={{ display: 'block', color: C.text2, fontSize: 13, marginBottom: 6 }}>IP del servidor</label>
+        <input style={inputStyle} placeholder="Ej: 192.168.1.10" value={manualIP}
+          onChange={e => { setManualIP(e.target.value); setTestErr(''); setPingStatus('idle'); }} />
+        <label style={{ display: 'block', color: C.text2, fontSize: 13, margin: '14px 0 6px' }}>Puerto</label>
+        <input style={{ ...inputStyle, width: 100 }} placeholder="3001" value={manualPort}
+          onChange={e => setManualPort(e.target.value)} />
 
-        <div style={card}>
-          <label style={{ display: 'block', color: C.text2, fontSize: 13, marginBottom: 6 }}>IP del servidor</label>
-          <input
-            style={input}
-            placeholder="Ej: 192.168.1.10"
-            value={manualIP}
-            onChange={e => { setManualIP(e.target.value); setTestErr(''); }}
-          />
-          <label style={{ display: 'block', color: C.text2, fontSize: 13, margin: '14px 0 6px' }}>Puerto</label>
-          <input
-            style={{ ...input, width: 120 }}
-            placeholder="3001"
-            value={manualPort}
-            onChange={e => setManualPort(e.target.value)}
-          />
-          {testErr && <div style={{ color: C.red, fontSize: 13, marginTop: 10 }}>{testErr}</div>}
-          <button
-            style={{ ...btn(), marginTop: 18, opacity: testing ? 0.6 : 1 }}
-            disabled={testing}
-            onClick={handleManualConnect}
-          >
-            {testing ? 'Verificando conexión...' : 'Conectar'}
+        <div style={{ display: 'flex', gap: 8, marginTop: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button style={{ ...smBtn('#374151'), opacity: !manualIP ? 0.5 : 1, padding: '8px 16px' }}
+            disabled={!manualIP || pingStatus === 'testing'} onClick={handlePing}>
+            {pingStatus === 'testing' ? '⏳ Probando...' : '📡 Probar conexión'}
           </button>
+          {pingStatus === 'ok' && <span style={{ color: C.green, fontSize: 13 }}>✅ Alcanzable {pingMs != null ? `(${pingMs}ms)` : ''}</span>}
+          {pingStatus === 'error' && <span style={{ color: C.red, fontSize: 13 }}>❌ No responde — verificá IP y firewall</span>}
         </div>
 
-        <div style={{ color: C.text2, fontSize: 12, marginTop: 12 }}>
-          💡 Para saber la IP del servidor, abrí esta ventana en la PC servidor y verás la IP en la parte superior.
-        </div>
-      </div>
-    );
-  }
-
-  // ── Confirmar modo servidor ───────────────────────────────────
-  if (step === 'server-confirm') {
-    return (
-      <div style={{ background: C.bg, minHeight: '100vh', padding: 32, color: C.text, fontFamily: "'Syne', sans-serif" }}>
-        <button onClick={() => setStep('menu')} style={{ background: 'none', border: 'none', color: C.text2, cursor: 'pointer', marginBottom: 20, fontSize: 13 }}>
-          ← Volver
+        {testErr && <div style={{ color: C.red, fontSize: 13, marginTop: 10 }}>{testErr}</div>}
+        <button style={{ ...btn(), marginTop: 16, opacity: testing ? 0.6 : 1 }} disabled={testing}
+          onClick={() => handleConnectTo(manualIP.trim(), Number(manualPort) || 3001)}>
+          {testing ? 'Verificando...' : 'Conectar y guardar'}
         </button>
-        <h2 style={{ margin: '0 0 20px', fontSize: 20 }}>🖥️ Configurar como servidor</h2>
-        <div style={card}>
-          <p style={{ color: C.text2, marginBottom: 16 }}>
-            Esta PC quedará como <strong style={{ color: C.text }}>servidor principal</strong>. Las otras PCs podrán conectarse a:
-          </p>
-          <div style={{ background: C.bg3, borderRadius: 8, padding: '12px 16px', fontFamily: 'monospace', fontSize: 15, color: C.accent, marginBottom: 20 }}>
-            {localIP || '...'} : 3001
+      </div>
+      <div style={{ color: C.text2, fontSize: 12, marginTop: 12, lineHeight: 1.7 }}>
+        💡 La IP del servidor la ves abriendo esta ventana (F9) en la <strong>PC servidor</strong>.<br/>
+        Si "Probar conexión" falla → abrí esta ventana en el servidor → presioná <strong>"Reparar firewall"</strong>.
+      </div>
+    </div>
+  );
+
+  if (step === 'server-confirm') return (
+    <div style={wrap}>
+      <button onClick={() => setStep('menu')} style={{ background: 'none', border: 'none', color: C.text2, cursor: 'pointer', marginBottom: 20, fontSize: 13 }}>← Volver</button>
+      <h2 style={{ margin: '0 0 20px', fontSize: 20 }}>🖥️ Configurar como servidor</h2>
+      <div style={card}>
+        <p style={{ color: C.text2, marginBottom: 16 }}>Esta PC quedará como <strong style={{ color: C.text }}>servidor principal</strong>. Las otras PCs se conectarán a:</p>
+        <div style={{ background: C.bg3, borderRadius: 8, padding: '12px 16px', fontFamily: 'monospace', fontSize: 15, color: C.accent, marginBottom: 16 }}>
+          {primaryIP}:{serverPort}
+        </div>
+        {allIPs.length > 1 && (
+          <div style={{ color: C.yellow, fontSize: 12, marginBottom: 14 }}>
+            ⚠️ Múltiples IPs detectadas. Los clientes deben usar la IP de la red que comparten con esta PC.
           </div>
-          <p style={{ color: C.text2, fontSize: 13, marginBottom: 20 }}>
-            ⚠️ Si esta PC ya estaba en modo cliente, dejará de conectarse al servidor anterior.
-          </p>
-          <button style={btn('#0f766e')} onClick={handleSetServer}>
-            Confirmar — Usar esta PC como servidor
-          </button>
-          {testErr && <div style={{ color: C.red, fontSize: 13, marginTop: 10 }}>{testErr}</div>}
-        </div>
+        )}
+        <button style={btn(C.teal)} onClick={handleSetServer}>Confirmar — Usar esta PC como servidor</button>
+        {testErr && <div style={{ color: C.red, fontSize: 13, marginTop: 10 }}>{testErr}</div>}
       </div>
-    );
-  }
+    </div>
+  );
 
   return null;
 };
 
 export default NetworkSetupWindow;
+

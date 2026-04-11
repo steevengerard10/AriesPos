@@ -29,6 +29,8 @@ let tunnelUrl: string | null = null;
 let activePort = 3001;
 let activeTunnelStop: (() => void) | null = null;
 
+export function getActivePort(): number { return activePort; }
+
 function getLocalIP(): string {
   const ifaces = os.networkInterfaces();
   for (const iface of Object.values(ifaces)) {

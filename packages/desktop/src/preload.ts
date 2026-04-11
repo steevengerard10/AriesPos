@@ -51,8 +51,11 @@ const api = {
   authDeleteUser:    (id: number) => ipcRenderer.invoke('auth:delete-user', id),
 
   // ── Network scan ─────────────────────────────────────────────
-  networkScan:       (port?: number) => ipcRenderer.invoke('network:scan', port),
-  networkGetLocalIP: () => ipcRenderer.invoke('network:get-local-ip'),
+  networkScan:        (port?: number) => ipcRenderer.invoke('network:scan', port),
+  networkGetLocalIP:  () => ipcRenderer.invoke('network:get-local-ip'),
+  networkServerInfo:  () => ipcRenderer.invoke('network:server-info'),
+  networkOpenFirewall:(port?: number) => ipcRenderer.invoke('network:open-firewall', port),
+  networkPingServer:  (ip: string, port: number) => ipcRenderer.invoke('network:ping-server', { ip, port }),
 
   // ── Actualizador ─────────────────────────────────────────────
   updaterDownload:    () => ipcRenderer.invoke('updater:download'),

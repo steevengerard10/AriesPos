@@ -285,7 +285,7 @@ export const libroCajaAPI = {
   updateBilletes: (fecha: string, billetes: { denominacion: number; cantidad: number }[]) =>
     invoke<{ success: boolean }>('librocaja:updateBilletes', fecha, billetes),
   addEgreso: (fecha: string, data: { proveedor: string; monto: number; medio_pago: 'efectivo' | 'transferencia' }) =>
-    invoke<{ id: number; totalEgresos: number; caja: number; transferencias: number }>('librocaja:addEgreso', fecha, data),
+    invoke<{ id: number; extra_caja: number; egresos: number; transferencias: number; gastos_tarjeta: number }>('librocaja:addEgreso', fecha, data),
   removeEgreso: (egresoId: number, fecha: string) =>
     invoke<{ success: boolean }>('librocaja:removeEgreso', egresoId, fecha),
   exportExcel: (desde: string, hasta: string) =>
@@ -314,6 +314,12 @@ export const networkAPI = {
     invoke<ScannedServer[]>('network:scan', port),
   getLocalIP: () =>
     invoke<string>('network:get-local-ip'),
+  serverInfo: () =>
+    invoke<{ ips: { name: string; address: string; preferred: boolean }[]; port: number }>('network:server-info'),
+  openFirewall: (port?: number) =>
+    invoke<{ success: boolean; error?: string }>('network:open-firewall', port),
+  pingServer: (ip: string, port: number) =>
+    invoke<{ ok: boolean; ms?: number; error?: string }>('network:ping-server', { ip, port }),
 };
 
 interface ARIESUser {

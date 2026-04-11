@@ -306,7 +306,7 @@ export const CuentasPagarModule: React.FC = () => {
               Egresos Rápidos — Hoy ({fechaSeleccionada.split('-').reverse().slice(0,2).join('/')})
             </span>
             <span style={{ fontSize: 11, color: 'var(--text3)', marginLeft: 2 }}>
-              se descuenta de {egresoMedioPago === 'transferencia' ? 'Transferencias' : 'Total en Caja'} en el libro
+              se descuenta de {egresoMedioPago === 'transferencia' ? 'Gastos Tarjeta/Transfer.' : 'Total en Caja'} en el libro
             </span>
           </div>
 

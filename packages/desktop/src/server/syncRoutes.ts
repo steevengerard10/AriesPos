@@ -1047,10 +1047,11 @@ export function createSyncRouter(io: SocketIOServer, exportFiadosToExcel: Export
       db.prepare(`INSERT OR IGNORE INTO libro_caja_dias (fecha) VALUES (?)`).run(fecha);
       dia = db.prepare(`SELECT * FROM libro_caja_dias WHERE fecha = ?`).get(fecha) as Record<string, unknown>;
     }
-    if (dia) {
-      (dia as Record<string, unknown>).egresos_detalle = db.prepare(`SELECT * FROM libro_caja_egresos WHERE dia_id = ? ORDER BY created_at ASC`).all(dia.id as number);
-    }
-    res.json(dia || null);
+    const diaId = (dia as { id: number }).id;
+    const turnos = db.prepare(`SELECT * FROM libro_caja_turnos WHERE dia_id = ? ORDER BY numero`).all(diaId);
+    const billetes = db.prepare(`SELECT * FROM libro_caja_billetes WHERE dia_id = ? ORDER BY denominacion DESC`).all(diaId);
+    const egresos = db.prepare(`SELECT * FROM libro_caja_egresos WHERE dia_id = ? ORDER BY fecha DESC`).all(diaId);
+    res.json({ dia, turnos, billetes, egresos });
   });
 
   router.get('/librocaja/historico', (req, res) => {
@@ -1074,7 +1075,7 @@ export function createSyncRouter(io: SocketIOServer, exportFiadosToExcel: Export
     const data = req.body as Record<string, unknown>;
     db.prepare(`INSERT OR IGNORE INTO libro_caja_dias (fecha) VALUES (?)`).run(fecha);
     const dia = db.prepare(`SELECT id FROM libro_caja_dias WHERE fecha = ?`).get(fecha) as { id: number };
-    const allowed = ['caja','tarjetas','transferencias','egresos','cambio','notas'];
+    const allowed = ['caja','tarjetas','transferencias','egresos','cambio','notas','gastos_tarjeta','libro','extra_caja'];
     const filtered = Object.fromEntries(Object.entries(data).filter(([k]) => allowed.includes(k)));
     if (Object.keys(filtered).length) {
       const fields = Object.keys(filtered).map(k => `${k} = @${k}`).join(', ');
@@ -1137,14 +1138,15 @@ export function createSyncRouter(io: SocketIOServer, exportFiadosToExcel: Export
     db.prepare(`INSERT OR IGNORE INTO libro_caja_dias (fecha) VALUES (?)`).run(fecha);
     const dia = db.prepare(`SELECT id FROM libro_caja_dias WHERE fecha = ?`).get(fecha) as { id: number };
     const result = db.prepare(`INSERT INTO libro_caja_egresos (dia_id, proveedor, monto, medio_pago) VALUES (?, ?, ?, ?)`).run(dia.id, proveedor, monto, medioPago);
-    const total = (db.prepare(`SELECT COALESCE(SUM(monto),0) as t FROM libro_caja_egresos WHERE dia_id = ?`).get(dia.id) as { t: number }).t;
+    // egresos acumula efectivo y resta de extra_caja (Caja Grande); transferencia afecta sus propios campos
+    const totalEfectivo = (db.prepare(`SELECT COALESCE(SUM(monto),0) as t FROM libro_caja_egresos WHERE dia_id = ? AND medio_pago = 'efectivo'`).get(dia.id) as { t: number }).t;
     if (medioPago === 'efectivo') {
-      db.prepare(`UPDATE libro_caja_dias SET egresos = ?, caja = MAX(0, COALESCE(caja, 0) - ?), updated_at = datetime('now') WHERE id = ?`).run(total, monto, dia.id);
+      db.prepare(`UPDATE libro_caja_dias SET egresos = ?, extra_caja = MAX(0, COALESCE(extra_caja, 0) - ?), updated_at = datetime('now') WHERE id = ?`).run(totalEfectivo, monto, dia.id);
     } else {
-      db.prepare(`UPDATE libro_caja_dias SET egresos = ?, transferencias = MAX(0, COALESCE(transferencias, 0) - ?), updated_at = datetime('now') WHERE id = ?`).run(total, monto, dia.id);
+      db.prepare(`UPDATE libro_caja_dias SET transferencias = MAX(0, COALESCE(transferencias, 0) - ?), gastos_tarjeta = COALESCE(gastos_tarjeta, 0) + ?, updated_at = datetime('now') WHERE id = ?`).run(monto, monto, dia.id);
     }
-    const updatedDia = db.prepare(`SELECT caja, transferencias FROM libro_caja_dias WHERE id = ?`).get(dia.id) as { caja: number; transferencias: number };
-    res.json({ id: result.lastInsertRowid, totalEgresos: total, caja: updatedDia.caja, transferencias: updatedDia.transferencias });
+    const updatedDia = db.prepare(`SELECT extra_caja, egresos, transferencias, gastos_tarjeta FROM libro_caja_dias WHERE id = ?`).get(dia.id) as { extra_caja: number; egresos: number; transferencias: number; gastos_tarjeta: number };
+    res.json({ id: result.lastInsertRowid, ...updatedDia });
   });
 
   router.delete('/librocaja/egreso/:id', (req, res) => {
@@ -1155,9 +1157,10 @@ export function createSyncRouter(io: SocketIOServer, exportFiadosToExcel: Export
     db.prepare(`DELETE FROM libro_caja_egresos WHERE id = ?`).run(id);
     const total = (db.prepare(`SELECT COALESCE(SUM(monto),0) as t FROM libro_caja_egresos WHERE dia_id = ?`).get(egreso.dia_id) as { t: number }).t;
     if (egreso.medio_pago === 'efectivo') {
-      db.prepare(`UPDATE libro_caja_dias SET egresos = ?, caja = COALESCE(caja, 0) + ?, updated_at = datetime('now') WHERE id = ?`).run(total, egreso.monto, egreso.dia_id);
+      const totalEfectivo = (db.prepare(`SELECT COALESCE(SUM(monto),0) as t FROM libro_caja_egresos WHERE dia_id = ? AND medio_pago = 'efectivo'`).get(egreso.dia_id) as { t: number }).t;
+      db.prepare(`UPDATE libro_caja_dias SET egresos = ?, extra_caja = COALESCE(extra_caja, 0) + ?, updated_at = datetime('now') WHERE id = ?`).run(totalEfectivo, egreso.monto, egreso.dia_id);
     } else {
-      db.prepare(`UPDATE libro_caja_dias SET egresos = ?, transferencias = COALESCE(transferencias, 0) + ?, updated_at = datetime('now') WHERE id = ?`).run(total, egreso.monto, egreso.dia_id);
+      db.prepare(`UPDATE libro_caja_dias SET transferencias = COALESCE(transferencias, 0) + ?, gastos_tarjeta = MAX(0, COALESCE(gastos_tarjeta, 0) - ?), updated_at = datetime('now') WHERE id = ?`).run(egreso.monto, egreso.monto, egreso.dia_id);
     }
     res.json({ success: true });
   });

@@ -92,6 +92,12 @@ export const ProductosModule: React.FC = () => {
   const fileRef = useRef<HTMLInputElement>(null);
   const csvRef = useRef<HTMLInputElement>(null);
   const ignoringSync = useRef(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const scrollPos = useRef(0);
+  const pageRef = useRef(0);
+
+  const saveScroll = () => { scrollPos.current = scrollRef.current?.scrollTop ?? 0; };
+  const restoreScroll = () => { if (scrollRef.current) scrollRef.current.scrollTop = scrollPos.current; };
 
   // Shortcut Insert o F2 para abrir formulario nuevo producto
   useEffect(() => {
@@ -109,8 +115,10 @@ export const ProductosModule: React.FC = () => {
 
   const PAGE_SIZE = 300;
 
-  const loadData = async (pg = page) => {
+  const loadData = async (pg = page, preserveScroll = false) => {
     setPage(pg);
+    pageRef.current = pg;
+    if (preserveScroll) saveScroll();
     setLoading(true);
     try {
       const [result, cats] = await Promise.all([
@@ -127,6 +135,7 @@ export const ProductosModule: React.FC = () => {
       setProductos(result.rows);
       setTotalProductos(result.total);
       setCategorias(cats);
+      if (preserveScroll) setTimeout(restoreScroll, 0);
     } finally {
       setLoading(false);
     }
@@ -140,7 +149,7 @@ export const ProductosModule: React.FC = () => {
     if (!w.electron) return;
     const cleanup = w.electron.on('producto:actualizado', () => {
       if (ignoringSync.current) return; // evitar reload cuando nosotros mismos guardamos
-      loadData(0);
+      loadData(pageRef.current, true);
     });
     return cleanup;
   }, []);
@@ -162,25 +171,29 @@ export const ProductosModule: React.FC = () => {
         setTimeout(() => { ignoringSync.current = false; }, 3000);
         toast.success(t('prod.updated'));
       } else {
+        saveScroll();
         const result = await productosAPI.create(formData as unknown as Record<string, unknown>);
         const newId = (result as { id: number }).id;
         if (pendingImage) {
           await productosAPI.saveImage(newId, pendingImage);
         }
         toast.success(t('prod.created'));
-        loadData();
+        await loadData(page, true);
       }
       setShowForm(false);
       setEditingId(null);
       setFormData(defaultProducto);
       setPendingImage(null);
       setMargenPct('');
+      // restaurar scroll luego de que el contenedor de lista vuelva a montarse
+      setTimeout(restoreScroll, 0);
     } catch (err) {
       toast.error(t('prod.saveError'));
     }
   };
 
   const handleEdit = (p: Producto) => {
+    saveScroll(); // guardar posición antes de que el contenedor se desmonte
     // Solo tomamos los campos editables (excluye categoria_nombre, created_at, updated_at, etc.)
     setFormData({
       nombre: p.nombre,
@@ -207,10 +220,11 @@ export const ProductosModule: React.FC = () => {
   };
 
   const handleDelete = async (id: number) => {
+    saveScroll();
     await productosAPI.delete(id);
     toast.success(t('prod.deactivated'));
     setConfirmDelete(null);
-    loadData();
+    loadData(page, true);
   };
 
   const handleDeleteAll = async () => {
@@ -242,11 +256,12 @@ export const ProductosModule: React.FC = () => {
 
   const handleDeleteSelected = async () => {
     if (selectedIds.size === 0) return;
+    saveScroll();
     await productosAPI.deleteMany(Array.from(selectedIds));
     toast.success(`${selectedIds.size} producto${selectedIds.size > 1 ? 's' : ''} eliminado${selectedIds.size > 1 ? 's' : ''}`);
     setSelectedIds(new Set());
     setConfirmDeleteSelected(false);
-    loadData();
+    loadData(page, true);
   };
 
   const handleLoadSeed = async () => {
@@ -274,7 +289,7 @@ export const ProductosModule: React.FC = () => {
           await productosAPI.saveImage(editingId, base64);
           setFormData((prev) => ({ ...prev, imagen_path: base64 }));
           toast.success(t('prod.img.saved'));
-          loadData();
+          loadData(page, true);
         } catch {
           toast.error(t('prod.img.error'));
         }
@@ -293,13 +308,14 @@ export const ProductosModule: React.FC = () => {
     const text = await file.text();
     const result = await productosAPI.importCSV(text) as { imported: number; errors: number };
     toast.success(t('prod.csv.imported', { n: result.imported, e: result.errors }));
-    loadData();
+    loadData(page, true);
     if (csvRef.current) csvRef.current.value = '';
   };
 
   const handleExportCSV = async () => {
     const headers = 'id,codigo,codigo_barras,nombre,categoria,precio_costo,precio_venta,stock_actual,stock_minimo,unidad_medida,fraccionable,activo';
-    const rows = productos.map((p) =>
+    const result = await productosAPI.getAll({ limit: 999999 }) as { rows: Producto[]; total: number };
+    const rows = result.rows.map((p) =>
       [p.id, p.codigo, p.codigo_barras, `"${p.nombre}"`, `"${p.categoria_nombre || ''}"`,
        p.precio_costo, p.precio_venta, p.stock_actual, p.stock_minimo, p.unidad_medida, p.fraccionable ? 1 : 0, p.activo ? 1 : 0].join(',')
     );
@@ -317,6 +333,7 @@ export const ProductosModule: React.FC = () => {
     setEditingId(null);
     setPendingImage(null);
     setMargenPct('');
+    setTimeout(restoreScroll, 0);
   };
 
   const buscarEnInternet = async () => {
@@ -727,7 +744,7 @@ export const ProductosModule: React.FC = () => {
       )}
 
       {/* Content */}
-      <div className="flex-1 overflow-auto px-6 pb-6">
+      <div ref={scrollRef} className="flex-1 overflow-auto px-6 pb-6">
         {loading ? (
           <div className="flex items-center justify-center h-32 text-slate-400">{t('prod.loading')}</div>
         ) : filtered.length === 0 ? (

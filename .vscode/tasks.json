@@ -1,0 +1,22 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Dev ARIESPos",
+			"type": "shell",
+			"command": "Get-Process -Name electron,node -EA SilentlyContinue | Stop-Process -Force; Start-Sleep -Seconds 1; pnpm --filter desktop dev",
+			"isBackground": true,
+			"problemMatcher": [],
+			"runOptions": {
+				"runOn": "default"
+			}
+		},
+		{
+			"label": "Dev ARIESPos",
+			"type": "shell",
+			"command": "Get-Process -Name electron,node -EA SilentlyContinue | Stop-Process -Force; Start-Sleep -Seconds 1; pnpm --filter desktop dev",
+			"isBackground": true,
+			"problemMatcher": []
+		}
+	]
+}

@@ -93,6 +93,7 @@ function createMainWindow(): void {
 
   mainWindow.once('ready-to-show', () => {
     console.log('[Main] mainWindow ready-to-show');
+    mainWindow?.maximize();
     mainWindow?.show();
   });
 
@@ -280,6 +281,54 @@ ipcMain.handle('app:validateAdminCode', async (_e, code: string) => {
   } catch {
     return false;
   }
+});
+
+// ── Abrir puerto en el firewall de Windows (con elevación UAC) ────────────
+ipcMain.handle('network:open-firewall', async (_e, port = 3001) => {
+  if (process.platform !== 'win32') return { success: true };
+  const { exec } = await import('child_process');
+  const { promisify } = await import('util');
+  const execAsync = promisify(exec);
+  const ruleName = `ARIESPos-${port}`;
+
+  // Borrar regla vieja y crear nueva con profile=any, via PowerShell elevado
+  const psScript = [
+    `Try { netsh advfirewall firewall delete rule name="${ruleName}" } Catch {}`,
+    `netsh advfirewall firewall add rule name="${ruleName}" dir=in action=allow protocol=TCP localport=${port} profile=any`,
+    `Write-Host "OK"`,
+  ].join('; ');
+
+  // Intentar sin elevación primero (si el proceso ya es admin)
+  try {
+    const { stdout } = await execAsync(
+      `powershell -NoProfile -NonInteractive -Command "${psScript.replace(/"/g, '\\"')}"`,
+      { timeout: 8000 }
+    );
+    if (stdout.includes('OK')) return { success: true };
+  } catch { /* sin admin — intentar con RunAs */ }
+
+  // Intentar con RunAs (popup UAC)
+  try {
+    const psElevated = `Start-Process -FilePath powershell -ArgumentList '-NoProfile','-NonInteractive','-Command','"${psScript.replace(/"/g, '\\"').replace(/'/g, "''")}"' -Verb RunAs -Wait -WindowStyle Hidden`;
+    await execAsync(`powershell -NoProfile -NonInteractive -Command "${psElevated}"`, { timeout: 30000 });
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: (err as Error).message };
+  }
+});
+
+// ── Test rápido ping al servidor (sin usar http para no bloquear) ──────────
+ipcMain.handle('network:ping-server', async (_e, { ip, port }: { ip: string; port: number }) => {
+  const { default: http } = await import('http');
+  return new Promise<{ ok: boolean; ms?: number; error?: string }>((resolve) => {
+    const t0 = Date.now();
+    const req = http.get(`http://${ip}:${port}/api/ping`, { timeout: 3000 }, (res) => {
+      res.resume();
+      resolve({ ok: res.statusCode === 200, ms: Date.now() - t0 });
+    });
+    req.on('error', (e) => resolve({ ok: false, error: e.message }));
+    req.on('timeout', () => { req.destroy(); resolve({ ok: false, error: 'timeout' }); });
+  });
 });
 
 // ── Ventana de red ─────────────────────────────────────────────

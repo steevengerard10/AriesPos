@@ -17,6 +17,24 @@
   --accent3: #059669;
   --warn:    #d97706;
   --danger:  #dc2626;
+  --text:    #e2e8f0;
+  --text2:   #94a3b8;
+  --text3:   #64748b;
+}
+
+/* ── Tema Claro ── */
+[data-theme="claro"] {
+  --bg:      #f0f2f5;
+  --bg2:     #ffffff;
+  --bg3:     #e8edf3;
+  --bg4:     #dde3ec;
+  --border:  #cbd5e1;
+  --border2: #94a3b8;
+  --accent:  #2563eb;
+  --accent2: #1d4ed8;
+  --accent3: #059669;
+  --warn:    #d97706;
+  --danger:  #dc2626;
   --text:    #0f172a;
   --text2:   #334155;
   --text3:   #64748b;
