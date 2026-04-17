@@ -1,6 +1,6 @@
 {
   "name": "@ariespos/renderer",
-  "version": "1.0.54",
+  "version": "1.0.71",
   "private": true,
   "type": "module",
   "scripts": {

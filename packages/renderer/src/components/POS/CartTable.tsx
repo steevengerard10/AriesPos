@@ -25,7 +25,7 @@ interface CartTableProps {
 export const CartTable: React.FC<CartTableProps> = ({ simbolo = '$' }) => {
   const { cart, updateItem, removeItem } = useVentasStore();
   const [editingCell, setEditingCell] = useState<{
-    productId: number;
+    itemId: string;
     field: 'cantidad' | 'precio_unitario' | 'descuento';
   } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -43,8 +43,8 @@ export const CartTable: React.FC<CartTableProps> = ({ simbolo = '$' }) => {
     );
   }
 
-  const startEdit = (productId: number, field: 'cantidad' | 'precio_unitario' | 'descuento') => {
-    setEditingCell({ productId, field });
+  const startEdit = (itemId: string, field: 'cantidad' | 'precio_unitario' | 'descuento') => {
+    setEditingCell({ itemId, field });
     setTimeout(() => inputRef.current?.select(), 10);
   };
 
@@ -58,7 +58,7 @@ export const CartTable: React.FC<CartTableProps> = ({ simbolo = '$' }) => {
       setEditingCell(null);
       return;
     }
-    updateItem(item.producto_id, { [field]: num });
+    updateItem(item.itemId, { [field]: num });
     setEditingCell(null);
   };
 
@@ -72,7 +72,7 @@ export const CartTable: React.FC<CartTableProps> = ({ simbolo = '$' }) => {
         </thead>
         <tbody>
           {cart.map((item) => (
-            <tr key={item.producto_id} className="table-row group">
+            <tr key={item.itemId} className="table-row group">
               <td className="table-cell">
                 <div className="font-medium text-white">{item.nombre}</div>
                 <div className="text-xs text-slate-500">
@@ -83,7 +83,7 @@ export const CartTable: React.FC<CartTableProps> = ({ simbolo = '$' }) => {
 
               {/* Cantidad */}
               <td className="table-cell text-center">
-                {editingCell?.productId === item.producto_id && editingCell.field === 'cantidad' ? (
+                {editingCell?.itemId === item.itemId && editingCell.field === 'cantidad' ? (
                   <input
                     ref={inputRef}
                     type="number"
@@ -106,14 +106,14 @@ export const CartTable: React.FC<CartTableProps> = ({ simbolo = '$' }) => {
                         onClick={() => {
                           const step = item.fraccionable ? 0.1 : 1;
                           const newQty = Math.max(step, parseFloat((item.cantidad - step).toFixed(3)));
-                          updateItem(item.producto_id, { cantidad: newQty });
+                          updateItem(item.itemId, { cantidad: newQty });
                         }}
                       >
                         <ChevronDown size={12} />
                       </button>
                       <button
                         className="font-mono font-semibold min-w-[2.5rem] hover:text-blue-400 transition-colors"
-                        onClick={() => startEdit(item.producto_id, 'cantidad')}
+                        onClick={() => startEdit(item.itemId, 'cantidad')}
                         title="Click para editar cantidad"
                       >
                         {item.fraccionable
@@ -125,7 +125,7 @@ export const CartTable: React.FC<CartTableProps> = ({ simbolo = '$' }) => {
                         onClick={() => {
                           const step = item.fraccionable ? 0.1 : 1;
                           const newQty = parseFloat((item.cantidad + step).toFixed(3));
-                          updateItem(item.producto_id, { cantidad: newQty });
+                          updateItem(item.itemId, { cantidad: newQty });
                         }}
                       >
                         <ChevronUp size={12} />
@@ -140,7 +140,7 @@ export const CartTable: React.FC<CartTableProps> = ({ simbolo = '$' }) => {
                           {shortcuts.map(s => (
                             <button
                               key={s.qty}
-                              onClick={() => updateItem(item.producto_id, { cantidad: s.qty })}
+                              onClick={() => updateItem(item.itemId, { cantidad: s.qty })}
                               className="flex-1 text-[9px] font-mono py-0.5 px-0 rounded bg-slate-700/60 hover:bg-slate-600 text-slate-400 hover:text-amber-400 border border-transparent hover:border-amber-400/30 transition-all"
                             >
                               {s.label}
@@ -155,7 +155,7 @@ export const CartTable: React.FC<CartTableProps> = ({ simbolo = '$' }) => {
 
               {/* Precio unitario — editable, con indicador si fue modificado */}
               <td className="table-cell text-right">
-                {editingCell?.productId === item.producto_id && editingCell.field === 'precio_unitario' ? (
+                {editingCell?.itemId === item.itemId && editingCell.field === 'precio_unitario' ? (
                   <input
                     ref={inputRef}
                     type="number"
@@ -175,7 +175,7 @@ export const CartTable: React.FC<CartTableProps> = ({ simbolo = '$' }) => {
                   return (
                     <div className="flex flex-col items-end gap-0.5">
                       <button
-                        onClick={() => startEdit(item.producto_id, 'precio_unitario')}
+                        onClick={() => startEdit(item.itemId, 'precio_unitario')}
                         title="Click para editar precio en esta venta"
                         className={`font-mono text-sm flex items-center gap-1 px-1.5 py-0.5 rounded transition-colors ${
                           modified
@@ -198,7 +198,7 @@ export const CartTable: React.FC<CartTableProps> = ({ simbolo = '$' }) => {
 
               {/* Descuento */}
               <td className="table-cell text-right">
-                {editingCell?.productId === item.producto_id && editingCell.field === 'descuento' ? (
+                {editingCell?.itemId === item.itemId && editingCell.field === 'descuento' ? (
                   <input
                     ref={inputRef}
                     type="number"
@@ -216,7 +216,7 @@ export const CartTable: React.FC<CartTableProps> = ({ simbolo = '$' }) => {
                 ) : (
                   <button
                     className={`font-mono hover:text-amber-400 transition-colors ${item.descuento > 0 ? 'text-amber-400' : 'text-slate-500'}`}
-                    onClick={() => startEdit(item.producto_id, 'descuento')}
+                    onClick={() => startEdit(item.itemId, 'descuento')}
                     title="Click para editar descuento"
                   >
                     {item.descuento > 0 ? `-${formatCurrency(item.descuento, simbolo)}` : '—'}
@@ -235,7 +235,7 @@ export const CartTable: React.FC<CartTableProps> = ({ simbolo = '$' }) => {
                   className="btn-ghost btn p-1.5 opacity-0 group-hover:opacity-100 hover:text-red-400 transition-all"
                   onClick={() => {
                     sendEvent('broadcast-event', 'pos:alert', { type: 'item_removed', message: item.nombre, detail: `${item.cantidad} × ${formatCurrency(item.precio_unitario, simbolo)} = ${formatCurrency(item.total, simbolo)}` });
-                    removeItem(item.producto_id);
+                    removeItem(item.itemId);
                   }}
                 >
                   <Trash2 size={14} />

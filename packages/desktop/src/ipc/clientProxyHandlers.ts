@@ -18,52 +18,88 @@ function init(serverIP: string, port: number, password = '159753'): void {
 }
 
 async function get(path: string): Promise<unknown> {
-  const res = await fetch(`${_base}${path}`, {
-    headers: { Authorization: _auth, 'Content-Type': 'application/json' },
-  });
-  if (!res.ok) {
-    const err = await res.text().catch(() => res.statusText);
-    throw new Error(`GET ${path} → ${res.status}: ${err}`);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  try {
+    const res = await fetch(`${_base}${path}`, {
+      headers: { Authorization: _auth, 'Content-Type': 'application/json' },
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    if (!res.ok) {
+      const err = await res.text().catch(() => res.statusText);
+      throw new Error(`GET ${path} → ${res.status}: ${err}`);
+    }
+    return res.json();
+  } catch (err) {
+    clearTimeout(timer);
+    throw err;
   }
-  return res.json();
 }
 
 async function post(path: string, body: unknown = {}): Promise<unknown> {
-  const res = await fetch(`${_base}${path}`, {
-    method: 'POST',
-    headers: { Authorization: _auth, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const err = await res.text().catch(() => res.statusText);
-    throw new Error(`POST ${path} → ${res.status}: ${err}`);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12000);
+  try {
+    const res = await fetch(`${_base}${path}`, {
+      method: 'POST',
+      headers: { Authorization: _auth, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    if (!res.ok) {
+      const err = await res.text().catch(() => res.statusText);
+      throw new Error(`POST ${path} → ${res.status}: ${err}`);
+    }
+    return res.json();
+  } catch (err) {
+    clearTimeout(timer);
+    throw err;
   }
-  return res.json();
 }
 
 async function put(path: string, body: unknown = {}): Promise<unknown> {
-  const res = await fetch(`${_base}${path}`, {
-    method: 'PUT',
-    headers: { Authorization: _auth, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const err = await res.text().catch(() => res.statusText);
-    throw new Error(`PUT ${path} → ${res.status}: ${err}`);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12000);
+  try {
+    const res = await fetch(`${_base}${path}`, {
+      method: 'PUT',
+      headers: { Authorization: _auth, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    if (!res.ok) {
+      const err = await res.text().catch(() => res.statusText);
+      throw new Error(`PUT ${path} → ${res.status}: ${err}`);
+    }
+    return res.json();
+  } catch (err) {
+    clearTimeout(timer);
+    throw err;
   }
-  return res.json();
 }
 
 async function del(path: string): Promise<unknown> {
-  const res = await fetch(`${_base}${path}`, {
-    method: 'DELETE',
-    headers: { Authorization: _auth, 'Content-Type': 'application/json' },
-  });
-  if (!res.ok) {
-    const err = await res.text().catch(() => res.statusText);
-    throw new Error(`DELETE ${path} → ${res.status}: ${err}`);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12000);
+  try {
+    const res = await fetch(`${_base}${path}`, {
+      method: 'DELETE',
+      headers: { Authorization: _auth, 'Content-Type': 'application/json' },
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    if (!res.ok) {
+      const err = await res.text().catch(() => res.statusText);
+      throw new Error(`DELETE ${path} → ${res.status}: ${err}`);
+    }
+    return res.json();
+  } catch (err) {
+    clearTimeout(timer);
+    throw err;
   }
-  return res.json();
 }
 
 function buildQuery(params: Record<string, unknown> | undefined): string {
@@ -75,7 +111,28 @@ function buildQuery(params: Record<string, unknown> | undefined): string {
   return qs ? `?${qs}` : '';
 }
 
+const VIRTUAL_ADAPTER = /virtualbox|vmware|vethernet|hyper-v|tap|pseudo|bluetooth|loopback|teredo|isatap|6to4/i;
+
+function getAllLocalIPsSorted(): { name: string; address: string; preferred: boolean }[] {
+  const nets = os.networkInterfaces();
+  const results: { name: string; address: string; preferred: boolean }[] = [];
+  for (const [name, iface] of Object.entries(nets)) {
+    if (VIRTUAL_ADAPTER.test(name)) continue;
+    for (const info of iface ?? []) {
+      if (info.family === 'IPv4' && !info.internal) {
+        const preferred = /^(192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.)/.test(info.address);
+        results.push({ name, address: info.address, preferred });
+      }
+    }
+  }
+  results.sort((a, b) => (b.preferred ? 1 : 0) - (a.preferred ? 1 : 0));
+  return results;
+}
+
 function getLocalIP(): string {
+  const sorted = getAllLocalIPsSorted();
+  if (sorted.length > 0) return sorted[0].address;
+  // fallback sin filtro de adaptadores virtuales
   const ifaces = os.networkInterfaces();
   for (const iface of Object.values(ifaces)) {
     for (const info of iface ?? []) {
@@ -243,8 +300,8 @@ export function registerClientProxyHandlers(serverIP: string, port: number, serv
   ipcMain.handle('caja:abrir', (_e, montoInicial: number, usuarioId?: number) =>
     post('/api/sync/caja/abrir', { monto_inicial: montoInicial, usuario_id: usuarioId ?? null }));
 
-  ipcMain.handle('caja:cerrar', (_e, sessionId: number, montoFinal: number) =>
-    post('/api/sync/caja/cerrar', { sesion_id: sessionId, monto_final: montoFinal }));
+  ipcMain.handle('caja:cerrar', (_e, sessionId: number, montoFinal: number, efectivoManual = 0, tarjetasManual = 0, transferenciasManual = 0) =>
+    post('/api/sync/caja/cerrar', { sesion_id: sessionId, monto_final: montoFinal, efectivo: efectivoManual, tarjetas: tarjetasManual, transferencias: transferenciasManual }));
 
   ipcMain.handle('caja:agregarMovimiento', (_e, data: Record<string, unknown>) =>
     post('/api/sync/caja/movimiento', data));
@@ -282,8 +339,18 @@ export function registerClientProxyHandlers(serverIP: string, port: number, serv
   ipcMain.handle('usuarios:getAll', () =>
     get('/api/sync/usuarios'));
 
-  ipcMain.handle('usuarios:login', (_e, pin: string) =>
-    post('/api/sync/usuarios/login', { pin }));
+  ipcMain.handle('usuarios:login', (_e, pin: string) => {
+    // Usar endpoint público (sin basicAuth) para que funcione aunque la contraseña del servidor sea diferente
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    return fetch(`${_base}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin }),
+      signal: controller.signal,
+    }).then(r => { clearTimeout(timer); return r.json(); })
+      .catch(e => { clearTimeout(timer); throw e; });
+  });
 
   ipcMain.handle('usuarios:create', (_e, data: { nombre: string; pin: string; rol: string }) =>
     post('/api/sync/usuarios', data));
@@ -342,8 +409,8 @@ export function registerClientProxyHandlers(serverIP: string, port: number, serv
   ipcMain.handle('librocaja:getDia', (_e, fecha: string) =>
     get(`/api/sync/librocaja?fecha=${fecha}`));
 
-  ipcMain.handle('librocaja:getHistorico', (_e, limit = 60) =>
-    get(`/api/sync/librocaja/historico?limit=${limit}`));
+  ipcMain.handle('librocaja:getHistorico', (_e, periodo?: string) =>
+    get(`/api/sync/librocaja/historico${periodo ? `?periodo=${periodo}` : ''}`));
 
   ipcMain.handle('librocaja:updateDia', (_e, fecha: string, data: Record<string, unknown>) =>
     put(`/api/sync/librocaja/${fecha}`, data));
@@ -372,6 +439,15 @@ export function registerClientProxyHandlers(serverIP: string, port: number, serv
   ipcMain.handle('librocaja:exportExcel', () =>
     ({ success: false, error: 'Export Excel solo disponible en servidor' }));
 
+  ipcMain.handle('librocaja:getPeriodos', () =>
+    get('/api/sync/librocaja/periodos'));
+
+  ipcMain.handle('librocaja:cerrarMes', (_e, periodo: string) =>
+    post('/api/sync/librocaja/periodos/cerrar', { periodo }));
+
+  ipcMain.handle('librocaja:reabrirMes', (_e, periodo: string) =>
+    post('/api/sync/librocaja/periodos/reabrir', { periodo }));
+
   // ── FIRMA DIGITAL (valida pines contra servidor) ──────────────────────────
   ipcMain.handle('firma:estado', async () => {
     // En cliente indicamos que está configurado (el servidor tiene la firma)
@@ -387,11 +463,89 @@ export function registerClientProxyHandlers(serverIP: string, port: number, serv
   ipcMain.handle('firma:cambiar', () =>
     ({ success: false, error: 'Cambio de firma solo disponible en servidor' }));
 
-  // ── BACKUP (no disponible en cliente) ──────────────────────────
-  ipcMain.handle('backup:list', () => []);
-  ipcMain.handle('backup:create', () => ({ success: false, error: 'Backup solo disponible en servidor' }));
-  ipcMain.handle('backup:restore', () => ({ success: false, error: 'Restore solo disponible en servidor' }));
-  ipcMain.handle('backup:autoBackup', () => ({ success: false }));
+  // ── BACKUP (cliente: descarga la DB del servidor y la guarda localmente) ──
+  const { app: _bkpApp } = require('electron') as typeof import('electron');
+  const _bkpFs = require('fs') as typeof import('fs');
+  const _bkpPath = require('path') as typeof import('path');
+
+  function getClientBackupsDir(): string {
+    const dir = _bkpPath.join(_bkpApp.getPath('userData'), 'backups');
+    if (!_bkpFs.existsSync(dir)) _bkpFs.mkdirSync(dir, { recursive: true });
+    return dir;
+  }
+
+  ipcMain.handle('backup:get-dir', () => getClientBackupsDir());
+
+  ipcMain.handle('backup:list', () => {
+    try {
+      const dir = getClientBackupsDir();
+      return _bkpFs.readdirSync(dir)
+        .filter((f: string) => f.endsWith('.db'))
+        .map((f: string) => {
+          const full = _bkpPath.join(dir, f);
+          const stat = _bkpFs.statSync(full);
+          return { name: f, path: full, size: stat.size, date: stat.mtime.toISOString() };
+        })
+        .sort((a: { date: string }, b: { date: string }) => b.date.localeCompare(a.date));
+    } catch {
+      return [];
+    }
+  });
+
+  ipcMain.handle('backup:create', async () => {
+    try {
+      // Descarga la DB del servidor via /api/sync/backup/download
+      const response = await fetch(`${_base}/api/sync/backup/download`, {
+        headers: { Authorization: _auth },
+      });
+      if (!response.ok) {
+        const txt = await response.text().catch(() => response.statusText);
+        return { success: false, error: `Error del servidor: ${response.status} ${txt}` };
+      }
+      const buffer = Buffer.from(await response.arrayBuffer());
+      const fileName = response.headers.get('x-backup-filename')
+        || `ariespos_backup_${new Date().toISOString().replace(/T/, '_').replace(/:/g, '-').replace(/\..+/, '')}.db`;
+      const destPath = _bkpPath.join(getClientBackupsDir(), fileName);
+      _bkpFs.writeFileSync(destPath, buffer);
+      console.log(`[ClientBackup] Guardado: ${destPath} (${buffer.length} bytes)`);
+      return { success: true, path: destPath };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
+  });
+
+  ipcMain.handle('backup:restore', () => ({ success: false, error: 'La restauración solo puede hacerse en la PC servidor' }));
+  ipcMain.handle('backup:autoBackup', async () => {
+    // En clientes: auto-backup también descarga del servidor
+    try {
+      const response = await fetch(`${_base}/api/sync/backup/download`, { headers: { Authorization: _auth } });
+      if (!response.ok) return { success: false };
+      const buffer = Buffer.from(await response.arrayBuffer());
+      const fileName = response.headers.get('x-backup-filename')
+        || `ariespos_auto_${new Date().toISOString().replace(/T/, '_').replace(/:/g, '-').replace(/\..+/, '')}.db`;
+      const destPath = _bkpPath.join(getClientBackupsDir(), fileName);
+      _bkpFs.writeFileSync(destPath, buffer);
+      return { success: true, path: destPath };
+    } catch {
+      return { success: false };
+    }
+  });
+
+  // En clientes: db:repair no opera localmente, solo descarga un backup fresco del servidor
+  ipcMain.handle('db:repair', async () => {
+    try {
+      const response = await fetch(`${_base}/api/sync/backup/download`, { headers: { Authorization: _auth } });
+      if (!response.ok) return { success: false, integrityOk: false, integrityResult: 'No se pudo conectar con el servidor', backupPath: null, message: 'No se pudo descargar el backup del servidor. Verificá la conexión.' };
+      const buffer = Buffer.from(await response.arrayBuffer());
+      const fileName = response.headers.get('x-backup-filename')
+        || `ariespos_repair_${new Date().toISOString().replace(/T/, '_').replace(/:/g, '-').replace(/\..+/, '')}.db`;
+      const destPath = _bkpPath.join(getClientBackupsDir(), fileName);
+      _bkpFs.writeFileSync(destPath, buffer);
+      return { success: true, integrityOk: true, integrityResult: 'ok', backupPath: destPath, message: 'Se descargó una copia fresca del servidor y se guardó localmente.' };
+    } catch (e: unknown) {
+      return { success: false, integrityOk: false, integrityResult: String(e), backupPath: null, message: 'Error al conectar con el servidor.' };
+    }
+  });
 
   // ── EXPORT/IMPORT (no disponible en cliente) ──────────────────────────
   ipcMain.handle('export:allJSON', () => ({ success: false, error: 'Export solo disponible en servidor' }));
@@ -453,17 +607,24 @@ export function registerClientProxyHandlers(serverIP: string, port: number, serv
 
   ipcMain.handle('network:get-local-ip', () => getLocalIP());
 
+  // En modo cliente el puerto local no aplica (el servidor es remoto),
+  // pero NetworkSetupWindow necesita saber la IP local para mostrar info de red.
+  ipcMain.handle('network:server-info', () => {
+    const ips = getAllLocalIPsSorted();
+    return { ips, port: 3001 };
+  });
+
   // ── LICENSE (local a cada PC) ──────────────────────────────────────────
   // Los handlers de licencia quedan en main.ts (son locales por PC)
   // No registrar aquí para evitar duplicado — main.ts los registra antes.
 
   // ── POLLING DE SINCRONIZACIÓN ─────────────────────────────────────────────
-  // Cada 5 segundos consulta el servidor si hubo cambios en productos o ventas.
-  // Si el timestamp cambió, emite los eventos al renderer para que recargue.
-  // También monitorea el estado de conexión y avisa al renderer cuando cae o vuelve.
   let _lastTs = '';
   let _failCount = 0;
   let _connectionLost = false;
+  const _startTime = Date.now();
+  const GRACE_MS = 5_000;  // 5s de gracia al inicio antes de contar fallas
+  const FAIL_THRESHOLD = 3; // 3 fallas consecutivas antes de mostrar "perdido"
 
   function broadcastToWindows(event: string, data: unknown) {
     BrowserWindow.getAllWindows().forEach(win => {
@@ -474,12 +635,10 @@ export function registerClientProxyHandlers(serverIP: string, port: number, serv
   const _syncInterval = setInterval(async () => {
     try {
       const result = await get('/api/sync/last-changed') as { ts: string };
-      // Conexión recuperada
       if (_connectionLost) {
         _connectionLost = false;
         _failCount = 0;
         broadcastToWindows('connection:status', 'connected');
-        // Recargar todo tras reconexión
         broadcastToWindows('producto:actualizado', { reload: true });
         broadcastToWindows('venta:nueva', { reload: true });
         broadcastToWindows('stock:actualizado', { reload: true });
@@ -488,17 +647,17 @@ export function registerClientProxyHandlers(serverIP: string, port: number, serv
       }
       if (result.ts && result.ts !== _lastTs) {
         if (_lastTs !== '') {
-          // Hubo un cambio — notificar a todas las ventanas del renderer
           broadcastToWindows('producto:actualizado', { reload: true });
           broadcastToWindows('venta:nueva', { reload: true });
           broadcastToWindows('stock:actualizado', { reload: true });
         }
         _lastTs = result.ts;
       }
-    } catch {
+    } catch (err) {
+      // Ignorar fallas durante el período de gracia inicial
+      if (Date.now() - _startTime < GRACE_MS) return;
       _failCount++;
-      // Después de 2 fallos consecutivos, informar al renderer
-      if (_failCount >= 2 && !_connectionLost) {
+      if (_failCount >= FAIL_THRESHOLD && !_connectionLost) {
         _connectionLost = true;
         broadcastToWindows('connection:status', 'disconnected');
       }

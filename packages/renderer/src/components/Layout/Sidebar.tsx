@@ -7,7 +7,7 @@ import {
 import { cn } from '../../lib/utils';
 import { useAppStore } from '../../store/useAppStore';
 import { useTranslation } from 'react-i18next';
-import AriesLogo from '../../assets/aries_logo.svg';
+import AriesLogo from '../../assets/icon_logo.png';
 
 interface NavItem {
   id: string;
@@ -97,7 +97,7 @@ export default function Sidebar() {
             src={AriesLogo}
             alt="ARIESPos"
             style={{
-              width: 30, height: 30,
+              width: 38, height: 38,
               objectFit: 'contain',
               flexShrink: 0,
               filter: 'drop-shadow(0 0 5px rgba(190,50,120,0.5))',

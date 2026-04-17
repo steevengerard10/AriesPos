@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { appAPI, networkAPI } from '../lib/api';
-import AriesLogo from '../assets/aries_logo.svg';
+import AriesLogo from '../assets/icon_logo.png';
 
 interface SetupScreenProps {
   onComplete: () => void;
@@ -115,7 +115,7 @@ export function SetupScreen({ onComplete }: SetupScreenProps) {
             src={AriesLogo}
             alt="ARIESPos"
             style={{
-              width: 72, height: 72,
+              width: 88, height: 88,
               objectFit: 'contain',
               margin: '0 auto 12px',
               display: 'block',

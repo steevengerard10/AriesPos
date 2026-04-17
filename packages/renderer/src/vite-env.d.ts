@@ -41,6 +41,36 @@ interface ElectronAPI {
   // Network scan
   networkScan: (port?: number) => Promise<ScannedServer[]>;
   networkGetLocalIP: () => Promise<string>;
+  networkServerInfo: () => Promise<{ localIP: string; port: number }>;
+  networkOpenFirewall: (port?: number) => Promise<void>;
+  networkPingServer: (ip: string, port: number) => Promise<boolean>;
+  networkGetProfile: () => Promise<unknown>;
+
+  // Controles de ventana
+  windowMinimize: () => void;
+  windowMaximize: () => void;
+  windowClose: () => void;
+  windowIsMaximized: () => Promise<boolean>;
+  onWindowMaximize: (cb: () => void) => () => void;
+
+  // Conexión
+  onConnectionChange: (cb: (status: string) => void) => () => void;
+  onClientsUpdate: (cb: (count: number) => void) => () => void;
+  becomeServer: () => Promise<void>;
+  resetToSetup: () => Promise<void>;
+
+  // Actualizaciones
+  onUpdateAvailable: (cb: () => void) => void;
+  onUpdateDownloaded: (cb: () => void) => void;
+  restartToUpdate: () => void;
+  updaterDownload: () => Promise<void>;
+  updaterInstall: () => Promise<void>;
+  updaterCheckManual: () => Promise<void>;
+  getAppVersion: () => string;
+
+  // Licencia
+  licenseCheck: () => Promise<{ licensed: boolean }>;
+  licenseActivate: (key: string) => Promise<{ ok: boolean; error?: string }>;
 }
 
 interface EnvAPI {

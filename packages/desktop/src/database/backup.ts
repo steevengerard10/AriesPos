@@ -33,19 +33,23 @@ export async function autoBackup(): Promise<string> {
   return backupPath;
 }
 
-export async function manualBackup(targetDir: string): Promise<string> {
+export async function manualBackup(targetDir?: string): Promise<string> {
   const dbPath = getDbPath();
   if (!fs.existsSync(dbPath)) throw new Error('Base de datos no encontrada');
+
+  // Si no se pasa directorio destino, usar la carpeta interna de backups
+  const dest = targetDir || getBackupsDir();
+  if (!fs.existsSync(dest)) fs.mkdirSync(dest, { recursive: true });
 
   const now = new Date();
   const timestamp = now
     .toISOString()
     .replace(/T/, '_')
     .replace(/:/g, '-')
-    .replace(/\..+/, '');
+    .replace(/\.+/, '');
 
   const backupFilename = `ariespos_backup_${timestamp}.db`;
-  const backupPath = path.join(targetDir, backupFilename);
+  const backupPath = path.join(dest, backupFilename);
 
   fs.copyFileSync(dbPath, backupPath);
   console.log(`[Backup] Backup manual creado: ${backupPath}`);

@@ -6,6 +6,7 @@ import { useVentasStore } from '../../store/useVentasStore';
 import { formatCurrency } from '../../lib/utils';
 import toast from 'react-hot-toast';
 
+
 interface Producto {
   id: number;
   nombre: string;
@@ -44,6 +45,8 @@ export const ProductSearch: React.FC<ProductSearchProps> = ({
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [selectedProduct, setSelectedProduct] = useState<Producto | null>(null);
   const [step, setStep] = useState<FlowStep>('search');
+
+  // Modal de duplicado
 
   const inputRef = useRef<HTMLInputElement>(null);
   const qtyRef = useRef<HTMLInputElement>(null);
@@ -110,7 +113,7 @@ export const ProductSearch: React.FC<ProductSearchProps> = ({
   }, [getPrice]);
 
   // Agrega el producto al carrito con la cantidad y precio actuales
-  const commitAdd = useCallback(() => {
+  const commitAdd = useCallback((modo: 'sumar' | 'nuevo' = 'nuevo') => {
     if (!selectedProduct) return;
     const parsedQty = parseFloat(qty.replace(',', '.'));
     const cantidad = (!isNaN(parsedQty) && parsedQty > 0) ? parsedQty : 1;
@@ -120,6 +123,7 @@ export const ProductSearch: React.FC<ProductSearchProps> = ({
     if (selectedProduct.stock_actual <= 0 && !selectedProduct.fraccionable) {
       toast(`⚠ Sin stock: ${selectedProduct.nombre}`, { duration: 2000 });
     }
+
     addItem({
       producto_id: selectedProduct.id,
       nombre: selectedProduct.nombre,
@@ -129,7 +133,7 @@ export const ProductSearch: React.FC<ProductSearchProps> = ({
       descuento: 0,
       fraccionable: selectedProduct.fraccionable,
       unidad_medida: selectedProduct.unidad_medida,
-    });
+    }, modo);
     toast.success(`${selectedProduct.nombre} agregado`, { duration: 1000 });
     if (onSelect) onSelect(selectedProduct);
     resetForm();
@@ -137,6 +141,20 @@ export const ProductSearch: React.FC<ProductSearchProps> = ({
 
   // ── Handlers de teclado ─────────────────────────────────────────
   const handleSearchKeyDown = useCallback(async (e: React.KeyboardEvent<HTMLInputElement>) => {
+    // F3 → agregar como ítem separado (sin preguntar)
+    if (e.key === 'F3') {
+      e.preventDefault();
+      if (selectedProduct) { commitAdd('nuevo'); return; }
+      if (results.length === 1) { selectProduct(results[0]); }
+      return;
+    }
+    // F4 → sumar a existente (sin preguntar)
+    if (e.key === 'F4') {
+      e.preventDefault();
+      if (selectedProduct) { commitAdd('sumar'); return; }
+      if (results.length === 1) { selectProduct(results[0]); }
+      return;
+    }
     if (e.key === 'Enter') {
       e.preventDefault();
       // Dropdown abierto → seleccionar ítem resaltado
@@ -173,7 +191,7 @@ export const ProductSearch: React.FC<ProductSearchProps> = ({
     if (e.key === 'ArrowDown') { e.preventDefault(); setSelectedIndex((i) => Math.min(i + 1, results.length - 1)); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); setSelectedIndex((i) => Math.max(i - 1, 0)); }
     else if (e.key === 'Escape') { setShowDropdown(false); setQuery(''); }
-  }, [showDropdown, results, selectedIndex, query, selectProduct]);
+  }, [showDropdown, results, selectedIndex, query, selectProduct, selectedProduct, commitAdd]);
 
   const handleQtyKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter' || e.key === 'Tab') {
@@ -188,7 +206,7 @@ export const ProductSearch: React.FC<ProductSearchProps> = ({
   const handlePrecioKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter' || e.key === 'Tab') {
       e.preventDefault();
-      commitAdd();
+      commitAdd('nuevo');
     } else if (e.key === 'Escape') {
       resetForm();
     }
@@ -206,6 +224,7 @@ export const ProductSearch: React.FC<ProductSearchProps> = ({
     }`;
 
   return (
+    <>
     <div className="relative flex items-center gap-2">
       {/* ── Campo de búsqueda ─────────────────────────────────────── */}
       <div className={`relative flex-1 flex items-center gap-2 rounded border px-2.5 py-2 transition-all duration-150 min-w-0 ${
@@ -293,7 +312,7 @@ export const ProductSearch: React.FC<ProductSearchProps> = ({
 
       {/* ── Botón Emitir / Agregar ────────────────────────────────── */}
       <button
-        onClick={commitAdd}
+        onClick={() => commitAdd('nuevo')}
         disabled={!selectedProduct}
         className={`flex items-center justify-center gap-1 px-3 py-2 rounded border text-sm font-semibold transition-all shrink-0 ${
           selectedProduct
@@ -340,5 +359,6 @@ export const ProductSearch: React.FC<ProductSearchProps> = ({
         </div>
       )}
     </div>
+    </>
   );
 };

@@ -1,6 +1,12 @@
 import { create } from 'zustand';
 import { libroCajaAPI, LibroCajaDia, LibroCajaTurno, LibroCajaBillete, LibroCajaEgreso } from '../lib/api';
 
+export interface LibroCajaPeriodo {
+  periodo: string;
+  estado: 'abierto' | 'cerrado';
+  fecha_cierre: string | null;
+}
+
 interface LibroCajaState {
   // Datos del día actual
   diaActual: LibroCajaDia | null;
@@ -12,6 +18,10 @@ interface LibroCajaState {
   // Histórico
   historico: LibroCajaDia[];
 
+  // Periodos mensuales
+  periodos: LibroCajaPeriodo[];
+  periodoActual: string; // YYYY-MM
+
   // UI
   fechaSeleccionada: string;
   loading: boolean;
@@ -19,8 +29,12 @@ interface LibroCajaState {
 
   // Acciones
   setFecha: (fecha: string) => void;
+  setPeriodo: (periodo: string) => void;
   cargarDia: (fecha?: string) => Promise<void>;
   cargarHistorico: () => Promise<void>;
+  cargarPeriodos: () => Promise<void>;
+  cerrarMes: (periodo: string) => Promise<void>;
+  reabrirMes: (periodo: string) => Promise<void>;
   actualizarCampo: (campo: keyof LibroCajaDia, valor: number | string) => Promise<void>;
   actualizarCampoPorFecha: (fecha: string, campo: keyof LibroCajaDia, valor: number | string) => Promise<void>;
   syncDesdeVentas: () => Promise<void>;
@@ -36,6 +50,11 @@ function hoyISO(): string {
   return new Date().toISOString().split('T')[0];
 }
 
+function mesActualISO(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+}
+
 export const useLibroCajaStore = create<LibroCajaState>((set, get) => ({
   diaActual: null,
   turnos: [],
@@ -43,6 +62,8 @@ export const useLibroCajaStore = create<LibroCajaState>((set, get) => ({
   billetes: [],
   egresos: [],
   historico: [],
+  periodos: [],
+  periodoActual: mesActualISO(),
   fechaSeleccionada: hoyISO(),
   loading: false,
   loadingSync: false,
@@ -50,6 +71,11 @@ export const useLibroCajaStore = create<LibroCajaState>((set, get) => ({
   setFecha: (fecha) => {
     set({ fechaSeleccionada: fecha });
     get().cargarDia(fecha);
+  },
+
+  setPeriodo: (periodo) => {
+    set({ periodoActual: periodo });
+    get().cargarHistorico();
   },
 
   cargarDia: async (fecha) => {
@@ -65,8 +91,29 @@ export const useLibroCajaStore = create<LibroCajaState>((set, get) => ({
   },
 
   cargarHistorico: async () => {
-    const historico = await libroCajaAPI.getHistorico(90);
+    const { periodoActual } = get();
+    const historico = await libroCajaAPI.getHistorico(periodoActual);
     set({ historico });
+  },
+
+  cargarPeriodos: async () => {
+    const periodos = await libroCajaAPI.getPeriodos();
+    set({ periodos });
+    // Si el mes actual no aparece en la lista, agregarlo como 'abierto'
+    const mesActual = get().periodoActual;
+    if (!periodos.some(p => p.periodo === mesActual)) {
+      set(s => ({ periodos: [{ periodo: mesActual, estado: 'abierto', fecha_cierre: null }, ...s.periodos] }));
+    }
+  },
+
+  cerrarMes: async (periodo) => {
+    await libroCajaAPI.cerrarMes(periodo);
+    await get().cargarPeriodos();
+  },
+
+  reabrirMes: async (periodo) => {
+    await libroCajaAPI.reabrirMes(periodo);
+    await get().cargarPeriodos();
   },
 
   actualizarCampo: async (campo, valor) => {

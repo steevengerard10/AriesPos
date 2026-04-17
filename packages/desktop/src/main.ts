@@ -18,8 +18,8 @@ const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 
 function createSplash(): void {
   const logoPath = app.isPackaged
-    ? path.join(process.resourcesPath, 'logo', 'aries_logo.svg')
-    : path.join(__dirname, '../../packages/renderer/src/assets/aries_logo.svg');
+    ? path.join(process.resourcesPath, 'logo', 'icon_logo.png')
+    : path.join(__dirname, '../../packages/renderer/src/assets/icon_logo.png');
 
   splashWindow = new BrowserWindow({
     width: 380,
@@ -39,7 +39,7 @@ function createSplash(): void {
 <html><body style="margin:0;background:transparent;display:flex;flex-direction:column;
   align-items:center;justify-content:center;height:100vh;
   font-family:'Segoe UI',sans-serif;-webkit-app-region:drag">
-  <img src="${logoUrl}" style="width:120px;height:120px;object-fit:contain;
+  <img src="${logoUrl}" style="width:150px;height:150px;object-fit:contain;
     filter:drop-shadow(0 0 24px rgba(190,50,120,0.7))" />
   <p style="color:#e2e8f0;font-size:20px;font-weight:700;margin:18px 0 4px;
     letter-spacing:0.08em">ARIES<span style="color:#be3278">POS</span></p>
@@ -62,12 +62,7 @@ function createMainWindow(): void {
     minWidth: 1100,
     minHeight: 700,
     backgroundColor: '#0f172a',
-    titleBarStyle: 'hidden',
-    titleBarOverlay: {
-      color: '#1e293b',
-      symbolColor: '#94a3b8',
-      height: 36,
-    },
+    frame: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -95,6 +90,15 @@ function createMainWindow(): void {
     console.log('[Main] mainWindow ready-to-show');
     mainWindow?.maximize();
     mainWindow?.show();
+  });
+
+  // Ctrl+Shift+R — restablecer configuración (funciona en CUALQUIER pantalla)
+  mainWindow.webContents.on('before-input-event', (_event, input) => {
+    if (input.type === 'keyDown' && input.control && input.shift && input.key.toLowerCase() === 'r') {
+      resetAppConfig();
+      app.relaunch();
+      app.exit(0);
+    }
   });
 
   mainWindow.on('closed', () => {
@@ -127,12 +131,7 @@ export function createPosWindow(): void {
     minWidth: 1000,
     minHeight: 650,
     backgroundColor: '#0f172a',
-    titleBarStyle: 'hidden',
-    titleBarOverlay: {
-      color: '#1e293b',
-      symbolColor: '#94a3b8',
-      height: 36,
-    },
+    frame: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -169,6 +168,25 @@ ipcMain.on('close-pos-window', () => {
   if (posWindow && !posWindow.isDestroyed()) {
     posWindow.close();
   }
+});
+
+// ── Window controls ────────────────────────────────────────────────────────
+ipcMain.on('window:minimize', (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  win?.minimize();
+});
+ipcMain.on('window:maximize', (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (!win) return;
+  if (win.isMaximized()) win.unmaximize(); else win.maximize();
+});
+ipcMain.on('window:close', (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  win?.close();
+});
+ipcMain.handle('window:is-maximized', (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  return win?.isMaximized() ?? false;
 });
 
 ipcMain.on('broadcast-event', (_event, eventName: string, data: unknown) => {
@@ -228,6 +246,22 @@ ipcMain.handle('app:resetAppConfig', () => {
   return { success: true };
 });
 
+// Handler atómico: convierte esta PC en servidor y reinicia (una sola llamada, sin race conditions)
+ipcMain.handle('app:become-server', () => {
+  // Resetear completamente y luego establecer modo servidor limpio
+  resetAppConfig();
+  saveAppConfig({ mode: 'server', terminalName: 'Servidor' });
+  app.relaunch();
+  app.exit(0);
+});
+
+// Handler atómico: vuelve al setup inicial borrando toda la configuración
+ipcMain.handle('app:reset-to-setup', () => {
+  resetAppConfig();
+  app.relaunch();
+  app.exit(0);
+});
+
 // Llamado desde SetupScreen para activar modo cliente sin reiniciar
 ipcMain.handle('app:switchToClientMode', (_e, { ip, port, terminalName }: { ip: string; port: number; terminalName: string }) => {
   saveAppConfig({ mode: 'client', serverIP: ip, serverPort: port, terminalName });
@@ -237,21 +271,23 @@ ipcMain.handle('app:switchToClientMode', (_e, { ip, port, terminalName }: { ip: 
   return { success: true };
 });
 
-// Test de conexión al servidor (usado en setup screen)
+// Test de conexión al servidor (usado en setup screen y NetworkSetupWindow)
 ipcMain.handle('app:testServerConnection', async (_e, { ip, port }: { ip: string; port: number }) => {
-  const { default: http } = await import('http');
-  return new Promise<{ ok: boolean; info?: Record<string, unknown>; error?: string }>((resolve) => {
-    const req = http.get(`http://${ip}:${port}/api/servidor/info`, { timeout: 4000 }, (res) => {
-      if (res.statusCode === 200 || res.statusCode === 401) {
-        resolve({ ok: true });
-      } else {
-        resolve({ ok: false, error: `HTTP ${res.statusCode}` });
-      }
-      res.resume();
-    });
-    req.on('error', (e) => resolve({ ok: false, error: e.message }));
-    req.on('timeout', () => { req.destroy(); resolve({ ok: false, error: 'Tiempo de espera agotado' }); });
-  });
+  // Usa /api/ping (mismo endpoint que el escaneo de red, siempre disponible en todas las versiones)
+  const url = `http://${ip}:${port}/api/ping`;
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
+    const res = await fetch(url, { signal: controller.signal });
+    clearTimeout(timer);
+    if (res.ok) return { ok: true };
+    return { ok: false, error: `El servidor respondió con código HTTP ${res.status}` };
+  } catch (err: any) {
+    const msg = err?.name === 'AbortError'
+      ? 'Sin respuesta del servidor en 5 segundos (timeout)'
+      : err?.message || 'Error de red desconocido';
+    return { ok: false, error: msg };
+  }
 });
 
 ipcMain.handle('app:validateAdminCode', async (_e, code: string) => {
@@ -283,37 +319,158 @@ ipcMain.handle('app:validateAdminCode', async (_e, code: string) => {
   }
 });
 
-// ── Abrir puerto en el firewall de Windows (con elevación UAC) ────────────
+// ── Abrir puerto en el firewall de Windows (con elevación UAC visible) ───
 ipcMain.handle('network:open-firewall', async (_e, port = 3001) => {
   if (process.platform !== 'win32') return { success: true };
   const { exec } = await import('child_process');
   const { promisify } = await import('util');
+  const { writeFileSync } = await import('fs');
+  const { tmpdir } = await import('os');
+  const { join } = await import('path');
   const execAsync = promisify(exec);
-  const ruleName = `ARIESPos-${port}`;
 
-  // Borrar regla vieja y crear nueva con profile=any, via PowerShell elevado
-  const psScript = [
-    `Try { netsh advfirewall firewall delete rule name="${ruleName}" } Catch {}`,
-    `netsh advfirewall firewall add rule name="${ruleName}" dir=in action=allow protocol=TCP localport=${port} profile=any`,
-    `Write-Host "OK"`,
-  ].join('; ');
+  // Ruta al ejecutable de la app (para agregar regla por programa, más confiable que por puerto)
+  const execPath = app.getPath('exe').replace(/\\/g, '\\\\');
 
-  // Intentar sin elevación primero (si el proceso ya es admin)
+  const scriptPath = join(tmpdir(), 'ariespos-net-setup.ps1');
+  const script = [
+    `$ErrorActionPreference = 'SilentlyContinue'`,
+    `Write-Host "=== ARIESPos: Configurando red ===" -ForegroundColor Cyan`,
+    `Write-Host ""`,
+    ``,
+    `# 1. Abrir puerto ${port} (profile=any cubre Publico + Privado + Dominio)`,
+    `Write-Host "[1/3] Configurando regla de firewall para puerto ${port}..." -ForegroundColor Yellow`,
+    `netsh advfirewall firewall delete rule name="ARIESPos-${port}" | Out-Null`,
+    `netsh advfirewall firewall add rule name="ARIESPos-${port}" dir=in action=allow protocol=TCP localport=${port} profile=any`,
+    `if ($LASTEXITCODE -eq 0) {`,
+    `  Write-Host "     OK - Puerto ${port} habilitado (todos los perfiles)" -ForegroundColor Green`,
+    `} else {`,
+    `  Write-Host "     ERROR al crear regla de puerto" -ForegroundColor Red`,
+    `}`,
+    ``,
+    `# 2. Agregar ARIESPos como aplicacion confiable por ejecutable`,
+    `Write-Host "[2/3] Registrando ARIESPos como app confiable..." -ForegroundColor Yellow`,
+    `netsh advfirewall firewall delete rule name="ARIESPos-app" | Out-Null`,
+    `netsh advfirewall firewall add rule name="ARIESPos-app" dir=in action=allow program="${execPath}" profile=any`,
+    `if ($LASTEXITCODE -eq 0) {`,
+    `  Write-Host "     OK - ARIESPos autorizado como aplicacion confiable" -ForegroundColor Green`,
+    `} else {`,
+    `  Write-Host "     Nota: No se pudo agregar por ejecutable (continando con regla de puerto)" -ForegroundColor Yellow`,
+    `}`,
+    ``,
+    `# 3. Cambiar redes Publicas a Privadas (Windows bloquea entrantes en red Publica)`,
+    `Write-Host "[3/3] Verificando perfil de red..." -ForegroundColor Yellow`,
+    `$perfiles = Get-NetConnectionProfile`,
+    `foreach ($p in $perfiles) {`,
+    `  if ($p.NetworkCategory -eq 0) {`,
+    `    Set-NetConnectionProfile -InterfaceIndex $p.InterfaceIndex -NetworkCategory Private`,
+    `    Write-Host "     OK - Red '$($p.Name)' cambiada de PUBLICA a Privada" -ForegroundColor Green`,
+    `  } else {`,
+    `    Write-Host "     OK - Red '$($p.Name)' ya esta configurada correctamente" -ForegroundColor Green`,
+    `  }`,
+    `}`,
+    ``,
+    `Write-Host ""`,
+    `Write-Host "Configuracion completada. Esta ventana se cierra sola." -ForegroundColor Green`,
+    `Start-Sleep -Seconds 4`,
+    `Write-Host "DONE"`,
+  ].join('\r\n');
+
+  try { writeFileSync(scriptPath, script, 'utf8'); } catch (e) {
+    return { success: false, error: `No se pudo crear script temporal: ${(e as Error).message}` };
+  }
+
+  // Intentar sin elevación primero (si ya es admin o la regla no requiere admin en este sistema)
   try {
     const { stdout } = await execAsync(
-      `powershell -NoProfile -NonInteractive -Command "${psScript.replace(/"/g, '\\"')}"`,
-      { timeout: 8000 }
+      `powershell -NoLogo -NonInteractive -ExecutionPolicy Bypass -File "${scriptPath}"`,
+      { timeout: 12000 }
     );
-    if (stdout.includes('OK')) return { success: true };
-  } catch { /* sin admin — intentar con RunAs */ }
+    if (stdout.includes('DONE')) return { success: true };
+  } catch { /* no es admin, continuar con UAC */ }
 
-  // Intentar con RunAs (popup UAC)
+  // Elevar con UAC — minimizar ventana principal para que el prompt sea visible
+  mainWindow?.minimize();
   try {
-    const psElevated = `Start-Process -FilePath powershell -ArgumentList '-NoProfile','-NonInteractive','-Command','"${psScript.replace(/"/g, '\\"').replace(/'/g, "''")}"' -Verb RunAs -Wait -WindowStyle Hidden`;
-    await execAsync(`powershell -NoProfile -NonInteractive -Command "${psElevated}"`, { timeout: 30000 });
+    // Sin -NonInteractive en el proceso hijo para que la ventana PS sea visible al usuario
+    await execAsync(
+      `powershell -NoLogo -NonInteractive -Command "Start-Process powershell.exe -ArgumentList '-NoLogo -ExecutionPolicy Bypass -File \\"${scriptPath}\\"' -Verb RunAs -Wait"`,
+      { timeout: 90000 }
+    );
+    mainWindow?.restore();
     return { success: true };
   } catch (err) {
+    mainWindow?.restore();
     return { success: false, error: (err as Error).message };
+  }
+});
+
+// ── Diagnóstico completo del servidor local ───────────────────────────────
+ipcMain.handle('network:diagnose', async () => {
+  if (process.platform !== 'win32') {
+    return { port3001Listening: true, localPingOk: true, firewallRule: true, hasPublicNetwork: false };
+  }
+  const { exec } = await import('child_process');
+  const { promisify } = await import('util');
+  const execAsync = promisify(exec);
+  const result = {
+    port3001Listening: false,
+    localPingOk: false,
+    firewallRule: false,
+    hasPublicNetwork: false,
+  };
+
+  // ¿Está el puerto 3001 escuchando?
+  try {
+    const { stdout } = await execAsync(
+      `powershell -NoProfile -NonInteractive -Command "Get-NetTCPConnection -LocalPort 3001 -State Listen -ErrorAction SilentlyContinue | Measure-Object | Select-Object -ExpandProperty Count"`,
+      { timeout: 5000 }
+    );
+    result.port3001Listening = parseInt(stdout.trim()) > 0;
+  } catch { result.port3001Listening = false; }
+
+  // Ping local
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 2000);
+    const r = await fetch('http://localhost:3001/api/ping', { signal: ctrl.signal });
+    clearTimeout(t);
+    result.localPingOk = r.ok;
+  } catch { result.localPingOk = false; }
+
+  // Regla de firewall
+  try {
+    const { stdout } = await execAsync(`netsh advfirewall firewall show rule name="ARIESPos-3001"`, { timeout: 5000 });
+    result.firewallRule = stdout.includes('Rule Name:');
+  } catch { result.firewallRule = false; }
+
+  // ¿Hay alguna red clasificada como Pública? (NetworkCategory=0)
+  try {
+    const { stdout } = await execAsync(
+      `powershell -NoProfile -NonInteractive -Command "(Get-NetConnectionProfile | Where-Object {$_.NetworkCategory -eq 0} | Measure-Object).Count"`,
+      { timeout: 5000 }
+    );
+    result.hasPublicNetwork = parseInt(stdout.trim()) > 0;
+  } catch { result.hasPublicNetwork = false; }
+
+  return result;
+});
+
+// ── Consultar perfil de red Windows (Private/Public/Unknown) ─────────────
+ipcMain.handle('network:get-profile', async () => {
+  if (process.platform !== 'win32') return { profile: 'Private' };
+  const { exec } = await import('child_process');
+  const { promisify } = await import('util');
+  const execAsync = promisify(exec);
+  try {
+    const { stdout } = await execAsync(
+      `powershell -NoProfile -NonInteractive -Command "(Get-NetConnectionProfile | Select-Object -First 1).NetworkCategory"`,
+      { timeout: 5000 }
+    );
+    const val = stdout.trim();
+    return { profile: val || 'Unknown' };
+  } catch {
+    return { profile: 'Unknown' };
   }
 });
 
@@ -396,44 +553,55 @@ app.whenReady().then(async () => {
       app.quit();
       return;
     }
-    // Abrir firewall — profile=any para cubrir redes Public, Private y Domain
+    // Abrir firewall — siempre recrear la regla (delete + add) para garantizar profile=any
+    // También cambiar perfil de red a Privado (red Pública puede bloquear todas las entrantes)
     try {
       const { exec } = await import('child_process');
       const { promisify } = await import('util');
+      const { writeFileSync } = await import('fs');
+      const { tmpdir } = await import('os');
+      const { join } = await import('path');
       const execAsync = promisify(exec);
       const port = 3001;
-      const addRule = `netsh advfirewall firewall add rule name="ARIESPos-${port}" dir=in action=allow protocol=TCP localport=${port} profile=any`;
-      let ruleExists = false;
-      try {
-        const { stdout } = await execAsync(`netsh advfirewall firewall show rule name="ARIESPos-${port}"`);
-        // Verificar que la regla existente tenga profile=any (puede ser una regla vieja sin ese profile)
-        ruleExists = stdout.includes('Profiles:') ? stdout.toLowerCase().includes('any') : true;
-      } catch { /* regla no existe */ }
 
-      if (!ruleExists) {
-        // Intentar primero sin elevación (si ya hay admin)
-        try {
-          await execAsync(`netsh advfirewall firewall delete rule name="ARIESPos-${port}"`);
-        } catch { /* ignorar */ }
-        try {
-          await execAsync(addRule);
-          console.log(`[Firewall] Puerto ${port} abierto (profile=any)`);
-        } catch {
-          // Sin admin — usar PowerShell con Start-Process -Verb RunAs (UAC popup)
-          console.log('[Firewall] Sin admin, intentando elevación via PowerShell...');
-          try {
-            const psCmd = `Start-Process -FilePath 'netsh' -ArgumentList 'advfirewall firewall add rule name=\"ARIESPos-${port}\" dir=in action=allow protocol=TCP localport=${port} profile=any' -Verb RunAs -Wait -WindowStyle Hidden`;
-            await execAsync(`powershell -NoProfile -NonInteractive -Command "${psCmd}"`);
-            console.log(`[Firewall] Puerto ${port} abierto via PowerShell elevado`);
-          } catch (elevErr) {
-            console.warn('[Firewall] No se pudo abrir el puerto. El usuario rechazó la elevación o no tiene permisos:', elevErr);
-          }
+      const scriptPath = join(tmpdir(), 'ariespos-fw-startup.ps1');
+      const script = [
+        // Cambiar red a Privada (evita bloqueo total en perfil Público)
+        `try { Get-NetConnectionProfile | ForEach-Object { Set-NetConnectionProfile -InterfaceIndex $_.InterfaceIndex -NetworkCategory Private -ErrorAction SilentlyContinue } } catch {}`,
+        // Asegurar que ni público ni privado tengan "bloquear TODO entrante"
+        `netsh advfirewall set publicprofile firewallpolicy blockinbound,allowoutbound 2>$null`,
+        `netsh advfirewall set privateprofile firewallpolicy blockinbound,allowoutbound 2>$null`,
+        // Recrear regla
+        `netsh advfirewall firewall delete rule name="ARIESPos-${port}" 2>$null`,
+        `netsh advfirewall firewall add rule name="ARIESPos-${port}" dir=in action=allow protocol=TCP localport=${port} profile=any`,
+        `Write-Host "DONE"`,
+      ].join('\r\n');
+
+      try { writeFileSync(scriptPath, script, 'utf8'); } catch { /* ignorar */ }
+
+      const runArgs = `-NoLogo -NonInteractive -ExecutionPolicy Bypass -File "${scriptPath}"`;
+      try {
+        const { stdout } = await execAsync(`powershell ${runArgs}`, { timeout: 10000 });
+        if (stdout.includes('DONE')) {
+          console.log(`[Firewall] Regla recreada y perfil de red configurado — puerto ${port} abierto`);
+        } else {
+          throw new Error('sin DONE en stdout');
         }
-      } else {
-        console.log(`[Firewall] Puerto ${port} ya tiene regla con profile=any`);
+      } catch {
+        // Sin admin — intentar con elevación UAC
+        console.log('[Firewall] Sin permisos admin, intentando elevación...');
+        try {
+          await execAsync(
+            `powershell -NoLogo -NonInteractive -Command "Start-Process powershell -ArgumentList '${runArgs}' -Verb RunAs -Wait"`,
+            { timeout: 35000 }
+          );
+          console.log(`[Firewall] Puerto ${port} configurado via elevación`);
+        } catch (elevErr) {
+          console.warn('[Firewall] Elevación fallida. El usuario puede usar el botón en la pantalla de Login:', elevErr);
+        }
       }
     } catch (fwErr) {
-      console.warn('[Firewall] Error general al configurar firewall:', fwErr);
+      console.warn('[Firewall] Error general:', fwErr);
     }
     startServer();
     registerIpcHandlers();

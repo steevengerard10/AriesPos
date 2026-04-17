@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Settings, Save, Server, Printer, Database, Upload, Download, RefreshCw,
-  Check, AlertTriangle, ExternalLink, Copy, Wifi, Globe, CreditCard, Plus, Trash2, Archive, Palette, ShieldCheck, Lock, Eye, EyeOff, RotateCcw
+  Check, AlertTriangle, ExternalLink, Copy, Wifi, Globe, CreditCard, Plus, Trash2, Archive, Palette, ShieldCheck, Lock, Eye, EyeOff, RotateCcw, FolderOpen, Wrench
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { configAPI, backupAPI, appAPI, productosAPI, firmaAPI } from '../../lib/api';
@@ -9,7 +9,7 @@ import { formatDate } from '../../lib/utils';
 import { ImportNixtarModal } from '../../components/modals/ImportNixtarModal';
 import { useTranslation } from 'react-i18next';
 import i18n from '../../i18n';
-import { useAppStore, AppTheme } from '../../store/useAppStore';
+import { useAppStore, AppTheme, AppFont } from '../../store/useAppStore';
 
 const IDIOMAS = [
   { code: 'es', nativeName: 'Español',   name: 'Spanish' },
@@ -27,11 +27,20 @@ interface BackupInfo {
 interface MetodoPagoConfig { id: string; nombre: string; activo: boolean; }
 
 const METODOS_PAGO_DEFAULT: MetodoPagoConfig[] = [
-  { id: 'efectivo',      nombre: 'Efectivo',      activo: true },
-  { id: 'tarjeta',       nombre: 'Tarjeta',       activo: true },
-  { id: 'transferencia', nombre: 'Transferencia', activo: true },
-  { id: 'cripto',        nombre: 'Cripto',        activo: true },
-  { id: 'fiado',         nombre: 'Fiado',         activo: true },
+  { id: 'efectivo',        nombre: 'Efectivo',         activo: true },
+  { id: 'tarjeta_credito', nombre: 'Tarjeta Crédito',  activo: true },
+  { id: 'tarjeta_debito',  nombre: 'Tarjeta Débito',   activo: true },
+  { id: 'transferencia',   nombre: 'Transferencia',    activo: true },
+  { id: 'qr',              nombre: 'QR / MercadoPago', activo: true },
+  { id: 'cripto',          nombre: 'Cripto',           activo: false },
+  { id: 'fiado',           nombre: 'Fiado',            activo: true },
+];
+
+// IDs de métodos nuevos que pueden faltar en config guardada
+const METODOS_NUEVOS: MetodoPagoConfig[] = [
+  { id: 'tarjeta_credito', nombre: 'Tarjeta Crédito',  activo: true },
+  { id: 'tarjeta_debito',  nombre: 'Tarjeta Débito',   activo: true },
+  { id: 'qr',              nombre: 'QR / MercadoPago', activo: true },
 ];
 
 const TABS = [
@@ -58,7 +67,7 @@ const TEMAS: { id: AppTheme; nombre: string; bg: string; bg2: string; accent: st
 export const ConfiguracionModule: React.FC = () => {
   const [tab, setTab] = useState('negocio');
   const { t } = useTranslation();
-  const { theme, setTheme, currentUser } = useAppStore();
+  const { theme, setTheme, currentUser, font, setFont } = useAppStore();
   const isAdmin = currentUser?.rol === 'admin';
   const [config, setConfig] = useState<Record<string, string>>({});
   const [backups, setBackups] = useState<BackupInfo[]>([]);
@@ -73,6 +82,9 @@ export const ConfiguracionModule: React.FC = () => {
   const [showResetModal, setShowResetModal] = useState(false);
   const [resetConfirmText, setResetConfirmText] = useState('');
   const [resetting, setResetting] = useState(false);
+  const [isClientMode, setIsClientMode] = useState(false);
+  const [repairing, setRepairing] = useState(false);
+  const [repairResult, setRepairResult] = useState<{ integrityOk: boolean; message: string } | null>(null);
 
   // ── Firma del propietario ──
   const [firmaEstado, setFirmaEstado] = useState<{ registrada: boolean; nombre: string; fecha: string } | null>(null);
@@ -87,18 +99,28 @@ export const ConfiguracionModule: React.FC = () => {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [cfg, bkps, ip, firma] = await Promise.all([
+      const [cfg, bkps, ip, firma, appCfg] = await Promise.all([
         configAPI.getAll() as Promise<Record<string, string>>,
         backupAPI.list() as Promise<BackupInfo[]>,
         appAPI.getServerInfo(),
         firmaAPI.estado(),
+        appAPI.getAppConfig().catch(() => null),
       ]);
       setConfig(cfg);
       setBackups(bkps);
       setServerInfo({ port: ip.port, localIP: ip.ip });
       setFirmaEstado(firma);
+      setIsClientMode(appCfg?.mode === 'client');
       try {
-        if (cfg.metodos_pago) setMetodosPago(JSON.parse(cfg.metodos_pago) as MetodoPagoConfig[]);
+        if (cfg.metodos_pago) {
+          const saved = JSON.parse(cfg.metodos_pago) as MetodoPagoConfig[];
+          // Migración: agregar métodos nuevos que no existían en configs viejas
+          const merged = [...saved];
+          for (const nuevo of METODOS_NUEVOS) {
+            if (!merged.find((m) => m.id === nuevo.id)) merged.push(nuevo);
+          }
+          setMetodosPago(merged);
+        }
       } catch { /* usa defaults */ }
     } finally {
       setLoading(false);
@@ -122,12 +144,44 @@ export const ConfiguracionModule: React.FC = () => {
   const handleBackup = async () => {
     toast.loading('Creando backup...', { id: 'backup' });
     try {
-      await backupAPI.create();
-      toast.success('Backup creado exitosamente', { id: 'backup' });
+      const res = await backupAPI.create() as { success: boolean; path?: string; error?: string } | null;
+      if (res && !res.success) {
+        toast.error(`Error al crear backup: ${res.error || 'desconocido'}`, { id: 'backup' });
+        return;
+      }
+      toast.success('Backup creado en la carpeta de backups', { id: 'backup' });
       const bkps = await backupAPI.list() as BackupInfo[];
       setBackups(bkps);
+    } catch (e: unknown) {
+      toast.error(`Error al crear backup: ${(e as Error)?.message || 'desconocido'}`, { id: 'backup' });
+    }
+  };
+
+  const handleOpenBackupFolder = async () => {
+    try {
+      const backupsDir = await (window as any).electron.invoke('backup:get-dir') as string;
+      await (window as any).electron.invoke('shell:open-path', backupsDir);
     } catch {
-      toast.error('Error al crear backup', { id: 'backup' });
+      toast.error('No se pudo abrir la carpeta');
+    }
+  };
+
+  const handleRestoreExternal = async () => {
+    try {
+      const result = await (window as any).electron.invoke('dialog:open-file', {
+        title: 'Seleccionar backup de ARIESPos',
+        filters: [{ name: 'Base de datos ARIESPos', extensions: ['db'] }],
+        properties: ['openFile'],
+      }) as { canceled: boolean; filePaths: string[] };
+      if (result?.canceled || !result?.filePaths?.[0]) return;
+      const filePath = result.filePaths[0];
+      if (!confirm(`¿Restaurar desde:\n${filePath}\n\nSe creará un backup del estado actual antes de restaurar.`)) return;
+      toast.loading('Restaurando...', { id: 'restore-ext' });
+      await backupAPI.restore(filePath);
+      toast.success('Restaurado correctamente. Reiniciando...', { id: 'restore-ext' });
+      setTimeout(() => appAPI.restart(), 2000);
+    } catch (e: unknown) {
+      toast.error(`Error: ${(e as Error)?.message || 'desconocido'}`);
     }
   };
 
@@ -140,6 +194,26 @@ export const ConfiguracionModule: React.FC = () => {
       setTimeout(() => appAPI.restart(), 2000);
     } catch {
       toast.error('Error al restaurar', { id: 'restore' });
+    }
+  };
+
+  const handleRepair = async () => {
+    if (!confirm('¿Ejecutar autoreparación?\n\nSe creará un backup preventivo antes de reparar la base de datos.')) return;
+    setRepairing(true);
+    setRepairResult(null);
+    try {
+      const result = await backupAPI.repair();
+      setRepairResult({ integrityOk: result.integrityOk, message: result.message });
+      if (result.integrityOk) {
+        toast.success('Reparación completada');
+      } else {
+        toast.error('Se detectaron problemas. Revisá el resultado.');
+      }
+    } catch (e: unknown) {
+      setRepairResult({ integrityOk: false, message: `Error: ${(e as Error)?.message || 'desconocido'}` });
+      toast.error('Error al reparar');
+    } finally {
+      setRepairing(false);
     }
   };
 
@@ -337,6 +411,46 @@ export const ConfiguracionModule: React.FC = () => {
           <div className="max-w-2xl space-y-6">
             <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wider">Copias de seguridad</h2>
 
+            {/* Panel transferencia entre PCs */}
+            <div className="bg-blue-950/40 border border-blue-800 rounded-xl p-5 space-y-3">
+              <div>
+                <div className="text-sm font-bold text-blue-300">📦 {isClientMode ? 'Guardar backup del servidor en esta PC' : 'Transferir backup entre PCs (USB / pendrive)'}</div>
+                <div className="text-xs text-slate-400 mt-1">
+                  {isClientMode
+                    ? 'Como PC cliente, el backup se descarga de la base de datos del servidor y se guarda localmente en esta PC.'
+                    : 'Para pasar datos de una PC a otra: guardá el backup en esta PC → copialo al pendrive → en la otra PC usá "Restaurar desde archivo externo".'}
+                </div>
+              </div>
+              <div className="flex gap-3 flex-wrap">
+                <button
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-700 hover:bg-blue-600 text-white text-sm font-semibold transition-colors"
+                  onClick={handleBackup}
+                >
+                  <Database size={15} /> {isClientMode ? 'Descargar backup del servidor' : 'Guardar backup ahora'}
+                </button>
+                <button
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-sm font-semibold transition-colors"
+                  onClick={handleOpenBackupFolder}
+                >
+                  <FolderOpen size={15} /> Abrir carpeta de backups
+                </button>
+                {!isClientMode && (
+                  <button
+                    className="flex items-center gap-2 px-4 py-2 rounded-lg bg-teal-700 hover:bg-teal-600 text-white text-sm font-semibold transition-colors"
+                    onClick={handleRestoreExternal}
+                  >
+                    <Upload size={15} /> Restaurar desde archivo externo
+                  </button>
+                )}
+              </div>
+              {isClientMode && (
+                <div className="text-xs text-amber-400 bg-amber-950/40 border border-amber-800/50 rounded-lg px-3 py-2">
+                  ℹ️ La restauración solo puede hacerse desde la <strong>PC servidor</strong>. El backup descargado puede copiarse a la PC servidor y restaurarse desde allí.
+                </div>
+              )}
+            </div>
+
+            {!isClientMode && (
             <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
               <div className="flex items-center justify-between mb-4">
                 <div>
@@ -351,28 +465,57 @@ export const ConfiguracionModule: React.FC = () => {
                 <label htmlFor="auto_backup" className="text-sm text-slate-300 cursor-pointer">Backup automático al cerrar la app</label>
               </div>
             </div>
+            )}
 
             <div>
-              <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-3">Backups disponibles ({backups.length})</h3>
+              <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-3">Backups guardados en esta PC ({backups.length})</h3>
               <div className="space-y-2">
                 {backups.length === 0 ? (
                   <p className="text-slate-500 text-sm">No hay backups creados aún</p>
                 ) : backups.map((b) => (
                   <div key={b.path} className="flex items-center justify-between bg-slate-800 border border-slate-700 rounded-lg p-3">
                     <div>
-                      <div className="text-sm text-white">{b.filename}</div>
-                      <div className="text-xs text-slate-400">{formatDate(b.fecha)} · {(b.size / 1024).toFixed(1)} KB</div>
+                      <div className="text-sm text-white">{b.filename || (b as any).name}</div>
+                      <div className="text-xs text-slate-400">{formatDate(b.fecha || (b as any).date)} · {(b.size / 1024).toFixed(1)} KB</div>
                     </div>
-                    <button onClick={() => handleRestore(b.path)} className="btn-secondary btn btn-sm">
-                      <RefreshCw size={12} /> Restaurar
-                    </button>
+                    {!isClientMode && (
+                      <button onClick={() => handleRestore(b.path)} className="btn-secondary btn btn-sm">
+                        <RefreshCw size={12} /> Restaurar
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>
             </div>
 
+            {/* AUTOREPARACIÓN */}
+            <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
+              <div className="flex items-center gap-2 mb-1">
+                <Wrench size={16} className="text-yellow-400" />
+                <h3 className="text-sm font-bold text-yellow-300">Autoreparación de base de datos</h3>
+              </div>
+              <p className="text-xs text-slate-400 mb-4">
+                Si el programa se cerró abruptamente o notás datos inconsistentes, ejecutá esta función. Se crea un backup preventivo, se verifica la integridad y se reconstruyen los índices automáticamente.
+              </p>
+              <div className="flex items-center gap-4 flex-wrap">
+                <button
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-white text-sm font-semibold transition-colors ${repairing ? 'bg-yellow-800 cursor-not-allowed' : 'bg-yellow-600 hover:bg-yellow-500'}`}
+                  onClick={handleRepair}
+                  disabled={repairing}
+                >
+                  {repairing ? <><RefreshCw size={14} className="animate-spin" /> Reparando...</> : <><Wrench size={14} /> Reparar ahora</>}
+                </button>
+                {repairResult && (
+                  <div className={`flex items-center gap-2 text-xs px-3 py-2 rounded-lg ${repairResult.integrityOk ? 'bg-green-950/60 border border-green-800 text-green-300' : 'bg-red-950/60 border border-red-800 text-red-300'}`}>
+                    {repairResult.integrityOk ? <Check size={13} /> : <AlertTriangle size={13} />}
+                    {repairResult.message}
+                  </div>
+                )}
+              </div>
+            </div>
+
             {/* ZONA DE PELIGRO */}
-            <div className="border border-red-800 rounded-xl p-5 bg-red-950/30">
+            {!isClientMode && <div className="border border-red-800 rounded-xl p-5 bg-red-950/30">
               <div className="flex items-center gap-2 mb-1">
                 <AlertTriangle size={18} className="text-red-400" />
                 <h3 className="text-sm font-bold text-red-400 uppercase tracking-wider">Zona de peligro</h3>
@@ -395,7 +538,7 @@ export const ConfiguracionModule: React.FC = () => {
                   <RotateCcw size={15} /> Reiniciar
                 </button>
               </div>
-            </div>
+            </div>}
           </div>
         )}
 
@@ -569,6 +712,40 @@ export const ConfiguracionModule: React.FC = () => {
                   )}
                 </button>
               ))}
+            </div>
+
+            {/* ── Selector de fuentes ── */}
+            <div>
+              <h3 className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--text3)' }}>Fuente de texto</h3>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                {([
+                  { id: 'inter',     nombre: 'Inter',           muestra: 'Aa' },
+                  { id: 'arial',     nombre: 'Arial',           muestra: 'Aa' },
+                  { id: 'helvetica', nombre: 'Helvetica',       muestra: 'Aa' },
+                  { id: 'roboto',    nombre: 'Roboto',          muestra: 'Aa' },
+                  { id: 'dm-sans',   nombre: 'DM Sans',         muestra: 'Aa' },
+                  { id: 'system',    nombre: 'Sistema',         muestra: 'Aa' },
+                ] as { id: AppFont; nombre: string; muestra: string }[]).map((f) => (
+                  <button
+                    key={f.id}
+                    onClick={() => setFont(f.id)}
+                    className="relative flex items-center gap-3 rounded-xl border-2 p-3 transition-all hover:brightness-110"
+                    style={{
+                      background: 'var(--bg3)',
+                      borderColor: font === f.id ? 'var(--accent)' : 'var(--border)',
+                      boxShadow: font === f.id ? '0 0 0 1px var(--accent)44' : 'none',
+                    }}
+                  >
+                    <span className="text-lg font-bold" style={{ color: 'var(--text)', minWidth: 28 }}>{f.muestra}</span>
+                    <span className="text-xs font-medium" style={{ color: font === f.id ? 'var(--accent)' : 'var(--text2)' }}>{f.nombre}</span>
+                    {font === f.id && (
+                      <div className="absolute top-2 right-2 rounded-full w-4 h-4 flex items-center justify-center" style={{ background: 'var(--accent)' }}>
+                        <Check size={9} className="text-white" />
+                      </div>
+                    )}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
         )}

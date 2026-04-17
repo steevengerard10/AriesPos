@@ -79,7 +79,11 @@ const NetworkSetupWindow: React.FC = () => {
     setTesting(true); setTestErr('');
     try {
       const res = await appAPI.testServerConnection({ ip, port });
-      if (!res?.ok) { setTestErr(`No se pudo conectar a ${ip}:${port}. Verificá firewall y que el servidor esté abierto.`); setTesting(false); return; }
+      if (!res?.ok) {
+        setTestErr(`Error al conectar con ${ip}:${port} — ${res?.error || 'sin respuesta'}. Verificá que el servidor tenga ARIESPos abierto y el firewall reparado.`);
+        setTesting(false);
+        return;
+      }
       await appAPI.switchToClientMode({ ip, port, terminalName: `Terminal (${primaryIP})` });
       setStep('done');
     } catch (e: any) { setTestErr(e?.message || 'Error de conexión'); }
@@ -88,8 +92,7 @@ const NetworkSetupWindow: React.FC = () => {
 
   const handleSetServer = async () => {
     try {
-      await appAPI.setAppConfig({ mode: 'server', terminalName: 'Servidor principal' });
-      await appAPI.restart();
+      await appAPI.becomeServer(); // atómico: guarda config + reinicia en una sola operación
     } catch (e: any) { setTestErr(e?.message || 'Error'); }
   };
 
@@ -109,7 +112,8 @@ const NetworkSetupWindow: React.FC = () => {
       const res = await networkAPI.pingServer(manualIP.trim(), Number(manualPort) || 3001);
       setPingStatus(res?.ok ? 'ok' : 'error');
       if (res?.ok) setPingMs(res.ms ?? null);
-    } catch { setPingStatus('error'); }
+      else if (res?.error) setTestErr(res.error);
+    } catch (e: any) { setPingStatus('error'); setTestErr(e?.message || 'Error'); }
   };
 
   if (step === 'done') return (
@@ -161,14 +165,14 @@ const NetworkSetupWindow: React.FC = () => {
         ))}
         {allIPs.length > 1 && (
           <div style={{ color: C.yellow, fontSize: 11, marginTop: 4 }}>
-            ⚠️ Múltiples adaptadores detectados. Usá la IP <strong>recomendada</strong> (la de tu red WiFi o cable compartida con la otra PC).
+            ⚠️ Múltiples adaptadores detectados. Usá la IP <strong>recomendada</strong> (la de tu red WiFi o cable compartida con las otras PCs).
           </div>
         )}
       </div>
 
       <div style={card}>
         <div style={{ fontWeight: 700, marginBottom: 6 }}>🔍 Buscar servidor automáticamente</div>
-        <div style={{ color: C.text2, fontSize: 13, marginBottom: 12 }}>Escanea la red local. Ambas PCs deben estar en la <strong>misma red WiFi o cable</strong>.</div>
+        <div style={{ color: C.text2, fontSize: 13, marginBottom: 12 }}>Escanea la red local. Todas las PCs deben estar en la <strong>misma red WiFi o cable</strong>.</div>
         <button style={btn()} onClick={() => { setStep('scan'); handleScan(); }}>Buscar servidores</button>
       </div>
 
@@ -179,9 +183,12 @@ const NetworkSetupWindow: React.FC = () => {
       </div>
 
       <div style={card}>
-        <div style={{ fontWeight: 700, marginBottom: 6 }}>🖥️ Esta PC es el servidor</div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
+          <div style={{ fontWeight: 700 }}>🖥️ Esta PC es el servidor</div>
+          <span style={{ background: '#1e3a5f', color: '#93c5fd', borderRadius: 6, padding: '2px 10px', fontSize: 11, fontWeight: 600 }}>Sin límite de clientes</span>
+        </div>
         <div style={{ color: C.text2, fontSize: 13, marginBottom: 12 }}>
-          Las otras PCs se conectarán a <strong style={{ color: C.accent, fontFamily: 'monospace' }}>{primaryIP}:{serverPort}</strong>
+          Todas las PCs clientes se conectarán a <strong style={{ color: C.accent, fontFamily: 'monospace' }}>{primaryIP}:{serverPort}</strong>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <button style={{ ...btn(C.teal), width: 'auto', flex: 1 }} onClick={() => setStep('server-confirm')}>
@@ -197,11 +204,12 @@ const NetworkSetupWindow: React.FC = () => {
       </div>
 
       <div style={{ background: '#1a2744', border: `1px solid #2d4a7a`, borderRadius: 10, padding: '12px 16px', fontSize: 12, color: '#93c5fd', lineHeight: 1.8 }}>
-        <strong>💡 Pasos para conectar:</strong><br/>
-        1. PC servidor: presioná <strong>"Reparar firewall"</strong> → aceptar el popup de Windows<br/>
-        2. Cerrá y abrí ARIESPos de nuevo en la PC servidor<br/>
-        3. PC cliente: anotá la IP que aparece arriba (en la PC servidor) → "IP manual" → probá conexión → Conectar<br/>
-        4. Ambas PCs deben estar en el <strong>mismo router/WiFi</strong>
+        <strong>💡 Cómo conectar varias PCs (3 o más):</strong><br/>
+        1. Una sola PC actúa como <strong>servidor</strong> → presioná <strong>"Reparar firewall"</strong> → aceptar popup<br/>
+        2. Anotá la IP del servidor (la que aparece arriba en esa PC)<br/>
+        3. En <strong>cada PC cliente</strong>: abrí esta ventana → "IP manual" → ingresá la misma IP → Conectar<br/>
+        4. Todas las PCs deben estar en el <strong>mismo router/WiFi/cable</strong><br/>
+        <span style={{ color: '#6ee7b7', fontWeight: 600 }}>✔ No hay límite de PCs clientes que pueden conectarse al servidor</span>
       </div>
     </div>
   );
@@ -251,7 +259,7 @@ const NetworkSetupWindow: React.FC = () => {
         </>
       )}
 
-      {testErr && <div style={{ color: C.red, marginTop: 12, fontSize: 13 }}>{testErr}</div>}
+      {testErr && <div style={{ color: C.red, marginTop: 12, fontSize: 13, background: '#1c0a0a', padding: '8px 12px', borderRadius: 6 }}>⚠️ {testErr}</div>}
     </div>
   );
 
@@ -273,17 +281,17 @@ const NetworkSetupWindow: React.FC = () => {
             {pingStatus === 'testing' ? '⏳ Probando...' : '📡 Probar conexión'}
           </button>
           {pingStatus === 'ok' && <span style={{ color: C.green, fontSize: 13 }}>✅ Alcanzable {pingMs != null ? `(${pingMs}ms)` : ''}</span>}
-          {pingStatus === 'error' && <span style={{ color: C.red, fontSize: 13 }}>❌ No responde — verificá IP y firewall</span>}
+          {pingStatus === 'error' && <span style={{ color: C.red, fontSize: 13 }}>❌ No responde</span>}
         </div>
 
-        {testErr && <div style={{ color: C.red, fontSize: 13, marginTop: 10 }}>{testErr}</div>}
+        {testErr && <div style={{ color: C.red, fontSize: 13, marginTop: 10, background: '#1c0a0a', padding: '8px 12px', borderRadius: 6 }}>⚠️ {testErr}</div>}
         <button style={{ ...btn(), marginTop: 16, opacity: testing ? 0.6 : 1 }} disabled={testing}
           onClick={() => handleConnectTo(manualIP.trim(), Number(manualPort) || 3001)}>
           {testing ? 'Verificando...' : 'Conectar y guardar'}
         </button>
       </div>
       <div style={{ color: C.text2, fontSize: 12, marginTop: 12, lineHeight: 1.7 }}>
-        💡 La IP del servidor la ves abriendo esta ventana (F9) en la <strong>PC servidor</strong>.<br/>
+        💡 La IP la ves abriendo esta ventana (F9) en la <strong>PC servidor</strong>. Cada PC cliente debe conectarse a esa misma IP.<br/>
         Si "Probar conexión" falla → abrí esta ventana en el servidor → presioná <strong>"Reparar firewall"</strong>.
       </div>
     </div>
@@ -300,7 +308,7 @@ const NetworkSetupWindow: React.FC = () => {
         </div>
         {allIPs.length > 1 && (
           <div style={{ color: C.yellow, fontSize: 12, marginBottom: 14 }}>
-            ⚠️ Múltiples IPs detectadas. Los clientes deben usar la IP de la red que comparten con esta PC.
+            ⚠️ Múltiples IPs detectadas. Todas las PCs clientes deben usar la IP de la red que comparten con este servidor.
           </div>
         )}
         <button style={btn(C.teal)} onClick={handleSetServer}>Confirmar — Usar esta PC como servidor</button>

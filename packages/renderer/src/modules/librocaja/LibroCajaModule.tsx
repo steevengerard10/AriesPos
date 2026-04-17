@@ -1,8 +1,8 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import {
-  BookOpen, RefreshCw, Download, Plus, Lock, Unlock,
+  BookOpen, RefreshCw, Plus, Lock, Unlock,
   ChevronLeft, ChevronRight, Calendar, Banknote, Table2,
-  CheckCircle2, AlertCircle, Loader2, FileSpreadsheet, Trash2, ShieldAlert,
+  Loader2, FileSpreadsheet, Archive, LockKeyhole, LockKeyholeOpen,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useLibroCajaStore } from '../../store/useLibroCajaStore';
@@ -23,9 +23,16 @@ function hoyISO() {
   return new Date().toISOString().split('T')[0];
 }
 
-function calcTotal(d: LibroCajaDia | null) {
+/** Efectivo: caja cobrada menos egresos en efectivo */
+function calcTotalCaja(d: LibroCajaDia | null) {
   if (!d) return 0;
-  return (d.caja || 0) + (d.cambio || 0) + (d.extra_caja || 0);
+  return (d.caja || 0) - (d.egresos || 0);
+}
+
+/** Digital: tarjetas + transferencias − gastos pagados con tarjeta/transf */
+function calcTotalTransf(d: LibroCajaDia | null) {
+  if (!d) return 0;
+  return (d.tarjetas || 0) + (d.transferencias || 0) - (d.gastos_tarjeta || 0);
 }
 
 // Denominaciones de billetes ARG
@@ -39,9 +46,10 @@ interface EditableCellProps {
   readOnly?: boolean;
   isAdmin?: boolean;
   prefix?: string;
+  colorVal?: string;
 }
 
-const EditableCell: React.FC<EditableCellProps> = ({ value, onSave, highlight, readOnly, isAdmin = true, prefix = '$' }) => {
+const EditableCell: React.FC<EditableCellProps> = ({ value, onSave, highlight, readOnly, isAdmin = true, prefix = '$', colorVal }) => {
   const [editing, setEditing] = useState(false);
   const [inputVal, setInputVal] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
@@ -90,7 +98,7 @@ const EditableCell: React.FC<EditableCellProps> = ({ value, onSave, highlight, r
         padding: '4px 6px', borderRadius: 4,
         cursor: readOnly ? 'default' : isAdmin ? 'text' : 'not-allowed',
         background: highlight ? 'rgba(79,142,247,0.08)' : 'transparent',
-        color: value > 0 ? 'var(--text)' : 'var(--text3)',
+        color: value > 0 ? (colorVal || 'var(--text)') : 'var(--text3)',
         fontSize: 13, fontFamily: "'Syne', sans-serif", userSelect: 'none',
         transition: 'background 0.15s', outline: 'none',
         border: !readOnly && isAdmin ? '1px dashed transparent' : '1px solid transparent',
@@ -103,25 +111,36 @@ const EditableCell: React.FC<EditableCellProps> = ({ value, onSave, highlight, r
   );
 };
 
+// Colores por columna para estilo Excel
+const COL_COLORS: Record<string, string> = {
+  libro:          '#8b5cf6',
+  caja:           '#22c55e',
+  egresos:        '#ef4444',
+  tarjetas:       '#3b82f6',
+  cambio:         '#f59e0b',
+  transferencias: '#06b6d4',
+  gastos_tarjeta: '#f97316',
+};
+
 // ── Tabla histórico ─────────────────────────────────────────────────────────
 const COLS = [
-  { key: 'fecha',         label: 'Fecha',          editable: false },
-  { key: 'libro',         label: 'Libro',           editable: true  },
-  { key: 'caja',          label: 'Caja',            editable: true  },
-  { key: 'egresos',       label: 'Egresos',         editable: true  },
-  { key: 'tarjetas',      label: 'Tarjetas',        editable: true  },
-  { key: 'cambio',        label: 'Cambio',          editable: true  },
-  { key: 'transferencias',label: 'Transferencias',  editable: true  },
-  { key: 'gastos_tarjeta',label: 'Gs. Tarjeta',     editable: true  },
-  { key: 'extra_caja',     label: 'Caja Grande',     editable: true  },
-  { key: '_total',        label: 'Total en Caja',   editable: false },
+  { key: 'fecha',          label: 'Fecha',            editable: false },
+  { key: 'libro',          label: 'Libro',             editable: true  },
+  { key: 'caja',           label: 'Caja',              editable: true  },
+  { key: 'egresos',        label: 'Egresos',           editable: true  },
+  { key: 'tarjetas',       label: 'Tarjetas',          editable: true  },
+  { key: 'cambio',         label: 'Cambio',            editable: true  },
+  { key: 'transferencias', label: 'Transferencias',    editable: true  },
+  { key: 'gastos_tarjeta', label: 'Gs. Tarjeta',       editable: true  },
+  { key: '_total_caja',    label: 'Total en Caja',     editable: false },
+  { key: '_total_transf',  label: 'Total Transf.',     editable: false },
 ];
 
 const TablaHistorico: React.FC = () => {
   const {
-    historico, cargarHistorico, actualizarCampoPorFecha,
+    historico, cargarHistorico, cargarPeriodos, actualizarCampoPorFecha,
     fechaSeleccionada, setFecha, syncDesdeVentas, loadingSync,
-    exportarExcel,
+    exportarExcel, periodos, periodoActual, setPeriodo, cerrarMes, reabrirMes,
   } = useLibroCajaStore();
   const { currentUser } = useAppStore();
   const isAdmin = currentUser?.rol === 'admin';
@@ -129,8 +148,44 @@ const TablaHistorico: React.FC = () => {
   const [exportDesde, setExportDesde] = useState('');
   const [exportHasta, setExportHasta] = useState('');
   const [showExport, setShowExport] = useState(false);
+  const [confirmCerrar, setConfirmCerrar] = useState(false);
 
-  useEffect(() => { cargarHistorico(); }, []);
+  useEffect(() => {
+    cargarPeriodos();
+    cargarHistorico();
+  }, []);
+
+  // Nombre legible del periodo
+  const periodoLabel = (p: string) => {
+    const [y, m] = p.split('-');
+    const meses = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+    return `${meses[parseInt(m, 10) - 1]} ${y}`;
+  };
+
+  const periodoInfo = periodos.find(p => p.periodo === periodoActual);
+  const mesActualStr = (() => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}`; })();
+  const esMesCerrado = periodoInfo?.estado === 'cerrado';
+
+  // Navegar entre periodos disponibles
+  const periodosOrdenados = [...periodos].sort((a, b) => b.periodo.localeCompare(a.periodo));
+  const idx = periodosOrdenados.findIndex(p => p.periodo === periodoActual);
+  const puedePrevio = idx < periodosOrdenados.length - 1;
+  const puedeNext = idx > 0;
+
+  const irAPeriodo = (p: string) => {
+    setPeriodo(p);
+  };
+
+  const handleCerrarMes = async () => {
+    await cerrarMes(periodoActual);
+    setConfirmCerrar(false);
+    toast.success(`Mes ${periodoLabel(periodoActual)} cerrado`);
+  };
+
+  const handleReoabrirMes = async () => {
+    await reabrirMes(periodoActual);
+    toast.success(`Mes ${periodoLabel(periodoActual)} reabierto`);
+  };
 
   // Edición inline directa por fecha — sin race condition
   const handleEdit = async (fecha: string, campo: keyof LibroCajaDia, valor: number) => {
@@ -158,15 +213,14 @@ const TablaHistorico: React.FC = () => {
 
   // Calcular totales de columna
   const totales = historico.reduce((acc, d) => ({
-    libro: acc.libro + (d.libro || 0),
-    caja: acc.caja + (d.caja || 0),
-    egresos: acc.egresos + (d.egresos || 0),
-    tarjetas: acc.tarjetas + (d.tarjetas || 0),
-    cambio: acc.cambio + (d.cambio || 0),
+    libro:          acc.libro          + (d.libro          || 0),
+    caja:           acc.caja           + (d.caja           || 0),
+    egresos:        acc.egresos        + (d.egresos        || 0),
+    tarjetas:       acc.tarjetas       + (d.tarjetas       || 0),
+    cambio:         acc.cambio         + (d.cambio         || 0),
     transferencias: acc.transferencias + (d.transferencias || 0),
     gastos_tarjeta: acc.gastos_tarjeta + (d.gastos_tarjeta || 0),
-    extra_caja: acc.extra_caja + (d.extra_caja || 0),
-  }), { libro: 0, caja: 0, egresos: 0, tarjetas: 0, cambio: 0, transferencias: 0, gastos_tarjeta: 0, extra_caja: 0 });
+  }), { libro: 0, caja: 0, egresos: 0, tarjetas: 0, cambio: 0, transferencias: 0, gastos_tarjeta: 0 });
 
   const [nuevaFecha, setNuevaFecha] = useState('');
   const [showNueva, setShowNueva] = useState(false);
@@ -183,6 +237,87 @@ const TablaHistorico: React.FC = () => {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12, height: '100%' }}>
+      {/* Navegador mensual */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: 'var(--bg2)', borderRadius: 10, border: '1px solid var(--border)' }}>
+        <button
+          onClick={() => puedePrevio && irAPeriodo(periodosOrdenados[idx + 1].periodo)}
+          disabled={!puedePrevio}
+          style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 8px', color: puedePrevio ? 'var(--text2)' : 'var(--text3)', cursor: puedePrevio ? 'pointer' : 'default' }}
+        >
+          <ChevronLeft size={16} />
+        </button>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, justifyContent: 'center' }}>
+          <Archive size={16} style={{ color: esMesCerrado ? '#ef4444' : '#22c55e' }} />
+          <span style={{ fontWeight: 700, fontSize: 15, color: 'var(--text)' }}>
+            {periodoLabel(periodoActual)}
+          </span>
+          <span style={{
+            fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 20,
+            background: esMesCerrado ? 'rgba(239,68,68,0.15)' : 'rgba(34,197,94,0.15)',
+            color: esMesCerrado ? '#ef4444' : '#22c55e',
+          }}>
+            {esMesCerrado ? 'CERRADO' : 'ABIERTO'}
+          </span>
+          {periodoActual === mesActualStr && (
+            <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 10, background: 'rgba(79,142,247,0.15)', color: 'var(--accent)' }}>
+              Mes actual
+            </span>
+          )}
+        </div>
+
+        <button
+          onClick={() => puedeNext && irAPeriodo(periodosOrdenados[idx - 1].periodo)}
+          disabled={!puedeNext}
+          style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 8px', color: puedeNext ? 'var(--text2)' : 'var(--text3)', cursor: puedeNext ? 'pointer' : 'default' }}
+        >
+          <ChevronRight size={16} />
+        </button>
+
+        {/* Selector rápido de mes */}
+        <select
+          value={periodoActual}
+          onChange={e => irAPeriodo(e.target.value)}
+          style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 8px', color: 'var(--text)', fontSize: 12 }}
+        >
+          {periodosOrdenados.map(p => (
+            <option key={p.periodo} value={p.periodo}>
+              {periodoLabel(p.periodo)} {p.estado === 'cerrado' ? '🔒' : ''}
+            </option>
+          ))}
+        </select>
+
+        {/* Botones cerrar/reabrir mes */}
+        {isAdmin && !esMesCerrado && (
+          confirmCerrar ? (
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <span style={{ fontSize: 12, color: '#f59e0b' }}>¿Confirmar cierre?</span>
+              <button onClick={handleCerrarMes} style={{ padding: '4px 10px', background: '#ef4444', border: 'none', borderRadius: 6, color: 'white', fontSize: 12, cursor: 'pointer' }}>
+                Sí, cerrar
+              </button>
+              <button onClick={() => setConfirmCerrar(false)} style={{ padding: '4px 10px', background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text2)', fontSize: 12, cursor: 'pointer' }}>
+                Cancelar
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setConfirmCerrar(true)}
+              style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 12px', background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.35)', borderRadius: 8, color: '#ef4444', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
+            >
+              <LockKeyhole size={13} /> Cerrar mes
+            </button>
+          )
+        )}
+        {isAdmin && esMesCerrado && (
+          <button
+            onClick={handleReoabrirMes}
+            style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 12px', background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.3)', borderRadius: 8, color: '#22c55e', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
+          >
+            <LockKeyholeOpen size={13} /> Reabrir mes
+          </button>
+        )}
+      </div>
+
       {/* Toolbar */}
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <button
@@ -276,40 +411,51 @@ const TablaHistorico: React.FC = () => {
 
       {/* Tabla */}
       <div style={{ flex: 1, overflow: 'auto', borderRadius: 10, border: '1px solid var(--border)' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 900 }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 980 }}>
           <thead>
             <tr style={{ background: 'var(--bg2)', position: 'sticky', top: 0, zIndex: 1 }}>
-              {COLS.map(col => (
-                <th key={col.key} style={{
-                  padding: '10px 8px', textAlign: col.key === 'fecha' ? 'left' : 'right',
-                  fontSize: 11, fontWeight: 700, color: col.editable && isAdmin ? 'var(--accent)' : 'var(--text3)',
-                  textTransform: 'uppercase', letterSpacing: '0.06em',
-                  borderBottom: '1px solid var(--border)', whiteSpace: 'nowrap',
-                }}>
-                  {col.label}{col.editable && isAdmin ? ' ✎' : ''}
-                </th>
-              ))}
-              <th style={{ padding: '10px 8px', borderBottom: '1px solid var(--border)' }} />
+              {COLS.map(col => {
+                const color = COL_COLORS[col.key];
+                const isTotal = col.key === '_total_caja' || col.key === '_total_transf';
+                const totalColor = col.key === '_total_caja' ? '#22c55e' : '#06b6d4';
+                return (
+                  <th key={col.key} style={{
+                    padding: '10px 8px',
+                    textAlign: col.key === 'fecha' ? 'left' : 'right',
+                    fontSize: 11, fontWeight: 700,
+                    color: isTotal ? totalColor : color ? color : 'var(--text3)',
+                    textTransform: 'uppercase', letterSpacing: '0.06em',
+                    borderBottom: `2px solid ${isTotal ? totalColor : color ? `${color}55` : 'var(--border)'}`,
+                    whiteSpace: 'nowrap',
+                    background: isTotal
+                      ? col.key === '_total_caja' ? 'rgba(34,197,94,0.06)' : 'rgba(6,182,212,0.06)'
+                      : color ? `${color}10` : 'var(--bg2)',
+                  }}>
+                    {col.label}{col.editable && isAdmin && !esMesCerrado ? ' ✎' : ''}
+                  </th>
+                );
+              })}
             </tr>
           </thead>
           <tbody>
             {historico.length === 0 && (
               <tr>
-                <td colSpan={COLS.length + 1} style={{ textAlign: 'center', padding: 40, color: 'var(--text3)', fontSize: 13 }}>
-                  No hay registros. Seleccioná una fecha para comenzar.
+                <td colSpan={COLS.length} style={{ textAlign: 'center', padding: 40, color: 'var(--text3)', fontSize: 13 }}>
+                  No hay registros. Usá "Nueva entrada" para comenzar.
                 </td>
               </tr>
             )}
             {historico.map((d, i) => {
               const isSelected = d.fecha === fechaSeleccionada;
-              const total = calcTotal(d);
+              const totalCaja  = calcTotalCaja(d);
+              const totalTransf = calcTotalTransf(d);
               const tieneAbierto = (d.turnos_abiertos || 0) > 0;
               return (
                 <tr
                   key={d.id}
                   onClick={() => setFecha(d.fecha)}
                   style={{
-                    background: isSelected ? 'rgba(79,142,247,0.07)' : i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.01)',
+                    background: isSelected ? 'rgba(79,142,247,0.07)' : i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.015)',
                     cursor: 'pointer',
                     borderBottom: '1px solid var(--border)',
                     outline: isSelected ? '1px solid rgba(79,142,247,0.3)' : 'none',
@@ -328,31 +474,39 @@ const TablaHistorico: React.FC = () => {
                     </div>
                   </td>
 
-                  {/* Columnas editables */}
-                  {(['libro','caja','egresos','tarjetas','cambio','transferencias','gastos_tarjeta','extra_caja'] as (keyof LibroCajaDia)[]).map(campo => (
-                    <td key={campo} style={{ padding: '2px 4px', textAlign: 'right' }}>
+                  {/* Columnas editables con color por columna */}
+                  {(['libro','caja','egresos','tarjetas','cambio','transferencias','gastos_tarjeta'] as (keyof LibroCajaDia)[]).map(campo => (
+                    <td key={campo} style={{ padding: '2px 4px', textAlign: 'right', background: `${COL_COLORS[campo]}05` }}>
                       <EditableCell
                         value={(d[campo] as number) || 0}
                         onSave={v => handleEdit(d.fecha, campo, v)}
                         isAdmin={isAdmin}
+                        readOnly={esMesCerrado}
+                        colorVal={COL_COLORS[campo]}
                       />
                     </td>
                   ))}
 
-                  {/* Total en caja (calculado) */}
-                  <td style={{ padding: '4px 8px', textAlign: 'right' }}>
+                  {/* Total en Caja (calculado) */}
+                  <td style={{ padding: '4px 8px', textAlign: 'right', background: 'rgba(34,197,94,0.04)' }}>
                     <span style={{
                       fontWeight: 700, fontSize: 13,
-                      color: total > 0 ? '#22c55e' : 'var(--text3)',
+                      color: totalCaja >= 0 ? '#22c55e' : '#ef4444',
                       fontFamily: "'Syne', sans-serif",
                     }}>
-                      $ {fmt(total)}
+                      $ {fmt(totalCaja)}
                     </span>
                   </td>
 
-                  {/* Notas */}
-                  <td style={{ padding: '4px 8px', color: 'var(--text3)', fontSize: 12, maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {d.notas}
+                  {/* Total Transferencias (calculado) */}
+                  <td style={{ padding: '4px 8px', textAlign: 'right', background: 'rgba(6,182,212,0.04)' }}>
+                    <span style={{
+                      fontWeight: 700, fontSize: 13,
+                      color: totalTransf >= 0 ? '#06b6d4' : '#ef4444',
+                      fontFamily: "'Syne', sans-serif",
+                    }}>
+                      $ {fmt(totalTransf)}
+                    </span>
                   </td>
                 </tr>
               );
@@ -361,16 +515,22 @@ const TablaHistorico: React.FC = () => {
           {historico.length > 0 && (
             <tfoot>
               <tr style={{ background: 'var(--bg2)', borderTop: '2px solid var(--border)' }}>
-                <td style={{ padding: '8px 8px', fontWeight: 700, color: 'var(--text2)', fontSize: 12 }}>TOTALES</td>
-                {(['libro','caja','egresos','tarjetas','cambio','transferencias','gastos_tarjeta','extra_caja'] as (keyof typeof totales)[]).map(k => (
-                  <td key={k} style={{ padding: '8px 8px', textAlign: 'right', fontWeight: 700, color: 'var(--text)', fontSize: 12 }}>
+                <td style={{ padding: '10px 8px', fontWeight: 700, color: 'var(--text2)', fontSize: 12, whiteSpace: 'nowrap' }}>
+                  TOTALES ({historico.length} días)
+                </td>
+                {(['libro','caja','egresos','tarjetas','cambio','transferencias','gastos_tarjeta'] as (keyof typeof totales)[]).map(k => (
+                  <td key={k} style={{ padding: '10px 8px', textAlign: 'right', fontWeight: 700, color: COL_COLORS[k] || 'var(--text)', fontSize: 13 }}>
                     $ {fmt(totales[k])}
                   </td>
                 ))}
-                <td style={{ padding: '8px 8px', textAlign: 'right', fontWeight: 700, color: '#22c55e', fontSize: 13 }}>
-                  $ {fmt(totales.caja + totales.cambio + totales.extra_caja)}
+                {/* Total Caja acumulado */}
+                <td style={{ padding: '10px 8px', textAlign: 'right', fontWeight: 800, color: '#22c55e', fontSize: 14, background: 'rgba(34,197,94,0.06)' }}>
+                  $ {fmt(totales.caja - totales.egresos)}
                 </td>
-                <td />
+                {/* Total Transf acumulado */}
+                <td style={{ padding: '10px 8px', textAlign: 'right', fontWeight: 800, color: '#06b6d4', fontSize: 14, background: 'rgba(6,182,212,0.06)' }}>
+                  $ {fmt(totales.tarjetas + totales.transferencias - totales.gastos_tarjeta)}
+                </td>
               </tr>
             </tfoot>
           )}
@@ -425,17 +585,17 @@ const PanelDia: React.FC = () => {
     toast.success('Turno cerrado');
   };
 
-  const totalEnCaja = calcTotal(diaActual);
+  const totalEnCaja  = calcTotalCaja(diaActual);
+  const totalEnTransf = calcTotalTransf(diaActual);
 
   const CAMPOS_EDITABLE = [
-    { key: 'libro' as const,         label: 'Libro', color: '#8b5cf6', desc: 'Lo que debería haber según el libro' },
-    { key: 'caja' as const,          label: 'Caja (efectivo)', color: '#22c55e', desc: 'Efectivo contado en caja' },
-    { key: 'egresos' as const,       label: 'Egresos', color: '#ef4444', desc: 'Efectivo de otra caja' },
-    { key: 'tarjetas' as const,      label: 'Tarjetas', color: '#3b82f6', desc: 'Cobrado con tarjeta' },
-    { key: 'cambio' as const,        label: 'Cambio', color: '#f59e0b', desc: 'Fondo de cambio diario' },
-    { key: 'transferencias' as const,label: 'Transferencias', color: '#06b6d4', desc: 'Ingresos por transferencia' },
-    { key: 'gastos_tarjeta' as const,label: 'Gastos Tarjeta', color: '#f97316', desc: 'Pagos con tarjeta/transferencia' },
-    { key: 'extra_caja' as const,    label: 'Caja Grande',    color: '#10b981', desc: 'Dinero ya existente en tu caja (suma al total)' },
+    { key: 'libro'          as const, label: 'Libro',          color: '#8b5cf6', desc: 'Saldo según libro contable' },
+    { key: 'caja'           as const, label: 'Caja',           color: '#22c55e', desc: 'Efectivo cobrado en el día' },
+    { key: 'egresos'        as const, label: 'Egresos',        color: '#ef4444', desc: 'Pagos en efectivo realizados' },
+    { key: 'tarjetas'       as const, label: 'Tarjetas',       color: '#3b82f6', desc: 'Cobrado con tarjeta de débito/crédito' },
+    { key: 'cambio'         as const, label: 'Cambio',         color: '#f59e0b', desc: 'Fondo de cambio diario (por defecto $1.500)' },
+    { key: 'transferencias' as const, label: 'Transferencias', color: '#06b6d4', desc: 'Cobrado por transferencia bancaria' },
+    { key: 'gastos_tarjeta' as const, label: 'Gastos Tarjeta', color: '#f97316', desc: 'Pagos realizados con tarjeta o transferencia' },
   ];
 
   return (
@@ -516,7 +676,7 @@ const PanelDia: React.FC = () => {
               />
             ))}
 
-            {/* Total en caja (readonly) */}
+            {/* Total en Caja (readonly) */}
             <div style={{
               padding: '14px 16px', background: 'rgba(34,197,94,0.06)',
               border: '1px solid rgba(34,197,94,0.25)', borderRadius: 10,
@@ -524,10 +684,24 @@ const PanelDia: React.FC = () => {
               <div style={{ fontSize: 11, fontWeight: 700, color: '#22c55e', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>
                 Total en Caja
               </div>
-              <div style={{ fontSize: 22, fontWeight: 800, color: '#22c55e', fontFamily: "'Syne', sans-serif" }}>
+              <div style={{ fontSize: 22, fontWeight: 800, color: totalEnCaja >= 0 ? '#22c55e' : '#ef4444', fontFamily: "'Syne', sans-serif" }}>
                 $ {fmt(totalEnCaja)}
               </div>
-              <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>Caja + Cambio + Caja Grande (descontados egresos)</div>
+              <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>Caja − Egresos (efectivo neto)</div>
+            </div>
+
+            {/* Total en Transferencia (readonly) */}
+            <div style={{
+              padding: '14px 16px', background: 'rgba(6,182,212,0.06)',
+              border: '1px solid rgba(6,182,212,0.25)', borderRadius: 10,
+            }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: '#06b6d4', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>
+                Total en Transferencia
+              </div>
+              <div style={{ fontSize: 22, fontWeight: 800, color: totalEnTransf >= 0 ? '#06b6d4' : '#ef4444', fontFamily: "'Syne', sans-serif" }}>
+                $ {fmt(totalEnTransf)}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>Tarjetas + Transf. − Gs. Tarjeta</div>
             </div>
           </div>
 

@@ -3,7 +3,8 @@ export function cn(...classes: (string | undefined | null | false)[]): string {
 }
 
 export function formatCurrency(amount: number, symbol = '$'): string {
-  return `${symbol} ${amount.toLocaleString('es-AR', {
+  const safe = typeof amount === 'number' && isFinite(amount) ? amount : 0;
+  return `${symbol} ${safe.toLocaleString('es-AR', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;

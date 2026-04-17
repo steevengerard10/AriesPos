@@ -41,6 +41,19 @@ const api = {
 
   // ── Ventana de red ────────────────────────────────────────────
   openNetworkWindow: () => ipcRenderer.invoke('window:open-network'),
+  becomeServer:    () => ipcRenderer.invoke('app:become-server'),
+  resetToSetup:    () => ipcRenderer.invoke('app:reset-to-setup'),
+
+  // ── Controles de ventana ──────────────────────────────────────
+  windowMinimize:   () => ipcRenderer.send('window:minimize'),
+  windowMaximize:   () => ipcRenderer.send('window:maximize'),
+  windowClose:      () => ipcRenderer.send('window:close'),
+  windowIsMaximized: () => ipcRenderer.invoke('window:is-maximized'),
+  onWindowMaximize: (cb: () => void) => {
+    const fn = () => cb();
+    ipcRenderer.on('window:maximized', fn);
+    return () => ipcRenderer.removeListener('window:maximized', fn);
+  },
 
   // ── Auth ─────────────────────────────────────────────────────
   authValidatePin:   (pin: string) => ipcRenderer.invoke('auth:validate-pin', pin),
@@ -56,6 +69,7 @@ const api = {
   networkServerInfo:  () => ipcRenderer.invoke('network:server-info'),
   networkOpenFirewall:(port?: number) => ipcRenderer.invoke('network:open-firewall', port),
   networkPingServer:  (ip: string, port: number) => ipcRenderer.invoke('network:ping-server', { ip, port }),
+  networkGetProfile:  () => ipcRenderer.invoke('network:get-profile'),
 
   // ── Actualizador ─────────────────────────────────────────────
   updaterDownload:    () => ipcRenderer.invoke('updater:download'),

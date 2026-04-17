@@ -17,6 +17,31 @@
 			"command": "Get-Process -Name electron,node -EA SilentlyContinue | Stop-Process -Force; Start-Sleep -Seconds 1; pnpm --filter desktop dev",
 			"isBackground": true,
 			"problemMatcher": []
+		},
+		{
+			"label": "Copiar nuevo icono",
+			"type": "shell",
+			"command": "Copy-Item 'C:\\Users\\Kiosco Aries\\Desktop\\nuevo icono.ico' 'C:\\Users\\Kiosco Aries\\Desktop\\Pos Claude\\packages\\desktop\\assets\\icon.ico' -Force; Write-Host 'Icono copiado OK'",
+			"isBackground": false
+		},
+		{
+			"label": "Copiar nuevo icono",
+			"type": "shell",
+			"command": "Copy-Item 'C:\\Users\\Kiosco Aries\\Desktop\\nuevo icono.ico' 'C:\\Users\\Kiosco Aries\\Desktop\\Pos Claude\\packages\\desktop\\assets\\icon.ico' -Force; echo 'Icono reemplazado OK'",
+			"isBackground": false,
+			"problemMatcher": []
+		},
+		{
+			"label": "Copiar nuevo icono",
+			"type": "shell",
+			"command": "Copy-Item -Path \"$env:USERPROFILE\\Desktop\\nuevo icono.ico\" -Destination \"c:\\Users\\Kiosco Aries\\Desktop\\Pos Claude\\packages\\desktop\\assets\\icon.ico\" -Force; echo 'Icono copiado OK'"
+		},
+		{
+			"label": "CopiarIcono2026",
+			"type": "shell",
+			"command": "Copy-Item 'C:\\Users\\Kiosco Aries\\Desktop\\nuevo icono.ico' 'C:\\Users\\Kiosco Aries\\Desktop\\Pos Claude\\packages\\desktop\\assets\\icon.ico' -Force; Write-Host 'ICONO OK'",
+			"isBackground": false,
+			"problemMatcher": []
 		}
 	]
 }

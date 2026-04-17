@@ -1,5 +1,5 @@
 import React from 'react';
-import AriesLogo from '../../assets/aries_logo.svg';
+import AriesLogo from '../../assets/icon_logo.png';
 
 export default function TitleBar() {
   return (
@@ -18,7 +18,7 @@ export default function TitleBar() {
         <img
           src={AriesLogo}
           alt="ARIESPos"
-          style={{ width: 20, height: 20, objectFit: 'contain', filter: 'drop-shadow(0 0 4px rgba(190,50,120,0.5))' }}
+          style={{ width: 26, height: 26, objectFit: 'contain', filter: 'drop-shadow(0 0 4px rgba(190,50,120,0.5))' }}
         />
         <span
           style={{

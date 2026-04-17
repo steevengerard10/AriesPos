@@ -3,7 +3,6 @@ import { HashRouter, Routes, Route } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { useAppStore } from './store/useAppStore';
 import Sidebar from './components/Layout/Sidebar';
-import TitleBar from './components/Layout/TitleBar';
 import Topbar from './components/Layout/Topbar';
 import AriesIA from './components/Layout/AriesIA';
 import { POSWindow } from './components/POS/POSWindow';
@@ -29,18 +28,57 @@ import NetworkSetupWindow from './screens/NetworkSetupWindow';
 import { LicenseScreen } from './screens/LicenseScreen';
 import { ConnectionLostScreen } from './screens/ConnectionLostScreen';
 import { UpdateNotification } from './components/shared/UpdateNotification';
+import { AlertTriangle, RotateCcw } from 'lucide-react';
+import AriesLogo from './assets/icon_logo.png';
 import './i18n';
 import i18n from './i18n';
+
+// ── Error Boundary ──────────────────────────────────────────────────────────
+interface EBState { hasError: boolean; error: string }
+class ModuleErrorBoundary extends React.Component<{ children: React.ReactNode; onReset: () => void }, EBState> {
+  constructor(props: { children: React.ReactNode; onReset: () => void }) {
+    super(props);
+    this.state = { hasError: false, error: '' };
+  }
+  static getDerivedStateFromError(err: unknown): EBState {
+    return { hasError: true, error: err instanceof Error ? err.message : String(err) };
+  }
+  componentDidCatch(err: unknown, info: unknown) {
+    console.error('[ModuleErrorBoundary]', err, info);
+  }
+  reset() {
+    this.setState({ hasError: false, error: '' });
+    this.props.onReset();
+  }
+  render() {
+    if (!this.state.hasError) return this.props.children;
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-5" style={{ background: 'var(--bg)' }}>
+        <div className="flex items-center gap-3 text-red-400">
+          <AlertTriangle size={32} />
+          <h2 className="text-lg font-bold">Se produjo un error en este módulo</h2>
+        </div>
+        <p className="text-sm text-slate-400 max-w-md text-center">{this.state.error || 'Error inesperado. El resto de la aplicación sigue funcionando.'}</p>
+        <button
+          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-700 hover:bg-blue-600 text-white text-sm font-semibold transition-colors"
+          onClick={() => this.reset()}
+        >
+          <RotateCcw size={14} /> Volver al inicio
+        </button>
+      </div>
+    );
+  }
+}
 
 // Splash screen
 const SplashScreen: React.FC = () => (
   <div className="flex items-center justify-center h-screen flex-col gap-4" style={{ background: 'var(--bg)' }}>
     <div className="flex items-center gap-3">
       <div
-        className="flex items-center justify-center rounded-2xl text-white font-black text-2xl"
-        style={{ width: 52, height: 52, background: 'linear-gradient(135deg, var(--accent) 0%, var(--accent2) 100%)', boxShadow: '0 4px 20px rgba(79,142,247,0.4)', fontSize: 24 }}
+        className="flex items-center justify-center rounded-2xl"
+        style={{ width: 68, height: 68 }}
       >
-        A
+        <img src={AriesLogo} alt="ARIESPos" style={{ width: 68, height: 68, objectFit: 'contain', filter: 'drop-shadow(0 0 12px rgba(190,50,120,0.6))' }} />
       </div>
       <div>
         <div className="text-2xl font-black" style={{ color: 'var(--text)', letterSpacing: '-0.02em', fontFamily: "'Syne', sans-serif" }}>
@@ -150,13 +188,14 @@ const MainLayout: React.FC = () => {
 
   return (
     <div className="flex flex-col h-screen overflow-hidden" style={{ background: 'var(--bg)' }}>
-      <TitleBar />
       <div className="flex flex-1 overflow-hidden">
         <Sidebar />
         <div className="flex flex-col flex-1 overflow-hidden">
           <Topbar />
           <main className="flex-1 overflow-hidden" style={{ background: 'var(--bg)' }}>
-            {renderModule()}
+            <ModuleErrorBoundary onReset={() => setCurrentModule('dashboard')}>
+              {renderModule()}
+            </ModuleErrorBoundary>
           </main>
         </div>
         {iaOpen && <AriesIA />}
@@ -167,17 +206,23 @@ const MainLayout: React.FC = () => {
 
 // App raiz
 const App: React.FC = () => {
-  const { isAuthenticated, setConfig, setServerInfo, theme } = useAppStore();
+  const { isAuthenticated, setConfig, setServerInfo, theme, font, setFont } = useAppStore();
   const [loading, setLoading] = useState(true);
   const [showSetup, setShowSetup] = useState(false);
   const [licensed, setLicensed] = useState<boolean | null>(null);
   const [connectionLost, setConnectionLost] = useState(false);
   const [connectionServerIP, setConnectionServerIP] = useState('');
+  const [connectionServerPort, setConnectionServerPort] = useState(3001);
 
   // Aplicar tema guardado al montar y cuando cambia
   useEffect(() => {
     document.documentElement.dataset.theme = theme === 'oscuro' ? '' : theme;
   }, [theme]);
+
+  // Aplicar fuente guardada al montar
+  useEffect(() => {
+    if (font && font !== 'inter') setFont(font);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const init = async () => {
@@ -202,6 +247,7 @@ const App: React.FC = () => {
         // Si es modo cliente, guardar la IP del servidor para mostrar en pantalla de conexión perdida
         if (appCfg?.mode === 'client' && appCfg.serverIP) {
           setConnectionServerIP(appCfg.serverIP);
+          setConnectionServerPort(appCfg.serverPort || 3001);
         }
 
         const [cfg, ipInfo] = await Promise.all([
@@ -237,7 +283,7 @@ const App: React.FC = () => {
   if (loading) return <SplashScreen />;
   if (licensed === false) return <LicenseScreen onActivated={() => setLicensed(true)} />;
   if (showSetup) return <SetupScreen onComplete={() => setShowSetup(false)} />;
-  if (connectionLost) return <ConnectionLostScreen serverIP={connectionServerIP} />;
+  if (connectionLost) return <ConnectionLostScreen serverIP={connectionServerIP} serverPort={connectionServerPort} />;
 
     return (
       <HashRouter

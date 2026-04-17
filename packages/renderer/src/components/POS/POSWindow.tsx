@@ -131,13 +131,19 @@ export const POSWindow: React.FC = () => {
 
   const handleConfirmSale = async (cobrado: number) => {
     if (cart.length === 0) { toast.error(t('pos.emptyCart')); return; }
-    if (esFiado && !clienteId) { toast.error(t('pos.creditNeedsClient')); setShowClienteModal(true); return; }
+
+    // Leer del store directamente para evitar closure stale:
+    // setMetodoPago/setMetodoPagoMixto actualizan Zustand sincrónicamente,
+    // pero el componente no se re-renderiza antes de que onConfirm ejecute.
+    const { metodoPago: currentMetodo, metodoPagoMixto: currentMixto, esFiado: currentFiado } = useVentasStore.getState();
+
+    if (currentFiado && !clienteId) { toast.error(t('pos.creditNeedsClient')); setShowClienteModal(true); return; }
 
     setProcesando(true);
     try {
       // Si el cobro es parcial (solo aplica para ventas NO fiado), ajustar el total reduciendo el descuento global
       const rawSubtotal = cart.reduce((s, i) => s + i.precio_unitario * i.cantidad, 0);
-      const esParcial = !esFiado && cobrado < total - 0.01;
+      const esParcial = !currentFiado && cobrado < total - 0.01;
       const descuentoFinal = esParcial ? rawSubtotal - cobrado : totalDescuento;
 
       const payload = {
@@ -155,10 +161,10 @@ export const POSWindow: React.FC = () => {
           unidad_medida: i.unidad_medida,
         })),
         descuento: descuentoFinal,
-        metodo_pago: metodoPago,
-        es_fiado: esFiado,
+        metodo_pago: currentMetodo,
+        es_fiado: currentFiado,
         observaciones,
-        metodos_pago_mixto: metodoPagoMixto,
+        metodos_pago_mixto: currentMixto,
       };
 
       const result = await ventasAPI.crear(payload) as { id: number; numero: string; venta: Record<string, unknown> };

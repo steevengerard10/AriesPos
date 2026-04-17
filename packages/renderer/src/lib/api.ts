@@ -1,6 +1,15 @@
 // Wrapper tipado para todas las llamadas IPC al proceso main de Electron
 // Cuando se usa en el navegador (panel web), usa fetch a la API REST
 
+export interface BulkProductRow {
+  id: number;
+  nombre: string;
+  marca: string;
+  codigo: string;
+  categoria_nombre: string | null;
+  precio_venta: number;
+}
+
 const isElectron = (): boolean => {
   return typeof window !== 'undefined' && !!window.electron;
 };
@@ -48,6 +57,10 @@ export const productosAPI = {
   truncate: () => invoke('productos:truncate'),
   buscarInternet: (query: string, type: 'barcode' | 'nombre') =>
     invoke<{ found: boolean; results?: { barcode: string; nombre: string; marca: string; imagen_url: string | null; unidad_hint: string }[]; error?: string }>('productos:buscarInternet', query, type),
+  bulkGetByFilters: (filters: { brand?: string; category?: string; name?: string }) =>
+    invoke<BulkProductRow[]>('productos:bulkGetByFilters', filters),
+  bulkUpdatePrices: (payload: { productIds: number[]; percentage: number }) =>
+    invoke<{ updated: number }>('productos:bulkUpdatePrices', payload),
 };
 
 // ── CATEGORIAS ──────────────────────────────────────────────────
@@ -109,9 +122,12 @@ export const cajaAPI = {
     const monto = typeof montoInicialOrData === 'object' ? montoInicialOrData.saldo_inicial : montoInicialOrData;
     return invoke('caja:abrir', monto, usuarioId);
   },
-  cerrar: (sessionId: number, montoFinalOrData: number | { saldo_final: number }) => {
+  cerrar: (sessionId: number, montoFinalOrData: number | { saldo_final: number; efectivo?: number; tarjetas?: number; transferencias?: number }) => {
     const monto = typeof montoFinalOrData === 'object' ? montoFinalOrData.saldo_final : montoFinalOrData;
-    return invoke('caja:cerrar', sessionId, monto);
+    const efectivo = typeof montoFinalOrData === 'object' ? (montoFinalOrData.efectivo ?? 0) : 0;
+    const tarjetas = typeof montoFinalOrData === 'object' ? (montoFinalOrData.tarjetas ?? 0) : 0;
+    const transferencias = typeof montoFinalOrData === 'object' ? (montoFinalOrData.transferencias ?? 0) : 0;
+    return invoke('caja:cerrar', sessionId, monto, efectivo, tarjetas, transferencias);
   },
   agregarMovimiento: (sesionIdOrData: number | { sesion_id: number; tipo: 'ingreso' | 'egreso'; monto: number; descripcion: string; metodo_pago: string }, movData?: { tipo: 'ingreso' | 'egreso'; monto: number; concepto?: string; descripcion?: string; metodo_pago: string }) => {
     if (typeof sesionIdOrData === 'number' && movData) {
@@ -183,6 +199,7 @@ export const backupAPI = {
   create: (targetDir?: string) => invoke<{ path: string; success: boolean }>('backup:create', targetDir),
   restore: (backupPath: string) => invoke('backup:restore', backupPath),
   autoBackup: () => invoke('backup:autoBackup'),
+  repair: () => invoke<{ success: boolean; integrityOk: boolean; integrityResult: string; backupPath: string | null; message: string }>('db:repair'),
 };
 
 // ── EXPORT / IMPORT ──────────────────────────────────────────────────
@@ -219,6 +236,8 @@ export const appAPI = {
   validateAdminCode: (code: string) => invoke<boolean>('app:validateAdminCode', code),
   resetAppConfig: () => invoke('app:resetAppConfig'),
   restartApp: () => invoke('app:restart'),
+  becomeServer: () => invoke('app:become-server'),
+  resetToSetup: () => invoke('app:reset-to-setup'),
 };
 
 // ── LIBRO DE CAJA ──────────────────────────────────────────────────
@@ -270,8 +289,8 @@ export interface LibroCajaEgreso {
 export const libroCajaAPI = {
   getDia: (fecha: string) =>
     invoke<{ dia: LibroCajaDia; turnos: LibroCajaTurno[]; billetes: LibroCajaBillete[]; egresos: LibroCajaEgreso[] }>('librocaja:getDia', fecha),
-  getHistorico: (limit?: number) =>
-    invoke<LibroCajaDia[]>('librocaja:getHistorico', limit),
+  getHistorico: (periodo?: string) =>
+    invoke<LibroCajaDia[]>('librocaja:getHistorico', periodo),
   updateDia: (fecha: string, data: Partial<LibroCajaDia>) =>
     invoke<{ success: boolean }>('librocaja:updateDia', fecha, data),
   syncFromVentas: (fecha: string) =>
@@ -290,6 +309,12 @@ export const libroCajaAPI = {
     invoke<{ success: boolean }>('librocaja:removeEgreso', egresoId, fecha),
   exportExcel: (desde: string, hasta: string) =>
     invoke<{ success: boolean; path?: string; error?: string }>('librocaja:exportExcel', desde, hasta),
+  getPeriodos: () =>
+    invoke<{ periodo: string; estado: 'abierto' | 'cerrado'; fecha_cierre: string | null }[]>('librocaja:getPeriodos'),
+  cerrarMes: (periodo: string) =>
+    invoke<{ success: boolean }>('librocaja:cerrarMes', periodo),
+  reabrirMes: (periodo: string) =>
+    invoke<{ success: boolean }>('librocaja:reabrirMes', periodo),
 };
 
 // ── AUTH ──────────────────────────────────────────────────
@@ -320,6 +345,10 @@ export const networkAPI = {
     invoke<{ success: boolean; error?: string }>('network:open-firewall', port),
   pingServer: (ip: string, port: number) =>
     invoke<{ ok: boolean; ms?: number; error?: string }>('network:ping-server', { ip, port }),
+  getNetworkProfile: () =>
+    invoke<{ profile: string }>('network:get-profile'),
+  diagnose: () =>
+    invoke<{ port3001Listening: boolean; localPingOk: boolean; firewallRule: boolean; hasPublicNetwork: boolean }>('network:diagnose'),
 };
 
 interface ARIESUser {

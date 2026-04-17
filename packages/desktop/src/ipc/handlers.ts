@@ -1,7 +1,7 @@
 import { ipcMain, dialog, BrowserWindow } from 'electron';
 import { getDb } from '../database/db';
 import { emitToWeb, getActivePort } from '../server/index';
-import { manualBackup, restoreBackup, listBackups, autoBackup } from '../database/backup';
+import { manualBackup, restoreBackup, listBackups, autoBackup, getBackupsDir } from '../database/backup';
 import { importFromNextar } from '../utils/nextar-importer';
 import { importFromZip, findLatestZipInDir, importFromFolder } from '../utils/nx1-importer';
 import { app } from 'electron';
@@ -263,6 +263,59 @@ export function registerIpcHandlers(): void {
     return { deleted: result.changes };
   });
 
+  // ── ACTUALIZACIÓN MASIVA DE PRECIOS ──────────────────────────
+  ipcMain.handle('productos:bulkGetByFilters', (_e, filters: { brand?: string; category?: string; name?: string }) => {
+    // Si no hay ningún filtro, devolver vacío para evitar traer toda la tabla sin querer
+    if (!filters?.brand && !filters?.category && !filters?.name) return [];
+    const db = getDb();
+    let where = `WHERE p.activo = 1 AND p.precio_venta IS NOT NULL`;
+    const params: unknown[] = [];
+    if (filters.brand) {
+      where += ` AND p.marca LIKE ?`;
+      params.push(`%${filters.brand}%`);
+    }
+    if (filters.category) {
+      where += ` AND c.nombre LIKE ?`;
+      params.push(`%${filters.category}%`);
+    }
+    if (filters.name) {
+      where += ` AND p.nombre LIKE ?`;
+      params.push(`%${filters.name}%`);
+    }
+    return db.prepare(`
+      SELECT p.id, p.nombre, p.marca, p.codigo, c.nombre AS categoria_nombre, p.precio_venta
+      FROM productos p
+      LEFT JOIN categorias c ON p.categoria_id = c.id
+      ${where}
+      ORDER BY p.nombre
+      LIMIT 2000
+    `).all(...params);
+  });
+
+  ipcMain.handle('productos:bulkUpdatePrices', (_e, payload: { productIds: number[]; percentage: number }) => {
+    const { productIds, percentage } = payload;
+    if (!productIds?.length || percentage === 0) return { updated: 0 };
+    const db = getDb();
+    const CHUNK = 500;
+    let updated = 0;
+    db.transaction(() => {
+      for (let i = 0; i < productIds.length; i += CHUNK) {
+        const chunk = productIds.slice(i, i + CHUNK);
+        const phs = chunk.map(() => '?').join(',');
+        const multiplier = 1 + percentage / 100;
+        const result = db.prepare(`
+          UPDATE productos
+          SET precio_venta = ROUND(precio_venta * ?, 2),
+              updated_at = datetime('now')
+          WHERE id IN (${phs})
+            AND precio_venta IS NOT NULL
+        `).run(multiplier, ...chunk);
+        updated += result.changes;
+      }
+    })();
+    return { updated };
+  });
+
   ipcMain.handle('productos:loadSeed', () => {
     const db = getDb();
     const { seedProductos } = require('../services/seed-productos');
@@ -471,12 +524,34 @@ export function registerIpcHandlers(): void {
   });
 
   // ── IMPORTAR DESDE NEXTAR ZIP (NX1 binario) ──────────────────
-  ipcMain.handle('productos:importFromZip', async (_e, zipPath?: string) => {
-    const targetPath = zipPath || findLatestZipInDir('C:\\Nex\\backup');
+  ipcMain.handle('productos:importFromZip', async (event, zipPath?: string) => {
+    const { importNixtarBackup, findLatestZip } = require('../services/nextar-importer');
+    const sendProgress = (p: unknown) => {
+      if (!event.sender.isDestroyed()) event.sender.send('nextar:progress', p);
+    };
+    let targetPath: string | null = zipPath || null;
     if (!targetPath) {
-      return { success: false, imported: 0, skipped: 0, errors: ['No se encontró ningún archivo .zip en C:\\Nex\\backup'] };
+      const searchDirs = [
+        'C:\\Nex\\backup',
+        path.join(app.getPath('desktop'), 'Backup nextar'),
+        app.getPath('desktop'),
+      ];
+      for (const dir of searchDirs) {
+        const found: string | null = findLatestZip(dir);
+        if (found) { targetPath = found; break; }
+      }
     }
-    return importFromZip(targetPath, getDb());
+    if (!targetPath) {
+      return { success: false, imported: 0, skipped: 0, errors: ['No se encontró ningún archivo .zip de backup'] };
+    }
+    const res = await importNixtarBackup(targetPath, sendProgress);
+    // Normalizar el resultado al formato que espera el modal (imported = productos)
+    return {
+      success: res.success,
+      imported: (res as { productos?: number }).productos ?? 0,
+      skipped: res.skipped ?? 0,
+      errors: (res as { errores?: string[]; errors?: string[] }).errores ?? (res as { errors?: string[] }).errors ?? [],
+    };
   });
 
   ipcMain.handle('productos:importFromFolder', async (_e, folderPath: string) => {
@@ -1063,28 +1138,21 @@ export function registerIpcHandlers(): void {
     return { id: result.lastInsertRowid, success: true };
   });
 
-  ipcMain.handle('caja:cerrar', (_e, sessionId: number, montoFinal: number) => {
+  ipcMain.handle('caja:cerrar', (_e, sessionId: number, montoFinal: number, efectivoManual: number, tarjetasManual: number, transferenciasManual: number) => {
     const db = getDb();
     db.prepare(`UPDATE caja_sesiones SET fecha_cierre = datetime('now'), monto_final = ? WHERE id = ?`).run(montoFinal, sessionId);
     emitToWeb('caja:movimiento', { tipo: 'cierre', monto: montoFinal });
 
-    // Sincronizar libro de caja del día
+    // Sincronizar libro de caja del día con los montos ingresados manualmente
     try {
       const today = new Date().toISOString().split('T')[0];
 
-      // Totales desde movimientos de caja de la sesión
+      // Egresos desde movimientos de caja de la sesión
       const tots = db.prepare(`
         SELECT
-          COALESCE(SUM(CASE WHEN tipo='ingreso' AND metodo_pago='efectivo' THEN monto ELSE 0 END),0) as efectivo,
-          COALESCE(SUM(CASE WHEN tipo='ingreso' AND metodo_pago IN ('tarjeta','debito','credito') THEN monto ELSE 0 END),0) as tarjetas,
-          COALESCE(SUM(CASE WHEN tipo='ingreso' AND metodo_pago IN ('transferencia','qr','mercadopago') THEN monto ELSE 0 END),0) as transferencias,
-          COALESCE(SUM(CASE WHEN tipo='egreso' THEN monto ELSE 0 END),0) as egresos,
-          COALESCE(SUM(CASE WHEN tipo='ingreso' AND metodo_pago NOT IN ('tarjeta','debito','credito','transferencia','qr','mercadopago') THEN monto ELSE 0 END),0) as otros
+          COALESCE(SUM(CASE WHEN tipo='egreso' THEN monto ELSE 0 END),0) as egresos
         FROM caja_movimientos WHERE sesion_id = ?
-      `).get(sessionId) as { efectivo: number; tarjetas: number; transferencias: number; egresos: number; otros: number };
-
-      const sesion = db.prepare(`SELECT * FROM caja_sesiones WHERE id = ?`).get(sessionId) as { monto_inicial: number } | undefined;
-      const cajaTotal = (sesion?.monto_inicial || 0) + tots.efectivo + tots.otros - tots.egresos;
+      `).get(sessionId) as { egresos: number };
 
       let dia = db.prepare(`SELECT id FROM libro_caja_dias WHERE fecha = ?`).get(today) as { id: number } | undefined;
       if (!dia) {
@@ -1096,7 +1164,7 @@ export function registerIpcHandlers(): void {
         UPDATE libro_caja_dias
         SET caja = ?, tarjetas = ?, transferencias = ?, egresos = ?, updated_at = datetime('now')
         WHERE id = ?
-      `).run(cajaTotal, tots.tarjetas, tots.transferencias, tots.egresos, dia.id);
+      `).run(efectivoManual, tarjetasManual, transferenciasManual, tots.egresos, dia.id);
 
       // Cerrar turno activo del libro si existe
       const turnoActivo = db.prepare(`
@@ -1425,9 +1493,15 @@ export function registerIpcHandlers(): void {
 
   // ── BACKUP ────────────────────────────────────────────────
   ipcMain.handle('backup:list', () => listBackups());
-  ipcMain.handle('backup:create', async (_e, targetDir: string) => {
-    const backupPath = await manualBackup(targetDir);
-    return { path: backupPath, success: true };
+  ipcMain.handle('backup:get-dir', () => getBackupsDir());
+  ipcMain.handle('backup:create', async (_e, targetDir?: string) => {
+    try {
+      const backupPath = await manualBackup(targetDir);
+      return { path: backupPath, success: true };
+    } catch (err) {
+      console.error('[Backup] Error al crear backup:', err);
+      return { success: false, error: (err as Error).message };
+    }
   });
   ipcMain.handle('backup:restore', async (_e, backupPath: string) => {
     await restoreBackup(backupPath);
@@ -1436,6 +1510,47 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('backup:autoBackup', async () => {
     const path = await autoBackup();
     return { path, success: true };
+  });
+
+  ipcMain.handle('db:repair', async () => {
+    const db = getDb();
+    // 1. Crear backup preventivo antes de cualquier operación
+    let backupPath: string | null = null;
+    try { backupPath = await autoBackup(); } catch { /* continuar aunque falle el backup */ }
+
+    // 2. Verificar integridad
+    const integrityRows = db.prepare('PRAGMA integrity_check').all() as { integrity_check: string }[];
+    const isOk = integrityRows.length === 1 && integrityRows[0].integrity_check === 'ok';
+    const integrityResult = integrityRows.map(r => r.integrity_check).join(', ');
+
+    // 3. Reconstruir índices
+    try { db.exec('REINDEX'); } catch (e) { /* continuar */ }
+
+    // 4. Compactar base de datos
+    try { db.exec('VACUUM'); } catch (e) { /* continuar */ }
+
+    // 5. Reparar secuencias corruptas (sqlite_sequence)
+    try {
+      const tables = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name != 'sqlite_sequence'`).all() as { name: string }[];
+      for (const { name } of tables) {
+        try {
+          const row = db.prepare(`SELECT MAX(id) as mx FROM "${name}"`).get() as { mx: number | null } | undefined;
+          if (row?.mx != null) {
+            db.prepare(`INSERT OR REPLACE INTO sqlite_sequence (name, seq) VALUES (?, ?)`).run(name, row.mx);
+          }
+        } catch { /* tabla sin columna id, ignorar */ }
+      }
+    } catch { /* ignorar */ }
+
+    return {
+      success: true,
+      integrityOk: isOk,
+      integrityResult,
+      backupPath,
+      message: isOk
+        ? 'Reparación completada. La base de datos está en buen estado.'
+        : `Se detectaron problemas (${integrityResult}). Se aplicaron reparaciones. Si los problemas persisten, restaurá el último backup.`,
+    };
   });
 
   ipcMain.handle('db:resetOperacional', async () => {
@@ -1624,17 +1739,77 @@ export function registerIpcHandlers(): void {
     return { dia, turnos, billetes, egresos };
   });
 
-  ipcMain.handle('librocaja:getHistorico', (_e, limit = 60) => {
+  ipcMain.handle('librocaja:getHistorico', (_e, periodo?: string) => {
     const db = getDb();
+    if (periodo) {
+      // Filtrar por mes (YYYY-MM)
+      const desde = `${periodo}-01`;
+      const hasta = `${periodo}-31`;
+      const dias = db.prepare(`
+        SELECT d.*,
+          (SELECT COUNT(*) FROM libro_caja_turnos WHERE dia_id = d.id) as total_turnos,
+          (SELECT COUNT(*) FROM libro_caja_turnos WHERE dia_id = d.id AND fecha_cierre IS NULL) as turnos_abiertos
+        FROM libro_caja_dias d
+        WHERE d.fecha BETWEEN ? AND ?
+        ORDER BY d.fecha DESC
+      `).all(desde, hasta);
+      return dias;
+    }
+    // Sin periodo: devuelve el mes actual
+    const now = new Date();
+    const mesActual = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const desde = `${mesActual}-01`;
+    const hasta = `${mesActual}-31`;
     const dias = db.prepare(`
       SELECT d.*,
         (SELECT COUNT(*) FROM libro_caja_turnos WHERE dia_id = d.id) as total_turnos,
         (SELECT COUNT(*) FROM libro_caja_turnos WHERE dia_id = d.id AND fecha_cierre IS NULL) as turnos_abiertos
       FROM libro_caja_dias d
+      WHERE d.fecha BETWEEN ? AND ?
       ORDER BY d.fecha DESC
-      LIMIT ?
-    `).all(limit);
+    `).all(desde, hasta);
     return dias;
+  });
+
+  ipcMain.handle('librocaja:getPeriodos', () => {
+    const db = getDb();
+    // Obtener periodos distintos de todos los días registrados
+    const rows = db.prepare(`
+      SELECT DISTINCT substr(fecha, 1, 7) as periodo
+      FROM libro_caja_dias
+      ORDER BY periodo DESC
+    `).all() as { periodo: string }[];
+    const periodos = rows.map(r => r.periodo);
+
+    // Enriquecer con estado de libro_caja_periodos
+    const estados = db.prepare(`SELECT periodo, estado, fecha_cierre FROM libro_caja_periodos`).all() as { periodo: string; estado: string; fecha_cierre: string | null }[];
+    const estadoMap = new Map(estados.map(e => [e.periodo, e]));
+
+    return periodos.map(p => ({
+      periodo: p,
+      estado: estadoMap.get(p)?.estado ?? 'abierto',
+      fecha_cierre: estadoMap.get(p)?.fecha_cierre ?? null,
+    }));
+  });
+
+  ipcMain.handle('librocaja:cerrarMes', (_e, periodo: string) => {
+    const db = getDb();
+    db.prepare(`
+      INSERT INTO libro_caja_periodos (periodo, estado, fecha_cierre)
+      VALUES (?, 'cerrado', datetime('now'))
+      ON CONFLICT(periodo) DO UPDATE SET estado='cerrado', fecha_cierre=datetime('now')
+    `).run(periodo);
+    return { success: true };
+  });
+
+  ipcMain.handle('librocaja:reabrirMes', (_e, periodo: string) => {
+    const db = getDb();
+    db.prepare(`
+      INSERT INTO libro_caja_periodos (periodo, estado)
+      VALUES (?, 'abierto')
+      ON CONFLICT(periodo) DO UPDATE SET estado='abierto', fecha_cierre=NULL
+    `).run(periodo);
+    return { success: true };
   });
 
   ipcMain.handle('librocaja:updateDia', (_e, fecha: string, data: Record<string, unknown>) => {
@@ -1885,18 +2060,12 @@ export function registerIpcHandlers(): void {
 
   // ── NETWORK: escaneo LAN en busca de servidores ARIESPos ───────────────
   ipcMain.handle('network:scan', async (_e, port?: number) => {
-    const { networkInterfaces } = await import('os');
-    const nets = networkInterfaces();
-    let baseIP: string | null = null;
-    for (const name of Object.keys(nets)) {
-      for (const net of nets[name]!) {
-        if (net.family === 'IPv4' && !net.internal) {
-          baseIP = net.address.split('.').slice(0, 3).join('.');
-          break;
-        }
-      }
-      if (baseIP) break;
-    }
+    // Usar getAllLocalIPs() para obtener la subred real (filtra adaptadores virtuales)
+    const realIPs = getAllLocalIPs();
+    const baseIP = realIPs.length > 0
+      ? realIPs[0].address.split('.').slice(0, 3).join('.')
+      : null;
+
     if (!baseIP) return [];
 
     const targetPort = port ?? 3001;

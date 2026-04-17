@@ -1,6 +1,6 @@
 {
   "name": "@ariespos/desktop",
-  "version": "1.0.55",
+  "version": "2.0.0",
   "private": true,
   "main": "dist/main.js",
   "scripts": {
@@ -75,8 +75,8 @@
         "to": "renderer"
       },
       {
-        "from": "../../packages/renderer/src/assets/aries_logo.svg",
-        "to": "logo/aries_logo.svg"
+        "from": "../../packages/renderer/src/assets/icon_logo.png",
+        "to": "logo/icon_logo.png"
       }
     ],
     "win": {
@@ -94,7 +94,8 @@
     "nsis": {
       "oneClick": false,
       "perMachine": true,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "include": "build/installer.nsh"
     }
   }
 }

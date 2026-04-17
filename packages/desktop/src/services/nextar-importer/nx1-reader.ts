@@ -3,25 +3,24 @@
  *
  * Lector binario del formato NexusDB (NX!2) para backups de Nextar.
  *
- * Estructura real del archivo Produto.nx1 (verificado con backup real):
- *  - Páginas de 4096 bytes, encabezado NXHD en páginas de datos
- *  - Strings: null-terminated UTF-16LE (nxtWideString)
- *  - Precios: Int64 LE × 10000 (nxtCurrency)
+ * Estructura del archivo .nx1:
+ *  - Páginas de 4096 bytes con header "NXHD"
+ *  - Las primeras ~11 páginas son metadata/schema (sin NXHD)
+ *  - Páginas NXHD tipo "HEAP" (datos reales): pocas strings por página, nunca > 5 EANs
+ *  - Páginas NXHD tipo "BTREE" (índices): muchas entries por página, típicamente > 5 EANs
  *
- * Patrón de registro de producto (en orden dentro de la página NXHD):
- *   [fk_descr_categoria]  ← categoría (string)
- *   [binario: GUIDs subcategoría, marca, uid_unidade]
- *   [fk_descr_unidade]    ← "Pieza" / "Kg" / etc.   ← ANCLA U1
- *   [GUID Marca: 16 bytes]
- *   [Codigo]              ← código interno (string)
- *   [CodigoNum: 4 bytes UInt32]
- *   [Codigo2]             ← código secundario (string, generalmente vacío)
- *   [EanGtin]             ← código de barras (string numérico)
- *   [Codigo2Num: 4 bytes UInt32]
- *   [Descricao]           ← nombre del producto  ← BUSCAMOS ESTO
- *   [Unid]                ← "Pieza" / "Kg" / etc.   ← ANCLA U2 (duplicado)
- *   [Preco: Int64LE]      ← precio × 10000          ← PRECIO REAL
- *   [... más campos: costo, stock, etc. ...]
+ * ESTRATEGIA DUAL (verificada con backup real):
+ *   1. "Heap scan": páginas con ≤ 5 EANs → parsear como registros de datos completos
+ *      usando el orden de campos del schema: categoria → unidad → codigo → EAN → nombre → precio
+ *   2. "Index scan" (fallback): si el heap no encuentra suficientes productos,
+ *      usar páginas índice filtrando duplicados por EAN
+ *
+ * Tipos de campo relevantes:
+ *  - nxtWideString  → null-terminated UTF-16LE
+ *  - nxtCurrency    → Int64LE / 10000
+ *  - nxtGuid        → 16 bytes binarios
+ *  - nxtWord32      → UInt32 LE (4 bytes)
+ *  - nxtBoolean     → 1 byte
  */
 
 import * as iconv from 'iconv-lite';
@@ -245,12 +244,18 @@ export function extractProductsFromBuffer(data: Buffer): RawProduct[] {
       const finalUnit = unitStr || unit2Str;
 
       // Precio: Int64LE × 10000 inmediatamente después de Unidad2
+      // Si no hay Unidad2 (u2End==-1), escanear desde el fin del nombre
       let precio = 0;
-      if (u2End >= 0 && u2End + 8 <= PAGE_SIZE) {
-        const raw64 = readInt64LE(page, u2End);
+      const PRICE_SEARCH_START = u2End >= 0 ? u2End : nameEntry.end;
+      const PRICE_MIN = 0.01;
+      const PRICE_MAX = 2_000_000; // > $2M ARS es casi seguro un error de parseo
+      // Intentar hasta 48 bytes hacia adelante (puede haber padding)
+      for (let off = PRICE_SEARCH_START; off <= PRICE_SEARCH_START + 48 && off + 8 <= PAGE_SIZE; off++) {
+        const raw64 = readInt64LE(page, off);
         const pv = raw64 / 10000.0;
-        if (pv >= 1 && pv <= 500_000) {
+        if (pv >= PRICE_MIN && pv <= PRICE_MAX) {
           precio = Math.round(pv * 100) / 100;
+          break;
         }
       }
 

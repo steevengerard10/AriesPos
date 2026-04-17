@@ -203,6 +203,26 @@ function basicAuth(req: Request, res: Response, next: NextFunction): void {
   }
 }
 
+// Middleware de auth para endpoints de SINCRONIZACIÓN entre PCs.
+// Acepta tanto el PIN actual del admin (configurable) como el token fijo interno (DEFAULT_ADMIN_PASS).
+// Esto garantiza que el cliente multi-PC siempre pueda conectarse aunque el admin cambie su PIN de acceso web.
+function syncAuth(req: Request, res: Response, next: NextFunction): void {
+  const creds = decodeBasicAuth(req);
+  if (!creds) {
+    res.status(401).json({ error: 'Autenticación requerida' });
+    return;
+  }
+  const { user, pass } = creds;
+  if (
+    (user === ADMIN_USER && (pass === getAdminPassword() || pass === DEFAULT_ADMIN_PASS)) ||
+    (user === CAJERO_USER && (pass === getCajeroPin() || pass === DEFAULT_CAJERO_PASS))
+  ) {
+    next();
+  } else {
+    res.status(401).json({ error: 'Credenciales incorrectas' });
+  }
+}
+
 function adminOnly(req: Request, res: Response, next: NextFunction): void {
   const creds = decodeBasicAuth(req);
   if (creds && creds.user === ADMIN_USER && creds.pass === getAdminPassword()) {
@@ -496,6 +516,14 @@ export function startServer(): void {
     res.send(html);
   });
 
+  // ── Login público sin basicAuth (el PIN ya es la autenticación) ─────────
+  expressApp.post('/api/auth/login', (req, res) => {
+    const { pin } = req.body as { pin: string };
+    if (!pin) { res.status(400).json(null); return; }
+    const user = db.prepare(`SELECT id, nombre, rol, activo FROM usuarios WHERE pin = ? AND activo = 1`).get(pin);
+    res.json(user || null);
+  });
+
   // ── Endpoint ping para la app móvil (sin auth) ───────────────────────────
   expressApp.get('/api/ping', (_req, res) => {
     const configRow = db.prepare('SELECT valor FROM configuracion WHERE clave = ?').get('nombre_negocio') as { valor: string } | undefined;
@@ -706,7 +734,8 @@ export function startServer(): void {
   });
 
   // ── /api/sync/* — Sincronización multi-PC ─────────────────────────────────
-  expressApp.use('/api/sync', basicAuth, createSyncRouter(io, exportFiadosToExcel));
+  // Usa syncAuth (acepta DEFAULT_ADMIN_PASS como token fijo además del PIN configurado)
+  expressApp.use('/api/sync', syncAuth, createSyncRouter(io, exportFiadosToExcel));
 
   // ── Socket.IO ─────────────────────────────────────────────────────────────
   io.on('connection', (socket) => {
@@ -943,11 +972,35 @@ export function startServer(): void {
     });
   }
 
+  let _killAttempted = false;
+
   httpServer.on('error', (err: NodeJS.ErrnoException) => {
     if (err.code === 'EADDRINUSE') {
-      console.log(`[Servidor] Puerto ${PORT} ocupado, intentando ${PORT + 1}...`);
       httpServer.close();
-      tryListen(PORT + 1);
+      if (!_killAttempted) {
+        _killAttempted = true;
+        console.log(`[Servidor] Puerto ${PORT} ocupado. Intentando liberar proceso con PowerShell...`);
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { exec } = require('child_process') as typeof import('child_process');
+        exec(
+          `powershell -NoProfile -NonInteractive -Command "$c=Get-NetTCPConnection -LocalPort ${PORT} -State Listen -ErrorAction SilentlyContinue;if($c){Stop-Process -Id ($c|Select-Object -First 1).OwningProcess -Force -ErrorAction SilentlyContinue;Write-Output 'killed'}else{Write-Output 'none'}"`,
+          { timeout: 5000 },
+          (_killErr, stdout) => {
+            const freed = typeof stdout === 'string' && stdout.trim() === 'killed';
+            if (freed) {
+              console.log(`[Servidor] Puerto ${PORT} liberado. Reintentando en 800ms...`);
+              setTimeout(() => tryListen(PORT), 800);
+            } else {
+              console.log(`[Servidor] Puerto ${PORT} no se pudo liberar. Usando ${PORT + 1}...`);
+              tryListen(PORT + 1);
+            }
+          }
+        );
+      } else {
+        // Segundo fallo en el mismo puerto original — caer al siguiente
+        console.log(`[Servidor] Segundo EADDRINUSE en puerto ${PORT}. Usando ${PORT + 1}.`);
+        tryListen(PORT + 1);
+      }
     } else {
       console.error('[Servidor] Error al iniciar:', err);
     }

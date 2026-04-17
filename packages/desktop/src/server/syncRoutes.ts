@@ -781,9 +781,22 @@ export function createSyncRouter(io: SocketIOServer, exportFiadosToExcel: Export
 
   router.post('/caja/cerrar', (req: Request, res: Response) => {
     const db = getDb();
-    const { sesion_id, monto_final = 0 } = req.body as { sesion_id: number; monto_final?: number };
+    const { sesion_id, monto_final = 0, efectivo = 0, tarjetas = 0, transferencias = 0 } = req.body as { sesion_id: number; monto_final?: number; efectivo?: number; tarjetas?: number; transferencias?: number };
     db.prepare(`UPDATE caja_sesiones SET fecha_cierre = datetime('now'), monto_final = ? WHERE id = ?`).run(monto_final, sesion_id);
     emit('caja:movimiento', { tipo: 'cierre', monto: monto_final });
+
+    // Sincronizar libro de caja con montos manuales
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      const tots = db.prepare(`SELECT COALESCE(SUM(CASE WHEN tipo='egreso' THEN monto ELSE 0 END),0) as egresos FROM caja_movimientos WHERE sesion_id = ?`).get(sesion_id) as { egresos: number };
+      let dia = db.prepare(`SELECT id FROM libro_caja_dias WHERE fecha = ?`).get(today) as { id: number } | undefined;
+      if (!dia) {
+        const r = db.prepare(`INSERT INTO libro_caja_dias (fecha, cambio) VALUES (?, 1500)`).run(today);
+        dia = { id: r.lastInsertRowid as number };
+      }
+      db.prepare(`UPDATE libro_caja_dias SET caja = ?, tarjetas = ?, transferencias = ?, egresos = ?, updated_at = datetime('now') WHERE id = ?`).run(efectivo, tarjetas, transferencias, tots.egresos, dia.id);
+    } catch (e) { console.error('[syncRoutes caja/cerrar]', e); }
+
     res.json({ success: true });
   });
 
@@ -1056,8 +1069,46 @@ export function createSyncRouter(io: SocketIOServer, exportFiadosToExcel: Export
 
   router.get('/librocaja/historico', (req, res) => {
     const db = getDb();
-    const limit = parseInt(String(req.query.limit || '60'));
-    res.json(db.prepare(`SELECT * FROM libro_caja_dias ORDER BY fecha DESC LIMIT ?`).all(limit));
+    const { periodo } = req.query as { periodo?: string };
+    if (periodo) {
+      const desde = `${periodo}-01`;
+      const hasta = `${periodo}-31`;
+      res.json(db.prepare(`SELECT * FROM libro_caja_dias WHERE fecha BETWEEN ? AND ? ORDER BY fecha DESC`).all(desde, hasta));
+      return;
+    }
+    // Sin periodo → mes actual
+    const now = new Date();
+    const mesActual = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const desde = `${mesActual}-01`;
+    const hasta = `${mesActual}-31`;
+    res.json(db.prepare(`SELECT * FROM libro_caja_dias WHERE fecha BETWEEN ? AND ? ORDER BY fecha DESC`).all(desde, hasta));
+  });
+
+  router.get('/librocaja/periodos', (req, res) => {
+    const db = getDb();
+    const rows = db.prepare(`SELECT DISTINCT substr(fecha, 1, 7) as periodo FROM libro_caja_dias ORDER BY periodo DESC`).all() as { periodo: string }[];
+    const periodos = rows.map(r => r.periodo);
+    const estados = db.prepare(`SELECT periodo, estado, fecha_cierre FROM libro_caja_periodos`).all() as { periodo: string; estado: string; fecha_cierre: string | null }[];
+    const estadoMap = new Map(estados.map(e => [e.periodo, e]));
+    res.json(periodos.map(p => ({
+      periodo: p,
+      estado: estadoMap.get(p)?.estado ?? 'abierto',
+      fecha_cierre: estadoMap.get(p)?.fecha_cierre ?? null,
+    })));
+  });
+
+  router.post('/librocaja/periodos/cerrar', (req: Request, res: Response) => {
+    const db = getDb();
+    const { periodo } = req.body as { periodo: string };
+    db.prepare(`INSERT INTO libro_caja_periodos (periodo, estado, fecha_cierre) VALUES (?, 'cerrado', datetime('now')) ON CONFLICT(periodo) DO UPDATE SET estado='cerrado', fecha_cierre=datetime('now')`).run(periodo);
+    res.json({ success: true });
+  });
+
+  router.post('/librocaja/periodos/reabrir', (req: Request, res: Response) => {
+    const db = getDb();
+    const { periodo } = req.body as { periodo: string };
+    db.prepare(`INSERT INTO libro_caja_periodos (periodo, estado) VALUES (?, 'abierto') ON CONFLICT(periodo) DO UPDATE SET estado='abierto', fecha_cierre=NULL`).run(periodo);
+    res.json({ success: true });
   });
 
   router.get('/librocaja/turno/activo', (req, res) => {
@@ -1163,6 +1214,32 @@ export function createSyncRouter(io: SocketIOServer, exportFiadosToExcel: Export
       db.prepare(`UPDATE libro_caja_dias SET transferencias = COALESCE(transferencias, 0) + ?, gastos_tarjeta = MAX(0, COALESCE(gastos_tarjeta, 0) - ?), updated_at = datetime('now') WHERE id = ?`).run(egreso.monto, egreso.monto, egreso.dia_id);
     }
     res.json({ success: true });
+  });
+
+  // ── BACKUP: descarga la DB completa del servidor ───────────────────────────
+  // Usado por PCs cliente para guardar una copia local de seguridad.
+  router.get('/backup/download', (_req, res) => {
+    try {
+      const { getDbPath } = require('../database/db');
+      const fs = require('fs') as typeof import('fs');
+      const dbPath: string = getDbPath();
+      if (!fs.existsSync(dbPath)) {
+        res.status(404).json({ error: 'Base de datos no encontrada en el servidor' });
+        return;
+      }
+      const now = new Date();
+      const ts = now.toISOString().replace(/T/, '_').replace(/:/g, '-').replace(/\..+/, '');
+      const fileName = `ariespos_backup_${ts}.db`;
+      res.setHeader('Content-Type', 'application/octet-stream');
+      res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+      res.setHeader('X-Backup-Filename', fileName);
+      const fileBuffer = fs.readFileSync(dbPath);
+      res.send(fileBuffer);
+      console.log(`[syncRoutes] Backup descargado por cliente: ${fileName} (${fileBuffer.length} bytes)`);
+    } catch (err) {
+      console.error('[syncRoutes] Error al servir backup:', err);
+      res.status(500).json({ error: (err as Error).message });
+    }
   });
 
   return router;

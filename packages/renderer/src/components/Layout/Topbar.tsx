@@ -1,11 +1,12 @@
-import React from 'react';
-import { Sparkles, Plus } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Sparkles, Minus, Square, Maximize2, X } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
 import { useTranslation } from 'react-i18next';
 
 export default function Topbar() {
-  const { currentModule, setCurrentModule, toggleIa, iaOpen } = useAppStore();
+  const { currentModule, toggleIa, iaOpen } = useAppStore();
   const { t } = useTranslation();
+  const [isMaximized, setIsMaximized] = useState(false);
 
   const MODULE_TITLES: Record<string, { title: string; sub?: string }> = {
     dashboard:     { title: t('page.dashboard.title'),     sub: t('page.dashboard.sub') },
@@ -24,70 +25,83 @@ export default function Topbar() {
 
   const info = MODULE_TITLES[currentModule] ?? { title: currentModule };
 
+  useEffect(() => {
+    window.electron.windowIsMaximized().then((v: boolean) => setIsMaximized(v));
+    const unsub = window.electron.onWindowMaximize?.(() => {
+      window.electron.windowIsMaximized().then((v: boolean) => setIsMaximized(v));
+    });
+    return () => { unsub?.(); };
+  }, []);
+
   return (
     <div
-      className="flex items-center justify-between shrink-0 px-5"
-      style={{
-        height: 52,
-        background: 'var(--bg2)',
-        borderBottom: '1px solid var(--border)',
-      }}
+      className="titlebar-drag shrink-0 flex items-center select-none"
+      style={{ height: 46, background: 'var(--bg2)', borderBottom: '1px solid var(--border)', paddingLeft: 14, paddingRight: 0 }}
     >
-      {/* Page title */}
-      <div>
-        <h1
-          className="font-bold leading-none"
-          style={{ fontFamily: "'Syne', sans-serif", fontSize: 15, color: 'var(--text)' }}
-        >
+      {/* Título del módulo */}
+      <div className="titlebar-no-drag flex-1 pointer-events-none">
+        <span className="font-semibold" style={{ fontFamily: "'Syne', sans-serif", fontSize: 14, color: 'var(--text)' }}>
           {info.title}
-        </h1>
-        {info.sub && (
-          <p style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>{info.sub}</p>
-        )}
+        </span>
+        {info.sub && <span style={{ fontSize: 10, color: 'var(--text3)', marginLeft: 8 }}>{info.sub}</span>}
       </div>
 
-      {/* Actions */}
-      <div className="flex items-center gap-2">
-        {/* ARIES IA toggle */}
+      {/* Acciones + controles */}
+      <div className="titlebar-no-drag flex items-center" style={{ gap: 4, paddingRight: 4 }}>
+        {/* ARIES IA */}
         <button
           onClick={toggleIa}
           className="btn btn-ghost btn-sm"
-          style={{
-            gap: 6,
-            color: iaOpen ? 'var(--accent)' : 'var(--text2)',
-            background: iaOpen ? 'rgba(79,142,247,0.1)' : undefined,
-            border: iaOpen ? '1px solid rgba(79,142,247,0.25)' : '1px solid transparent',
-          }}
+          style={{ gap: 5, height: 30, color: iaOpen ? 'var(--accent)' : 'var(--text2)', background: iaOpen ? 'rgba(79,142,247,0.1)' : undefined, border: iaOpen ? '1px solid rgba(79,142,247,0.25)' : '1px solid transparent' }}
         >
-          <Sparkles size={14} />
-          <span>ARIES IA</span>
-          {iaOpen && (
-            <span
-              className="animate-pulse-dot rounded-full"
-              style={{ width: 5, height: 5, background: 'var(--accent3)', display: 'inline-block' }}
-            />
-          )}
+          <Sparkles size={13} />
+          <span style={{ fontSize: 12 }}>ARIES IA</span>
+          {iaOpen && <span className="animate-pulse-dot rounded-full" style={{ width: 5, height: 5, background: 'var(--accent3)', display: 'inline-block' }} />}
         </button>
 
-        {/* Nueva Venta */}
-        <button
-          onClick={() => setCurrentModule('pos')}
-          className="btn btn-primary btn-sm"
-        >
-          <Plus size={14} />
-          {t('action.newSale')}
-          <kbd style={{ marginLeft: 2 }}>F3</kbd>
-        </button>
-
-        {/* Configuración de Red */}
+        {/* Red */}
         <button
           onClick={() => window.electron.openNetworkWindow()}
           className="btn btn-ghost btn-sm"
-          style={{ color: 'var(--accent2)' }}
+          style={{ height: 30, color: 'var(--accent2)', fontSize: 12, fontWeight: 700 }}
         >
-          <span style={{ fontWeight: 700 }}>Red</span>
+          Red
         </button>
+
+        {/* Controles de ventana */}
+        <div style={{ display: 'flex', marginLeft: 6 }}>
+          <WinBtn onClick={() => window.electron.windowMinimize()} title="Minimizar" hoverBg="var(--bg3)">
+            <Minus size={14} />
+          </WinBtn>
+          <WinBtn onClick={() => window.electron.windowMaximize()} title={isMaximized ? 'Restaurar' : 'Maximizar'} hoverBg="var(--bg3)">
+            {isMaximized ? <Square size={12} /> : <Maximize2 size={13} />}
+          </WinBtn>
+          <WinBtn onClick={() => window.electron.windowClose()} title="Cerrar" hoverBg="#c42b1c" hoverColor="#fff">
+            <X size={14} />
+          </WinBtn>
+        </div>
       </div>
     </div>
+  );
+}
+
+function WinBtn({ children, onClick, title, hoverBg, hoverColor }: {
+  children: React.ReactNode;
+  onClick: () => void;
+  title: string;
+  hoverBg: string;
+  hoverColor?: string;
+}) {
+  const [hovered, setHovered] = useState(false);
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{ width: 46, height: 46, border: 'none', background: hovered ? hoverBg : 'transparent', color: hovered && hoverColor ? hoverColor : 'var(--text3)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background 0.12s, color 0.12s' }}
+    >
+      {children}
+    </button>
   );
 }

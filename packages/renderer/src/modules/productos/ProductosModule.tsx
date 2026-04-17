@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Plus, Search, Grid, List, Upload, Download, Edit, Trash2,
-  Package, Tag, BarChart2, RefreshCw, Image, X, Check, AlertCircle, FileText, Globe, Loader2, Database, Eraser, CheckSquare, Square
+  Package, Tag, BarChart2, RefreshCw, Image, X, Check, AlertCircle, FileText, Globe, Loader2, Database, Eraser, CheckSquare, Square, PercentSquare
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { productosAPI, categoriasAPI, appAPI } from '../../lib/api';
@@ -12,6 +12,7 @@ import { ImportNextarModal } from '../../components/modals/ImportNextarModal';
 import { BusquedaWebModal } from '../../components/modals/BusquedaWebModal';
 import { formatCurrency, downloadCSV } from '../../lib/utils';
 import { CleanupPanel } from './CleanupPanel';
+import { BulkPriceUpdate } from './BulkPriceUpdate';
 
 interface Producto {
   id: number;
@@ -86,6 +87,7 @@ export const ProductosModule: React.FC = () => {
   const [showBusquedaWeb, setShowBusquedaWeb] = useState(false);
   const [confirmDeleteAll, setConfirmDeleteAll] = useState(false);
   const [showCleanupPanel, setShowCleanupPanel] = useState(false);
+  const [showBulkPrice, setShowBulkPrice] = useState(false);
   const [loadingSeed, setLoadingSeed] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [confirmDeleteSelected, setConfirmDeleteSelected] = useState(false);
@@ -632,6 +634,15 @@ export const ProductosModule: React.FC = () => {
   }
 
   // ── Vista lista/grid ──────────────────────────────────────────────
+  if (showBulkPrice) {
+    return (
+      <BulkPriceUpdate
+        onBack={() => setShowBulkPrice(false)}
+        onDone={() => { setShowBulkPrice(false); loadData(0); }}
+      />
+    );
+  }
+
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
@@ -663,6 +674,12 @@ export const ProductosModule: React.FC = () => {
             onClick={() => setConfirmDeleteAll(true)}
             title="Eliminar TODOS los productos">
             <Eraser size={14} /> Borrar Todo
+          </button>
+          <button
+            className="btn btn-sm bg-indigo-700 hover:bg-indigo-600 text-white border border-indigo-500"
+            onClick={() => setShowBulkPrice(true)}
+            title="Actualizar precios de múltiples productos a la vez">
+            <PercentSquare size={14} /> Actualizar precios
           </button>
           <button className="btn-secondary btn btn-sm" onClick={() => setShowImportNextar(true)} title="Importar productos desde archivo CSV de Nextar">
             <FileText size={14} /> {t('prod.nextar')}

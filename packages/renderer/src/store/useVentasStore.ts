@@ -1,15 +1,20 @@
 import { create } from 'zustand';
 
+// Generador de ID único por ítem del carrito
+const genItemId = () =>
+  `item_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+
 export interface CartItem {
-  producto_id: number;
-  nombre: string;
-  cantidad: number;
+  itemId:         string;   // ID único del ítem (permite duplicados del mismo producto)
+  producto_id:    number;
+  nombre:         string;
+  cantidad:       number;
   precio_unitario: number;
   precio_original: number;
-  descuento: number;
-  total: number;
-  fraccionable: boolean;
-  unidad_medida: string;
+  descuento:      number;
+  total:          number;
+  fraccionable:   boolean;
+  unidad_medida:  string;
 }
 
 // MetodoPago acepta los built-ins y cualquier método personalizado configurado
@@ -39,9 +44,10 @@ interface VentasState {
   total: number;
 
   // Actions
-  addItem: (item: Omit<CartItem, 'total'>) => void;
-  updateItem: (productoId: number, updates: Partial<CartItem>) => void;
-  removeItem: (productoId: number) => void;
+  addItem: (item: Omit<CartItem, 'total' | 'itemId'>, modo?: 'sumar' | 'nuevo') => void;
+  updateItem: (itemId: string, updates: Partial<CartItem>) => void;
+  removeItem: (itemId: string) => void;
+  getItemsDelProducto: (productoId: number) => CartItem[];
   clearCart: () => void;
   setDescuentoGlobal: (descuento: number) => void;
   setCliente: (id: number | null, nombre: string) => void;
@@ -82,33 +88,35 @@ const defaultState = {
 export const useVentasStore = create<VentasState>((set, get) => ({
   ...defaultState,
 
-  addItem: (item) => {
+  addItem: (item, modo = 'sumar') => {
     const { cart, descuentoGlobal } = get();
     const existing = cart.find((c) => c.producto_id === item.producto_id);
 
     let newCart: CartItem[];
-    if (existing) {
+    if (modo === 'sumar' && existing) {
+      // Sumar cantidad al ítem existente
       newCart = cart.map((c) =>
-        c.producto_id === item.producto_id
-          ? {
+        c.itemId !== existing.itemId
+          ? c
+          : {
               ...c,
-              cantidad: c.cantidad + item.cantidad,
+              cantidad: Math.round((c.cantidad + item.cantidad) * 1000) / 1000,
               total: c.precio_unitario * (c.cantidad + item.cantidad) - c.descuento,
             }
-          : c
       );
     } else {
+      // Siempre crear fila nueva (modo 'nuevo' o no existe)
       const total = item.precio_unitario * item.cantidad - item.descuento;
-      newCart = [...cart, { ...item, total }];
+      newCart = [...cart, { ...item, itemId: genItemId(), total }];
     }
 
     set({ cart: newCart, ...computeTotals(newCart, descuentoGlobal) });
   },
 
-  updateItem: (productoId, updates) => {
+  updateItem: (itemId, updates) => {
     const { cart, descuentoGlobal } = get();
     const newCart = cart.map((c) => {
-      if (c.producto_id !== productoId) return c;
+      if (c.itemId !== itemId) return c;
       const updated = { ...c, ...updates };
       updated.total = updated.precio_unitario * updated.cantidad - updated.descuento;
       return updated;
@@ -116,10 +124,14 @@ export const useVentasStore = create<VentasState>((set, get) => ({
     set({ cart: newCart, ...computeTotals(newCart, descuentoGlobal) });
   },
 
-  removeItem: (productoId) => {
+  removeItem: (itemId) => {
     const { cart, descuentoGlobal } = get();
-    const newCart = cart.filter((c) => c.producto_id !== productoId);
+    const newCart = cart.filter((c) => c.itemId !== itemId);
     set({ cart: newCart, ...computeTotals(newCart, descuentoGlobal) });
+  },
+
+  getItemsDelProducto: (productoId) => {
+    return get().cart.filter((c) => c.producto_id === productoId);
   },
 
   clearCart: () => {

@@ -3,25 +3,30 @@ import { formatCurrency } from '../../lib/utils';
 import { useTranslation } from 'react-i18next';
 import { useVentasStore, MetodoPago } from '../../store/useVentasStore';
 import { useAppStore } from '../../store/useAppStore';
-import { Banknote, CreditCard, Smartphone, Bitcoin, FileText, Wallet, X, CheckCircle, AlertTriangle, ChevronLeft, Plus, Trash2, type LucideIcon } from 'lucide-react';
+import { Banknote, CreditCard, Smartphone, Bitcoin, FileText, Wallet, X, CheckCircle, AlertTriangle, ChevronLeft, Plus, Trash2, QrCode, type LucideIcon } from 'lucide-react';
 
 interface MetodoPagoConfig { id: string; nombre: string; activo: boolean; }
 
 const METODOS_BASE: Record<string, { Icon: LucideIcon; color: string; colorBg: string; colorBorder: string }> = {
-  efectivo:      { Icon: Banknote,   color: 'var(--accent3)', colorBg: 'rgba(16,185,129,0.12)',  colorBorder: 'rgba(16,185,129,0.35)'  },
-  tarjeta:       { Icon: CreditCard, color: '#60a5fa',        colorBg: 'rgba(96,165,250,0.12)',  colorBorder: 'rgba(96,165,250,0.35)'  },
-  transferencia: { Icon: Smartphone, color: '#a78bfa',        colorBg: 'rgba(167,139,250,0.12)', colorBorder: 'rgba(167,139,250,0.35)' },
-  cripto:        { Icon: Bitcoin,    color: '#fbbf24',        colorBg: 'rgba(251,191,36,0.12)',  colorBorder: 'rgba(251,191,36,0.35)'  },
-  fiado:         { Icon: FileText,   color: 'var(--warn)',    colorBg: 'rgba(245,158,11,0.12)',  colorBorder: 'rgba(245,158,11,0.35)'  },
+  efectivo:        { Icon: Banknote,   color: 'var(--accent3)', colorBg: 'rgba(16,185,129,0.12)',  colorBorder: 'rgba(16,185,129,0.35)'  },
+  tarjeta:         { Icon: CreditCard, color: '#60a5fa',        colorBg: 'rgba(96,165,250,0.12)',  colorBorder: 'rgba(96,165,250,0.35)'  },
+  tarjeta_credito: { Icon: CreditCard, color: '#60a5fa',        colorBg: 'rgba(96,165,250,0.12)',  colorBorder: 'rgba(96,165,250,0.35)'  },
+  tarjeta_debito:  { Icon: CreditCard, color: '#34d399',        colorBg: 'rgba(52,211,153,0.12)',  colorBorder: 'rgba(52,211,153,0.35)'  },
+  transferencia:   { Icon: Smartphone, color: '#a78bfa',        colorBg: 'rgba(167,139,250,0.12)', colorBorder: 'rgba(167,139,250,0.35)' },
+  qr:              { Icon: QrCode,     color: '#f472b6',        colorBg: 'rgba(244,114,182,0.12)', colorBorder: 'rgba(244,114,182,0.35)' },
+  cripto:          { Icon: Bitcoin,    color: '#fbbf24',        colorBg: 'rgba(251,191,36,0.12)',  colorBorder: 'rgba(251,191,36,0.35)'  },
+  fiado:           { Icon: FileText,   color: 'var(--warn)',    colorBg: 'rgba(245,158,11,0.12)',  colorBorder: 'rgba(245,158,11,0.35)'  },
 };
 const DEFAULT_ESTILO = { Icon: Wallet, color: '#94a3b8', colorBg: 'rgba(148,163,184,0.12)', colorBorder: 'rgba(148,163,184,0.35)' };
 
 const METODOS_DEFAULT: MetodoPagoConfig[] = [
-  { id: 'efectivo',      nombre: 'Efectivo',      activo: true },
-  { id: 'tarjeta',       nombre: 'Tarjeta',       activo: true },
-  { id: 'transferencia', nombre: 'Transferencia', activo: true },
-  { id: 'cripto',        nombre: 'Cripto',        activo: true },
-  { id: 'fiado',         nombre: 'Fiado',         activo: true },
+  { id: 'efectivo',        nombre: 'Efectivo',         activo: true },
+  { id: 'tarjeta_credito', nombre: 'Tarjeta Crédito',  activo: true },
+  { id: 'tarjeta_debito',  nombre: 'Tarjeta Débito',   activo: true },
+  { id: 'transferencia',   nombre: 'Transferencia',    activo: true },
+  { id: 'qr',              nombre: 'QR / MercadoPago', activo: true },
+  { id: 'cripto',          nombre: 'Cripto',           activo: true },
+  { id: 'fiado',           nombre: 'Fiado',            activo: true },
 ];
 
 interface PaymentModalProps {

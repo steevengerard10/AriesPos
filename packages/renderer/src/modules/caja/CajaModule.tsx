@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Vault, Play, StopCircle, Plus, Minus, RefreshCw, FileText, Check, DollarSign,
-  TrendingUp, CreditCard, Smartphone, Bitcoin
+  TrendingUp, CreditCard, Smartphone, Bitcoin, QrCode
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { cajaAPI } from '../../lib/api';
@@ -9,6 +9,7 @@ import { Modal } from '../../components/shared/Modal';
 import { formatCurrency, formatDate } from '../../lib/utils';
 import { useTranslation } from 'react-i18next';
 import { useLibroCajaStore } from '../../store/useLibroCajaStore';
+import { useAppStore } from '../../store/useAppStore';
 
 interface CajaSesion {
   id: number;
@@ -34,11 +35,36 @@ interface CajaMovimiento {
 }
 
 const METODO_ICONS: Record<string, React.ReactNode> = {
-  efectivo: <DollarSign size={14} />,
-  tarjeta: <CreditCard size={14} />,
-  transferencia: <Smartphone size={14} />,
-  cripto: <Bitcoin size={14} />,
+  efectivo:        <DollarSign size={14} />,
+  tarjeta:         <CreditCard size={14} />,
+  tarjeta_credito: <CreditCard size={14} />,
+  tarjeta_debito:  <CreditCard size={14} />,
+  transferencia:   <Smartphone size={14} />,
+  qr:              <QrCode size={14} />,
+  cripto:          <Bitcoin size={14} />,
 };
+
+const METODO_LABELS: Record<string, string> = {
+  efectivo:        'Efectivo',
+  tarjeta:         'Tarjeta',
+  tarjeta_credito: 'Tarjeta Crédito',
+  tarjeta_debito:  'Tarjeta Débito',
+  transferencia:   'Transferencia',
+  qr:              'QR / MercadoPago',
+  cripto:          'Cripto',
+  fiado:           'Fiado',
+};
+
+interface MetodoPagoConfig { id: string; nombre: string; activo: boolean; }
+
+const METODOS_DEFAULT_CAJA: MetodoPagoConfig[] = [
+  { id: 'efectivo',        nombre: 'Efectivo',         activo: true },
+  { id: 'tarjeta_credito', nombre: 'Tarjeta Crédito',  activo: true },
+  { id: 'tarjeta_debito',  nombre: 'Tarjeta Débito',   activo: true },
+  { id: 'transferencia',   nombre: 'Transferencia',    activo: true },
+  { id: 'qr',              nombre: 'QR / MercadoPago', activo: true },
+  { id: 'cripto',          nombre: 'Cripto',           activo: false },
+];
 
 export const CajaModule: React.FC = () => {
   const [sesionActiva, setSesionActiva] = useState<CajaSesion | null>(null);
@@ -48,6 +74,7 @@ export const CajaModule: React.FC = () => {
   const [tab, setTab] = useState<'actual' | 'historico'>('actual');
   const { t } = useTranslation();
   const { cargarDia, cargarHistorico: cargarHistoricoLibro } = useLibroCajaStore();
+  const { config } = useAppStore();
 
   const [showAbrirModal, setShowAbrirModal] = useState(false);
   const [showCerrarModal, setShowCerrarModal] = useState(false);
@@ -56,6 +83,9 @@ export const CajaModule: React.FC = () => {
 
   const [saldoInicial, setSaldoInicial] = useState('');
   const [saldoFinal, setSaldoFinal] = useState('');
+  const [cerrarEfectivo, setCerrarEfectivo] = useState('');
+  const [cerrarTarjeta, setCerrarTarjeta] = useState('');
+  const [cerrarTransferencia, setCerrarTransferencia] = useState('');
   const [movConcepto, setMovConcepto] = useState('');
   const [movMonto, setMovMonto] = useState('');
   const [movMetodo, setMovMetodo] = useState('efectivo');
@@ -83,6 +113,15 @@ export const CajaModule: React.FC = () => {
 
   useEffect(() => { loadData(); }, []);
 
+  // Refrescar movimientos al volver al tab "actual" (puede haber ventas nuevas)
+  useEffect(() => {
+    if (tab === 'actual' && sesionActiva) {
+      cajaAPI.getMovimientos(sesionActiva.id).then((movs) => {
+        setMovimientos(movs as CajaMovimiento[]);
+      }).catch(() => {/* silencioso */});
+    }
+  }, [tab]);
+
   const handleAbrir = async () => {
     const saldo = parseFloat(saldoInicial) || 0;
     await cajaAPI.abrir({ saldo_inicial: saldo });
@@ -95,10 +134,19 @@ export const CajaModule: React.FC = () => {
   const handleCerrar = async () => {
     if (!sesionActiva) return;
     const saldo = parseFloat(saldoFinal) || 0;
-    await cajaAPI.cerrar(sesionActiva.id, { saldo_final: saldo });
+    const efectivo = parseFloat(cerrarEfectivo) || 0;
+    const tarjetas = parseFloat(cerrarTarjeta) || 0;
+    const transferencias = parseFloat(cerrarTransferencia) || 0;
+    await cajaAPI.cerrar(sesionActiva.id, { saldo_final: saldo, efectivo, tarjetas, transferencias });
     toast.success(t('caja.closedSuccess'));
     setShowCerrarModal(false);
     setSaldoFinal('');
+    setCerrarEfectivo('');
+    setCerrarTarjeta('');
+    setCerrarTransferencia('');
+    // Limpiar estado inmediatamente para evitar mostrar datos de la sesión cerrada
+    setSesionActiva(null);
+    setMovimientos([]);
     loadData();
     // Actualizar libro de caja del día
     const hoy = new Date().toISOString().split('T')[0];
@@ -124,13 +172,24 @@ export const CajaModule: React.FC = () => {
     loadData();
   };
 
-  // Calcula totales por método de pago (solo movimientos de ventas)
-  const totalesPorMetodo = movimientos.reduce<Record<string, number>>((acc, m) => {
-    if (m.tipo === 'ingreso' && m.venta_numero) {
+  // Métodos de pago activos (desde config o defaults)
+  const metodosActivos = useMemo<MetodoPagoConfig[]>(() => {
+    try {
+      if (config.metodos_pago) {
+        const saved = JSON.parse(config.metodos_pago) as MetodoPagoConfig[];
+        return saved.filter((m) => m.id !== 'fiado' && m.activo);
+      }
+    } catch { /* usa defaults */ }
+    return METODOS_DEFAULT_CAJA.filter((m) => m.activo);
+  }, [config.metodos_pago]);
+
+  // Calcula totales por método de pago (todos los ingresos, ventas y manuales)
+  const totalesPorMetodo = useMemo(() => movimientos.reduce<Record<string, number>>((acc, m) => {
+    if (m.tipo === 'ingreso') {
       acc[m.metodo_pago] = (acc[m.metodo_pago] || 0) + m.monto;
     }
     return acc;
-  }, {});
+  }, {}), [movimientos]);
 
   const saldoEfectivoEstimado = (sesionActiva?.saldo_inicial || 0) +
     movimientos.filter((m) => m.metodo_pago === 'efectivo' && m.tipo === 'ingreso').reduce((s, m) => s + m.monto, 0) -
@@ -203,7 +262,7 @@ export const CajaModule: React.FC = () => {
                 </div>
                 <div className="stat-card">
                   <div className="stat-label">{t('caja.totalSales')}</div>
-                  <div className="stat-value text-green-400">{formatCurrency(sesionActiva.total_ventas)}</div>
+                  <div className="stat-value text-green-400">{formatCurrency(movimientos.filter((m) => m.tipo === 'ingreso' && m.venta_numero).reduce((s, m) => s + m.monto, 0))}</div>
                 </div>
                 <div className="stat-card">
                   <div className="stat-label">{t('caja.extraIncome')}</div>
@@ -224,23 +283,46 @@ export const CajaModule: React.FC = () => {
                 <DollarSign size={48} className="text-green-700" />
               </div>
 
-              {/* Ventas por método */}
-              {Object.keys(totalesPorMetodo).length > 0 && (
-                <div>
-                  <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-3">{t('caja.byMethod')}</h3>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                    {Object.entries(totalesPorMetodo).map(([metodo, total]) => (
-                      <div key={metodo} className="bg-slate-800 border border-slate-700 rounded-lg p-3 flex items-center gap-3">
-                        <div className="text-slate-400">{METODO_ICONS[metodo] || <DollarSign size={14} />}</div>
+              {/* Desglose por método de pago — siempre visible */}
+              <div>
+                <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-3">{t('caja.byMethod')}</h3>
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+                  {metodosActivos.map(({ id, nombre }) => {
+                    const total = totalesPorMetodo[id] || 0;
+                    const hayMovimiento = total > 0;
+                    return (
+                      <div key={id} className={`border rounded-lg p-3 flex items-center gap-3 transition-colors ${
+                        hayMovimiento
+                          ? 'bg-slate-800 border-slate-600'
+                          : 'bg-slate-900/60 border-slate-800'
+                      }`}>
+                        <div className={hayMovimiento ? 'text-blue-400' : 'text-slate-600'}>
+                          {METODO_ICONS[id] || <DollarSign size={14} />}
+                        </div>
                         <div>
-                          <div className="text-xs text-slate-500 capitalize">{metodo}</div>
+                          <div className="text-xs text-slate-500">{nombre}</div>
+                          <div className={`font-mono font-bold ${
+                            hayMovimiento ? 'text-white' : 'text-slate-600'
+                          }`}>{formatCurrency(total)}</div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {/* Métodos que tienen movimientos pero no están en la config activa */}
+                  {Object.entries(totalesPorMetodo)
+                    .filter(([id]) => id !== 'fiado' && !metodosActivos.find((m) => m.id === id))
+                    .map(([id, total]) => (
+                      <div key={id} className="bg-slate-800 border border-slate-600 rounded-lg p-3 flex items-center gap-3">
+                        <div className="text-blue-400">{METODO_ICONS[id] || <DollarSign size={14} />}</div>
+                        <div>
+                          <div className="text-xs text-slate-500">{METODO_LABELS[id] ?? id}</div>
                           <div className="font-mono font-bold text-white">{formatCurrency(total)}</div>
                         </div>
                       </div>
-                    ))}
-                  </div>
+                    ))
+                  }
                 </div>
-              )}
+              </div>
 
               {/* Tabla de movimientos */}
               <div>
@@ -336,21 +418,54 @@ export const CajaModule: React.FC = () => {
         footer={<><button className="btn-secondary btn" onClick={() => setShowCerrarModal(false)}>{t('common.cancel')}</button><button className="btn-danger btn" onClick={handleCerrar}><StopCircle size={16} /> {t('caja.closeAction')}</button></>}
       >
         <div className="space-y-4">
+          {/* Resumen de la sesión */}
           {sesionActiva && (
             <div className="bg-slate-700/50 rounded-lg p-4 text-sm space-y-2">
               <div className="flex justify-between">
                 <span className="text-slate-400">{t('caja.totalSalesLabel')}</span>
-                <span className="font-mono text-green-400 font-bold">{formatCurrency(sesionActiva.total_ventas)}</span>
+                <span className="font-mono text-green-400 font-bold">{formatCurrency(movimientos.filter((m) => m.tipo === 'ingreso' && m.venta_numero).reduce((s, m) => s + m.monto, 0))}</span>
               </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400">{t('caja.cashEstimateLabel')}</span>
+              {metodosActivos.map(({ id, nombre }) => {
+                const total = totalesPorMetodo[id] || 0;
+                if (!total) return null;
+                return (
+                  <div key={id} className="flex justify-between">
+                    <span className="text-slate-400">{nombre}</span>
+                    <span className="font-mono text-slate-300">{formatCurrency(total)}</span>
+                  </div>
+                );
+              })}
+              <div className="flex justify-between border-t border-slate-600 pt-2 mt-1">
+                <span className="text-slate-400">Efectivo estimado en caja</span>
                 <span className="font-mono text-white font-bold">{formatCurrency(saldoEfectivoEstimado)}</span>
               </div>
             </div>
           )}
+          {/* Montos recaudados para el libro de caja */}
+          <p className="text-xs text-slate-400">Ingresá los montos realmente recaudados para registrar en el libro de caja:</p>
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label className="label text-xs">Efectivo</label>
+              <input className="input font-mono text-right" type="number" step="0.01" min="0"
+                value={cerrarEfectivo} onChange={(e) => setCerrarEfectivo(e.target.value)}
+                placeholder="0.00" autoFocus />
+            </div>
+            <div>
+              <label className="label text-xs">Tarjeta</label>
+              <input className="input font-mono text-right" type="number" step="0.01" min="0"
+                value={cerrarTarjeta} onChange={(e) => setCerrarTarjeta(e.target.value)}
+                placeholder="0.00" />
+            </div>
+            <div>
+              <label className="label text-xs">Transferencia</label>
+              <input className="input font-mono text-right" type="number" step="0.01" min="0"
+                value={cerrarTransferencia} onChange={(e) => setCerrarTransferencia(e.target.value)}
+                placeholder="0.00" />
+            </div>
+          </div>
           <div>
             <label className="label">{t('caja.physicalBalance')}</label>
-            <input className="input font-mono text-right text-xl" type="number" step="0.01" min="0" value={saldoFinal} onChange={(e) => setSaldoFinal(e.target.value)} placeholder="0.00" autoFocus />
+            <input className="input font-mono text-right text-xl" type="number" step="0.01" min="0" value={saldoFinal} onChange={(e) => setSaldoFinal(e.target.value)} placeholder="0.00" />
           </div>
           {saldoFinal && (
             <div className={`text-sm ${Math.abs(parseFloat(saldoFinal) - saldoEfectivoEstimado) > 1 ? 'text-yellow-400' : 'text-green-400'}`}>

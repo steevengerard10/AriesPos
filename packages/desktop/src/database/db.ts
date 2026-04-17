@@ -692,6 +692,23 @@ function runMigrations(db: Database.Database): void {
         console.log('[DB] Migración 012: EAN + cigarrillos + snacks + energizantes OK');
       },
     },
+    {
+      name: '013_libro_caja_periodos',
+      run: (db: Database.Database) => {
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS libro_caja_periodos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            periodo TEXT NOT NULL UNIQUE,
+            estado TEXT NOT NULL DEFAULT 'abierto',
+            fecha_cierre TEXT,
+            notas TEXT DEFAULT '',
+            created_at TEXT DEFAULT (datetime('now'))
+          );
+          CREATE INDEX IF NOT EXISTS idx_lcp_periodo ON libro_caja_periodos(periodo);
+        `);
+        console.log('[DB] Migración 013: libro_caja_periodos OK');
+      },
+    },
   ];
 
   const executedMigrations: { name: string }[] = db
