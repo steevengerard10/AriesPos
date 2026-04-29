@@ -7,7 +7,7 @@ import {
 import toast from 'react-hot-toast';
 import { useLibroCajaStore } from '../../store/useLibroCajaStore';
 import { LibroCajaDia } from '../../lib/api';
-import { appAPI } from '../../lib/api';
+import { appAPI, cajaAPI } from '../../lib/api';
 import { useAppStore } from '../../store/useAppStore';
 
 // ── Utilidades ──────────────────────────────────────────────────────────────
@@ -22,6 +22,135 @@ const fmtFecha = (fecha: string) => {
 function hoyISO() {
   return new Date().toISOString().split('T')[0];
 }
+
+// ── Libro de Caja (Día actual) — basado en caja_movimientos ──────────────────
+type CajaMovimiento = {
+  id: number;
+  tipo: 'ingreso' | 'egreso';
+  monto: number;
+  descripcion: string;
+  metodo_pago: string;
+  venta_id?: number | null;
+  venta_numero?: string | null;
+  fecha: string;
+};
+
+const LibroCajaHoy: React.FC = () => {
+  const [loading, setLoading] = useState(true);
+  const [sesion, setSesion] = useState<{ id: number } | null>(null);
+  const [movs, setMovs] = useState<CajaMovimiento[]>([]);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      // 1) Preferir sesión activa
+      let s = await cajaAPI.getSesionActiva() as { id: number } | null;
+      // 2) Si no hay sesión activa, tomar la última sesión del día (si existe)
+      if (!s) {
+        const hist = await cajaAPI.getHistorico() as Array<{ id: number; fecha_apertura?: string }>;
+        const hoy = hoyISO();
+        s = (hist || []).find((x) => String(x.fecha_apertura || '').slice(0, 10) === hoy) || null;
+      }
+      setSesion(s);
+      if (!s?.id) { setMovs([]); return; }
+      const rows = await cajaAPI.getMovimientos(s.id) as CajaMovimiento[];
+      setMovs(Array.isArray(rows) ? rows : []);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { void load(); }, []);
+
+  const ingresos = movs.filter(m => m.tipo === 'ingreso').reduce((s, m) => s + (m.monto || 0), 0);
+  const egresos  = movs.filter(m => m.tipo === 'egreso').reduce((s, m) => s + (m.monto || 0), 0);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 10 }}>
+        <div style={{ fontWeight: 800, color: 'var(--text)', fontFamily: "'Syne', sans-serif" }}>
+          Libro del día (apertura → cierre)
+        </div>
+        <div style={{ flex: 1 }} />
+        <button
+          onClick={load}
+          className="btn btn-secondary btn-sm"
+        >
+          Actualizar
+        </button>
+      </div>
+
+      {!sesion?.id && !loading && (
+        <div style={{ padding: 18, color: 'var(--text3)', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 10 }}>
+          No hay caja abierta ni sesiones registradas para hoy.
+        </div>
+      )}
+
+      {loading ? (
+        <div style={{ padding: 18, color: 'var(--text3)' }}>Cargando…</div>
+      ) : (
+        <>
+          {sesion?.id && (
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              <div style={{ padding: '10px 14px', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 10 }}>
+                <div style={{ fontSize: 11, color: 'var(--text3)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Ingresos</div>
+                <div style={{ fontSize: 18, fontWeight: 800, color: '#22c55e', fontFamily: "'Syne', sans-serif" }}>$ {fmt(ingresos)}</div>
+              </div>
+              <div style={{ padding: '10px 14px', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 10 }}>
+                <div style={{ fontSize: 11, color: 'var(--text3)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Egresos</div>
+                <div style={{ fontSize: 18, fontWeight: 800, color: '#ef4444', fontFamily: "'Syne', sans-serif" }}>$ {fmt(egresos)}</div>
+              </div>
+              <div style={{ padding: '10px 14px', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 10 }}>
+                <div style={{ fontSize: 11, color: 'var(--text3)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Neto</div>
+                <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--text)', fontFamily: "'Syne', sans-serif" }}>$ {fmt(ingresos - egresos)}</div>
+              </div>
+            </div>
+          )}
+
+          <div style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden', background: 'var(--bg2)' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ background: 'var(--bg3)' }}>
+                  <th style={{ padding: '10px 12px', textAlign: 'left', fontSize: 11, fontWeight: 800, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Concepto</th>
+                  <th style={{ padding: '10px 12px', textAlign: 'right', fontSize: 11, fontWeight: 800, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Monto</th>
+                  <th style={{ padding: '10px 12px', textAlign: 'center', fontSize: 11, fontWeight: 800, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Tipo</th>
+                </tr>
+              </thead>
+              <tbody>
+                {movs.length === 0 ? (
+                  <tr>
+                    <td colSpan={3} style={{ padding: 16, textAlign: 'center', color: 'var(--text3)' }}>Sin movimientos</td>
+                  </tr>
+                ) : (
+                  movs.map((m) => (
+                    <tr key={m.id} style={{ borderTop: '1px solid var(--border)' }}>
+                      <td style={{ padding: '10px 12px', color: 'var(--text2)' }}>
+                        {m.descripcion || (m.venta_numero ? `Venta #${m.venta_numero}` : '—')}
+                      </td>
+                      <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 800, color: m.tipo === 'ingreso' ? '#22c55e' : '#ef4444', fontFamily: "'Syne', sans-serif" }}>
+                        $ {fmt(m.monto || 0)}
+                      </td>
+                      <td style={{ padding: '10px 12px', textAlign: 'center' }}>
+                        <span style={{
+                          fontSize: 11, fontWeight: 800, padding: '2px 10px', borderRadius: 999,
+                          background: m.tipo === 'ingreso' ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)',
+                          color: m.tipo === 'ingreso' ? '#22c55e' : '#ef4444',
+                          textTransform: 'uppercase',
+                        }}>
+                          {m.tipo}
+                        </span>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </div>
+  );
+};
 
 /** Efectivo: caja cobrada menos egresos en efectivo */
 function calcTotalCaja(d: LibroCajaDia | null) {
@@ -1083,10 +1212,10 @@ const ResumenItem: React.FC<{ label: string; value: number; color: string; large
 );
 
 // ── Módulo principal ─────────────────────────────────────────────────────────
-type TabType = 'tabla' | 'dia' | 'billetes';
+type TabType = 'hoy' | 'tabla' | 'dia' | 'billetes';
 
 export const LibroCajaModule: React.FC = () => {
-  const [tab, setTab] = useState<TabType>('tabla');
+  const [tab, setTab] = useState<TabType>('hoy');
   const { cargarDia, cargarHistorico, fechaSeleccionada } = useLibroCajaStore();
 
   useEffect(() => {
@@ -1095,6 +1224,7 @@ export const LibroCajaModule: React.FC = () => {
   }, []);
 
   const TABS: { id: TabType; label: string; icon: React.ElementType }[] = [
+    { id: 'hoy',     label: 'Libro del día',   icon: Table2 },
     { id: 'tabla',   label: 'Libro de Caja',    icon: Table2 },
     { id: 'dia',     label: 'Día / Turnos',     icon: Calendar },
     { id: 'billetes',label: 'Contador Billetes', icon: Banknote },
@@ -1146,6 +1276,7 @@ export const LibroCajaModule: React.FC = () => {
 
       {/* Contenido */}
       <div style={{ flex: 1, overflow: 'auto', padding: 20 }}>
+        {tab === 'hoy'      && <LibroCajaHoy />}
         {tab === 'tabla'    && <TablaHistorico />}
         {tab === 'dia'      && <PanelDia />}
         {tab === 'billetes' && <ContadorBilletes />}

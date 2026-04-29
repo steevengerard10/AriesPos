@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { FileText, Plus, Search, RefreshCw, Check, X, AlertCircle, Edit, Trash2, Zap, Shield } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -32,6 +32,7 @@ export const CuentasPagarModule: React.FC = () => {
   const { currentUser } = useAppStore();
   const isAdmin = currentUser?.rol === 'admin';
   const { egresos, addEgreso, removeEgreso, cargarDia, fechaSeleccionada } = useLibroCajaStore();
+  const egresosListRef = useRef<HTMLDivElement>(null);
 
   const [cuentas, setCuentas] = useState<CuentaPagar[]>([]);
   const [loading, setLoading] = useState(true);
@@ -149,6 +150,13 @@ export const CuentasPagarModule: React.FC = () => {
     if (!fecha) return false;
     return new Date(fecha) < new Date();
   };
+
+  // Scroll automático al final si la lista es larga
+  useEffect(() => {
+    if (egresosListRef.current) {
+      egresosListRef.current.scrollTop = egresosListRef.current.scrollHeight;
+    }
+  }, [egresos.length]);
 
   return (
     <div className="flex flex-col h-full">
@@ -378,7 +386,17 @@ export const CuentasPagarModule: React.FC = () => {
               Sin egresos hoy
             </div>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+            <div
+              ref={egresosListRef}
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 5,
+                maxHeight: egresos.length > 6 ? 260 : 'none',
+                overflowY: egresos.length > 6 ? 'auto' : 'visible',
+                marginBottom: 0
+              }}
+            >
               {egresos.map(eg => (
                 <div key={eg.id} className="flex items-center gap-3" style={{
                   padding: '7px 10px', background: 'var(--bg)',
@@ -409,7 +427,7 @@ export const CuentasPagarModule: React.FC = () => {
                   )}
                 </div>
               ))}
-              <div className="flex justify-end pt-2" style={{ borderTop: '1px solid var(--border)' }}>
+              <div className="flex justify-end pt-2" style={{ borderTop: '1px solid var(--border)', background: 'var(--bg2)' }}>
                 <span className="font-mono font-bold text-sm" style={{ color: '#ef4444' }}>
                   Total: - {formatCurrency(egresos.reduce((a, e) => a + e.monto, 0))}
                 </span>

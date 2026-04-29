@@ -1,6 +1,6 @@
 {
   "name": "@ariespos/desktop",
-  "version": "2.0.0",
+  "version": "2.0.4",
   "private": true,
   "main": "dist/main.js",
   "scripts": {
@@ -77,6 +77,14 @@
       {
         "from": "../../packages/renderer/src/assets/icon_logo.png",
         "to": "logo/icon_logo.png"
+      },
+      {
+        "from": "assets/icon.ico",
+        "to": "assets/icon.ico"
+      },
+      {
+        "from": "assets/icon.png",
+        "to": "assets/icon.png"
       }
     ],
     "win": {

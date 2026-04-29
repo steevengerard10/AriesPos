@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Trash2, ChevronUp, ChevronDown, AlertTriangle } from 'lucide-react';
 import { useVentasStore, CartItem } from '../../store/useVentasStore';
 import { formatCurrency } from '../../lib/utils';
@@ -29,11 +29,19 @@ export const CartTable: React.FC<CartTableProps> = ({ simbolo = '$' }) => {
     field: 'cantidad' | 'precio_unitario' | 'descuento';
   } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const { t } = useTranslation();
+
+  // Auto-scroll al último ítem cuando se agrega uno nuevo
+  useEffect(() => {
+    if (scrollRef.current && cart.length > 0) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [cart.length]);
 
   if (cart.length === 0) {
     return (
-      <div className="flex-1 flex items-center justify-center text-slate-500">
+      <div className="h-full flex items-center justify-center text-slate-500">
         <div className="text-center">
           <div className="text-4xl mb-3">🛒</div>
           <p className="text-sm">{t('cart.empty')}</p>
@@ -63,7 +71,7 @@ export const CartTable: React.FC<CartTableProps> = ({ simbolo = '$' }) => {
   };
 
   return (
-    <div className="flex-1 overflow-auto">
+    <div ref={scrollRef} className="h-full overflow-auto">
       <table className="w-full text-sm">
         <thead className="hidden">
           <tr>
@@ -74,7 +82,7 @@ export const CartTable: React.FC<CartTableProps> = ({ simbolo = '$' }) => {
           {cart.map((item) => (
             <tr key={item.itemId} className="table-row group">
               <td className="table-cell">
-                <div className="font-medium text-white">{item.nombre}</div>
+                <div className="font-medium" style={{ color: 'var(--text)' }}>{item.nombre}</div>
                 <div className="text-xs text-slate-500">
                   {item.unidad_medida}
                   {item.fraccionable && <span className="ml-1.5 text-amber-500/80">· fraccionable</span>}
@@ -180,8 +188,9 @@ export const CartTable: React.FC<CartTableProps> = ({ simbolo = '$' }) => {
                         className={`font-mono text-sm flex items-center gap-1 px-1.5 py-0.5 rounded transition-colors ${
                           modified
                             ? 'text-amber-400 bg-amber-400/10 border border-amber-400/30 hover:bg-amber-400/20'
-                            : 'text-slate-200 hover:text-blue-400'
+                            : 'hover:text-blue-400'
                         }`}
+                        style={!modified ? { color: 'var(--text2)' } : undefined}
                       >
                         {modified && <AlertTriangle size={10} />}
                         {formatCurrency(item.precio_unitario, simbolo)}
@@ -225,7 +234,7 @@ export const CartTable: React.FC<CartTableProps> = ({ simbolo = '$' }) => {
               </td>
 
               {/* Total */}
-              <td className="table-cell text-right font-mono font-bold text-white">
+              <td className="table-cell text-right font-mono font-bold" style={{ color: 'var(--text)' }}>
                 {formatCurrency(item.total, simbolo)}
               </td>
 

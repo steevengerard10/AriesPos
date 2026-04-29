@@ -922,7 +922,15 @@ export function registerIpcHandlers(): void {
     const db = getDb();
     let query = `
       SELECT v.*, c.nombre as cliente_nombre, u.nombre as vendedor_nombre,
-        (SELECT COUNT(*) FROM venta_items vi WHERE vi.venta_id = v.id) as total_items
+        (SELECT COUNT(*) FROM venta_items vi WHERE vi.venta_id = v.id) as total_items,
+        (SELECT GROUP_CONCAT(
+          COALESCE(p.nombre, 'Item') || ' x' || CAST(vi.cantidad AS TEXT),
+          ' | '
+        )
+        FROM venta_items vi
+        LEFT JOIN productos p ON p.id = vi.producto_id
+        WHERE vi.venta_id = v.id
+        ) as productos
       FROM ventas v
       LEFT JOIN clientes c ON v.cliente_id = c.id
       LEFT JOIN usuarios u ON v.vendedor_id = u.id
@@ -959,6 +967,16 @@ export function registerIpcHandlers(): void {
       if (sets.length > 0) {
         params.push(ventaId);
         db.prepare(`UPDATE ventas SET ${sets.join(', ')} WHERE id = ?`).run(...params);
+      }
+
+      // Persistir edición de método de pago también en caja_movimientos (venta contado)
+      if (changes.metodo_pago !== undefined) {
+        const esVenta = venta.tipo === 'venta';
+        const esFiado = Number(venta.es_fiado || 0) === 1 || String(venta.metodo_pago || '') === 'fiado';
+        if (esVenta && !esFiado) {
+          db.prepare(`UPDATE caja_movimientos SET metodo_pago = ? WHERE venta_id = ? AND tipo = 'ingreso'`)
+            .run(changes.metodo_pago, ventaId);
+        }
       }
     })();
 
@@ -1231,11 +1249,33 @@ export function registerIpcHandlers(): void {
     const monthStartStr = monthStart.toISOString().split('T')[0];
     const prevWeekStart = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
-    // Hoy — count y total
-    const rowHoy = db.prepare(`
+    // Hoy — count y total (se ajusta a apertura/cierre de caja si hay sesión del día)
+    let rowHoy = db.prepare(`
       SELECT COUNT(*) as count, COALESCE(SUM(total),0) as total
       FROM ventas WHERE fecha = ? AND tipo = 'venta'
     `).get(today) as { count: number; total: number };
+
+    // Ventas de hoy = desde apertura de caja del día hasta ahora (o cierre si ya cerró)
+    const sesionHoy = db.prepare(`
+      SELECT id
+      FROM caja_sesiones
+      WHERE date(fecha_apertura) = ?
+      ORDER BY id DESC
+      LIMIT 1
+    `).get(today) as { id: number } | undefined;
+
+    if (sesionHoy?.id) {
+      rowHoy = db.prepare(`
+        SELECT
+          COUNT(DISTINCT v.id) as count,
+          COALESCE(SUM(cm.monto), 0) as total
+        FROM caja_movimientos cm
+        LEFT JOIN ventas v ON v.id = cm.venta_id
+        WHERE cm.sesion_id = ?
+          AND cm.tipo = 'ingreso'
+          AND cm.venta_id IS NOT NULL
+      `).get(sesionHoy.id) as { count: number; total: number };
+    }
 
     // Semana
     const rowSemana = db.prepare(`

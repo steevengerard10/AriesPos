@@ -290,14 +290,19 @@ export function startServer(): void {
   expressApp.get('/api/productos', basicAuth, (_req, res) => {
     const rows = db
       .prepare(
-        `SELECT p.*, c.nombre as categoria_nombre
+        `SELECT p.*, c.nombre as categoria_nombre, COALESCE(p.proveedor, '') as proveedor
          FROM productos p
          LEFT JOIN categorias c ON p.categoria_id = c.id
          WHERE p.activo = 1
          ORDER BY p.nombre`
       )
       .all();
-    res.json(rows);
+    // Eliminar posible duplicado de campo proveedor (por * y por COALESCE)
+    const cleanRows = rows.map((row: any) => {
+      if (row.proveedor === null || row.proveedor === undefined) row.proveedor = '';
+      return row;
+    });
+    res.json(cleanRows);
   });
 
   // Ventas del día (solo admin)

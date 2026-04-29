@@ -52,6 +52,12 @@ export const productosAPI = {
   deleteMany: (ids: number[]) => invoke<{ deleted: number }>('productos:deleteMany', ids),
   limpiarBasura: () => invoke<{ deleted: number; pt: number; en: number; basura: number }>('productos:limpiarBasura'),
   loadSeed: () => invoke<{ inserted: number }>('productos:loadSeed'),
+  // Extra: obtener proveedores únicos
+  getProveedores: async () => {
+    const res = await productosAPI.getAll({ limit: 99999 });
+    const rows = res.rows || res;
+    return Array.from(new Set((rows as any[]).map((p: any) => p.proveedor).filter(Boolean)));
+  },
   importCSV: (csvData: string) => invoke<{ imported: number; errors: number }>('productos:importCSV', csvData),
   saveImage: (productoId: number, imageData: string) => invoke('productos:saveImage', productoId, imageData),
   truncate: () => invoke('productos:truncate'),

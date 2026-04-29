@@ -247,6 +247,14 @@ export const ClientesModule: React.FC = () => {
 
   const totalFiado = useMemo(() => clientes.reduce((s, c) => s + c.saldo_pendiente, 0), [clientes]);
 
+  // Ref para scroll automático
+  const tableBodyRef = React.useRef<HTMLTableSectionElement>(null);
+  useEffect(() => {
+    if (tableBodyRef.current && filtered.length > 6) {
+      tableBodyRef.current.scrollTop = tableBodyRef.current.scrollHeight;
+    }
+  }, [filtered.length, loading]);
+
   return (
     <div className="flex h-full gap-4">
       {/* Lista de clientes */}
@@ -255,7 +263,6 @@ export const ClientesModule: React.FC = () => {
         <div className="shrink-0 module-header px-6 pt-6">
           <div>
             <h1 className="module-title flex items-center gap-3"><Users size={28} className="text-blue-400" /> {t('clie.title')}</h1>
-            <p className="text-sm text-slate-400 mt-1">{clientes.length} clientes · Fiado total: <span className="text-red-400 font-semibold">{formatCurrency(totalFiado)}</span></p>
           </div>
           <div className="flex gap-2">
             <button className="btn-secondary btn btn-sm" onClick={handleExportFiadosExcel}><Download size={14} /> {t('clie.fiadosExcel')}</button>
@@ -279,54 +286,66 @@ export const ClientesModule: React.FC = () => {
           <button className="btn-ghost btn p-2" onClick={loadData}><RefreshCw size={16} /></button>
         </div>
 
-        {/* Tabla */}
-        <div className="flex-1 overflow-auto px-6 pb-6">
-          <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-slate-700">
-                  <th className="table-header">{t('clie.col.name')}</th>
-                  <th className="table-header">{t('clie.col.contact')}</th>
-                  <th className="table-header text-right">{t('clie.col.balance')}</th>
-                  <th className="table-header"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {loading ? (
-                  <tr><td colSpan={4} className="text-center py-8 text-slate-400">{t('common.loading')}</td></tr>
-                ) : filtered.length === 0 ? (
-                  <tr><td colSpan={4} className="text-center py-8 text-slate-500">{t('clie.empty')}</td></tr>
-                ) : filtered.map((c) => (
-                  <tr
-                    key={c.id}
-                    className={`table-row cursor-pointer ${selectedCliente?.id === c.id ? 'bg-blue-900/20' : ''}`}
-                    onClick={() => handleVerCuenta(c)}
-                  >
-                    <td className="table-cell">
-                      <div className="font-semibold text-white">{c.nombre} {c.apellido}</div>
-                      {c.documento && <div className="text-xs text-slate-500">Doc: {c.documento}</div>}
-                    </td>
-                    <td className="table-cell text-sm text-slate-400">
-                      {c.telefono && <div>{c.telefono}</div>}
-                      {c.email && <div className="text-xs">{c.email}</div>}
-                    </td>
-                    <td className="table-cell text-right">
-                      {c.saldo_pendiente > 0 ? (
-                        <span className="font-mono font-bold text-red-400">{formatCurrency(c.saldo_pendiente)}</span>
-                      ) : (
-                        <span className="text-slate-500 text-sm">{t('clie.noDebt')}</span>
-                      )}
-                    </td>
-                    <td className="table-cell" onClick={(e) => e.stopPropagation()}>
-                      <div className="flex gap-1">
-                        <button onClick={() => handleEdit(c)} className="btn-ghost btn p-1.5"><Edit size={13} /></button>
-                        <button onClick={() => setConfirmDelete(c.id)} className="btn-ghost btn p-1.5 hover:text-red-400"><Trash2 size={13} /></button>
-                      </div>
-                    </td>
+        {/* Tabla con barra de totales fija y scroll condicional */}
+        <div className="flex-1 flex flex-col px-6 pb-6">
+          <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden flex flex-col h-full">
+            <div className="flex-1 overflow-hidden">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-slate-700">
+                    <th className="table-header">{t('clie.col.name')}</th>
+                    <th className="table-header">{t('clie.col.contact')}</th>
+                    <th className="table-header text-right">{t('clie.col.balance')}</th>
+                    <th className="table-header"></th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody
+                  ref={tableBodyRef}
+                  style={filtered.length > 6 ? { display: 'block', maxHeight: 56 * 6, overflowY: 'auto' } : {}}
+                  className={filtered.length > 6 ? 'block w-full' : ''}
+                >
+                  {loading ? (
+                    <tr><td colSpan={4} className="text-center py-8 text-slate-400">{t('common.loading')}</td></tr>
+                  ) : filtered.length === 0 ? (
+                    <tr><td colSpan={4} className="text-center py-8 text-slate-500">{t('clie.empty')}</td></tr>
+                  ) : filtered.map((c) => (
+                    <tr
+                      key={c.id}
+                      className={`table-row cursor-pointer ${selectedCliente?.id === c.id ? 'bg-blue-900/20' : ''}`}
+                      style={filtered.length > 6 ? { display: 'table', width: '100%', tableLayout: 'fixed' } : {}}
+                      onClick={() => handleVerCuenta(c)}
+                    >
+                      <td className="table-cell">
+                        <div className="font-semibold text-white">{c.nombre} {c.apellido}</div>
+                        {c.documento && <div className="text-xs text-slate-500">Doc: {c.documento}</div>}
+                      </td>
+                      <td className="table-cell text-sm text-slate-400">
+                        {c.telefono && <div>{c.telefono}</div>}
+                        {c.email && <div className="text-xs">{c.email}</div>}
+                      </td>
+                      <td className="table-cell text-right">
+                        {c.saldo_pendiente > 0 ? (
+                          <span className="font-mono font-bold text-red-400">{formatCurrency(c.saldo_pendiente)}</span>
+                        ) : (
+                          <span className="text-slate-500 text-sm">{t('clie.noDebt')}</span>
+                        )}
+                      </td>
+                      <td className="table-cell" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex gap-1">
+                          <button onClick={() => handleEdit(c)} className="btn-ghost btn p-1.5"><Edit size={13} /></button>
+                          <button onClick={() => setConfirmDelete(c.id)} className="btn-ghost btn p-1.5 hover:text-red-400"><Trash2 size={13} /></button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {/* Barra de totales fija */}
+            <div className="shrink-0 bg-slate-900/80 border-t border-slate-700 px-4 py-2 flex items-center justify-between">
+              <span className="text-sm text-slate-400">{clientes.length} clientes</span>
+              <span className="font-mono font-bold text-lg text-red-400">{formatCurrency(totalFiado)}</span>
+            </div>
           </div>
         </div>
       </div>

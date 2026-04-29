@@ -16,6 +16,18 @@ let splashWindow: BrowserWindow | null = null;
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 
+function getAppIconPath(): string {
+  if (process.platform === 'win32') {
+    return app.isPackaged
+      ? path.join(process.resourcesPath, 'assets', 'icon.ico')
+      : path.join(__dirname, '../assets/icon.ico');
+  }
+  // linux/mac: usar png en runtime (el .icns lo maneja el bundle)
+  return app.isPackaged
+    ? path.join(process.resourcesPath, 'assets', 'icon.png')
+    : path.join(__dirname, '../assets/icon.png');
+}
+
 function createSplash(): void {
   const logoPath = app.isPackaged
     ? path.join(process.resourcesPath, 'logo', 'icon_logo.png')
@@ -30,7 +42,7 @@ function createSplash(): void {
     center: true,
     resizable: false,
     skipTaskbar: true,
-    icon: path.join(__dirname, '../assets/icon.ico'),
+    icon: getAppIconPath(),
     webPreferences: { contextIsolation: true, nodeIntegration: false },
   });
 
@@ -69,7 +81,7 @@ function createMainWindow(): void {
       nodeIntegration: false,
       sandbox: false,
     },
-    icon: path.join(__dirname, process.platform === 'win32' ? '../assets/icon.ico' : '../assets/icon.png'),
+    icon: getAppIconPath(),
     show: false,
   });
 
@@ -138,7 +150,7 @@ export function createPosWindow(): void {
       nodeIntegration: false,
       sandbox: false,
     },
-    icon: path.join(__dirname, process.platform === 'win32' ? '../assets/icon.ico' : '../assets/icon.png'),
+    icon: getAppIconPath(),
     show: false,
   });
 

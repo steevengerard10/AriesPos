@@ -252,7 +252,8 @@ export const ProductSearch: React.FC<ProductSearchProps> = ({
           onFocus={() => { if (query && results.length > 0 && !selectedProduct) setShowDropdown(true); }}
           onClick={() => { if (selectedProduct) resetForm(); }}
           placeholder={t('search.placeholder')}
-          className="flex-1 bg-transparent text-sm text-white placeholder:text-slate-500 outline-none min-w-0"
+          className="flex-1 bg-transparent text-sm placeholder:text-slate-500 outline-none min-w-0"
+          style={{ color: 'var(--text)' }}
           autoComplete="off"
         />
         {loading && <Loader2 size={12} className="text-slate-400 animate-spin shrink-0" />}
@@ -281,7 +282,8 @@ export const ProductSearch: React.FC<ProductSearchProps> = ({
           min="0.001"
           title="Cantidad"
           placeholder="1"
-          className="text-right text-sm font-mono outline-none w-14 bg-transparent text-white placeholder:text-slate-600"
+          className="text-right text-sm font-mono outline-none w-14 bg-transparent placeholder:text-slate-600"
+          style={{ color: 'var(--text)' }}
         />
       </div>
 
@@ -298,7 +300,8 @@ export const ProductSearch: React.FC<ProductSearchProps> = ({
           step="0.01"
           min="0"
           placeholder="0"
-          className="text-right text-sm font-mono outline-none w-20 bg-transparent text-white placeholder:text-slate-600"
+          className="text-right text-sm font-mono outline-none w-20 bg-transparent placeholder:text-slate-600"
+          style={{ color: 'var(--text)' }}
         />
       </div>
 
@@ -328,7 +331,8 @@ export const ProductSearch: React.FC<ProductSearchProps> = ({
       {showDropdown && results.length > 0 && (
         <div
           ref={dropdownRef}
-          className="absolute top-full left-0 mt-1 bg-slate-800 border border-slate-600 rounded-xl shadow-2xl z-50 overflow-hidden w-[min(600px,70%)]"
+          className="absolute top-full left-0 mt-1 bg-slate-800 border border-slate-600 rounded-xl shadow-2xl z-50 overflow-auto w-[min(600px,70%)]"
+          style={{ maxHeight: `${9 * 56}px` }} // 56px aprox por ítem
         >
           {results.slice(0, 9).map((p, i) => (
             <button
@@ -338,7 +342,7 @@ export const ProductSearch: React.FC<ProductSearchProps> = ({
               onMouseEnter={() => setSelectedIndex(i)}
             >
               <div className="flex-1 min-w-0">
-                <div className="font-medium text-white text-sm truncate">{p.nombre}</div>
+                <div className="font-medium text-sm truncate" style={{ color: 'var(--text)' }}>{p.nombre}</div>
                 <div className="text-xs text-slate-400 flex items-center gap-2">
                   <span className="font-mono">{p.codigo}</span>
                   {p.categoria_nombre && <span>• {p.categoria_nombre}</span>}

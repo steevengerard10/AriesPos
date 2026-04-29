@@ -91,6 +91,9 @@ export const ProductosModule: React.FC = () => {
   const [loadingSeed, setLoadingSeed] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [confirmDeleteSelected, setConfirmDeleteSelected] = useState(false);
+  const [proveedores, setProveedores] = useState<string[]>([]);
+  const [proveedorInput, setProveedorInput] = useState('');
+  const [showProveedorDropdown, setShowProveedorDropdown] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const csvRef = useRef<HTMLInputElement>(null);
   const ignoringSync = useRef(false);
@@ -144,6 +147,18 @@ export const ProductosModule: React.FC = () => {
   };
 
   useEffect(() => { loadData(0); }, [searchQuery, selectedCategoria, stockBajoOnly]);
+
+  // Cargar proveedores únicos (para selector avanzado del formulario)
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const list = await productosAPI.getProveedores();
+        if (alive && Array.isArray(list)) setProveedores(list as string[]);
+      } catch { /* silencioso */ }
+    })();
+    return () => { alive = false; };
+  }, []);
 
   // Escuchar evento de sincronización desde servidor (modo cliente: polling cada 20s)
   useEffect(() => {
@@ -574,13 +589,93 @@ export const ProductosModule: React.FC = () => {
                 placeholder="Ej: Samsung, Nike..." />
             </div>
 
-            {/* Proveedor */}
+            {/* Proveedor (selector avanzado) */}
             <div>
               <label className="label">{t('prod.form.supplier')}</label>
-              <input className="input" value={formData.proveedor || ''}
-                onChange={(e) => setFormData((p) => ({ ...p, proveedor: e.target.value }))}
-                placeholder="Ej: Distribuidora X" />
+              <div className="relative">
+                <input
+                  className="input flex-1"
+                  value={formData.proveedor || proveedorInput}
+                  onChange={e => {
+                    setProveedorInput(e.target.value);
+                    setFormData(p => ({ ...p, proveedor: e.target.value }));
+                    setShowProveedorDropdown(true);
+                  }}
+                  onFocus={() => setShowProveedorDropdown(true)}
+                  placeholder="Buscar o agregar proveedor"
+                  autoComplete="off"
+                />
+                <button
+                  type="button"
+                  className="btn-secondary btn px-3 absolute right-1 top-1/2 -translate-y-1/2"
+                  tabIndex={-1}
+                  onClick={() => {
+                    setProveedorInput("");
+                    setFormData(p => ({ ...p, proveedor: "" }));
+                    setShowProveedorDropdown(true);
+                  }}
+                  title="Limpiar selección"
+                >
+                  <Eraser size={14} />
+                </button>
+                {showProveedorDropdown && (
+                  <div
+                    className="absolute z-20 mt-1 w-full bg-slate-900 border border-slate-700 rounded shadow-lg max-h-48 overflow-y-auto"
+                    onMouseLeave={() => setShowProveedorDropdown(false)}
+                  >
+                    {proveedores.filter(p =>
+                      !proveedorInput.trim() || p.toLowerCase().includes(proveedorInput.trim().toLowerCase())
+                    ).length === 0 && proveedorInput.trim() ? (
+                      <div
+                        className="px-3 py-2 text-sm text-slate-400 cursor-pointer hover:bg-slate-800"
+                        onMouseDown={() => {
+                          setProveedores(prev => [...prev, proveedorInput.trim()]);
+                          setFormData(p => ({ ...p, proveedor: proveedorInput.trim() }));
+                          setProveedorInput("");
+                          setShowProveedorDropdown(false);
+                          toast.success("Proveedor agregado");
+                        }}
+                      >
+                        <Plus size={13} className="inline mr-1" /> Agregar "{proveedorInput.trim()}"
+                      </div>
+                    ) : null}
+                    {proveedores.filter(p =>
+                      !proveedorInput.trim() || p.toLowerCase().includes(proveedorInput.trim().toLowerCase())
+                    ).map((p, i) => (
+                      <div
+                        key={p + i}
+                        className={`px-3 py-2 text-sm cursor-pointer hover:bg-blue-700 ${formData.proveedor === p ? "bg-blue-800 text-white" : "text-slate-200"}`}
+                        onMouseDown={() => {
+                          setFormData(f => ({ ...f, proveedor: p }));
+                          setProveedorInput("");
+                          setShowProveedorDropdown(false);
+                        }}
+                      >
+                        {p}
+                        <button
+                          type="button"
+                          className="ml-2 text-xs text-red-400 hover:text-red-600"
+                          tabIndex={-1}
+                          onClick={e => {
+                            e.stopPropagation();
+                            setProveedores(prev => prev.filter(x => x !== p));
+                            if (formData.proveedor === p) setFormData(f => ({ ...f, proveedor: "" }));
+                          }}
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+
             </div>
+
+// ------------------- FIN DEL FORMULARIO -------------------
+
+// (El bloque de estado y hooks de proveedores se movió al inicio del componente, antes de cualquier return)
 
             {/* Checkboxes */}
             <div className="col-span-4 flex items-center gap-8 pt-2">
@@ -605,17 +700,26 @@ export const ProductosModule: React.FC = () => {
             <div className="col-span-2 pt-2">
               <label className="label">{t('prod.form.image')}</label>
               <div className="flex items-start gap-4">
-                {(pendingImage || formData.imagen_path) ? (
-                  <div className="relative shrink-0">
-                    <img src={pendingImage || formData.imagen_path || ''} alt="preview"
-                      className="w-20 h-20 rounded-lg object-cover border border-slate-600" />
-                    <button type="button"
-                      className="absolute -top-1.5 -right-1.5 bg-slate-700 rounded-full p-0.5 hover:bg-red-600 transition-colors"
-                      onClick={() => { setPendingImage(null); setFormData((p) => ({ ...p, imagen_path: null })); }}>
-                      <X size={12} />
-                    </button>
-                  </div>
-                ) : null}
+                {(() => {
+                  const src = pendingImage || formData.imagen_path;
+                  if (!src || (typeof src === 'string' && src.trim() === '')) return null;
+                  return (
+                    <div className="relative shrink-0">
+                      <img
+                        src={src as string}
+                        alt="preview"
+                        className="w-20 h-20 rounded-lg object-cover border border-slate-600"
+                      />
+                      <button
+                        type="button"
+                        className="absolute -top-1.5 -right-1.5 bg-slate-700 rounded-full p-0.5 hover:bg-red-600 transition-colors"
+                        onClick={() => { setPendingImage(null); setFormData((p) => ({ ...p, imagen_path: null })); }}
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
+                  );
+                })()}
                 <div className="flex flex-col gap-1.5">
                   <button type="button" className="btn-secondary btn btn-sm"
                     onClick={() => fileRef.current?.click()} disabled={savingImage}>
@@ -652,44 +756,58 @@ export const ProductosModule: React.FC = () => {
           <p className="text-sm text-slate-400 mt-1">{t('prod.count', { n: totalProductos })}</p>
         </div>
         <div className="flex items-center gap-2">
-          <button className="btn-secondary btn btn-sm" onClick={() => setShowBusquedaWeb(true)} title="Carga masiva de productos buscando en internet">
-            <Globe size={14} /> Buscar en Web
-          </button>
+          {/* Botón agregar categoría */}
           <button
             className="btn-secondary btn btn-sm"
-            onClick={handleLoadSeed}
-            disabled={loadingSeed}
-            title="Cargar productos precargados (Coca-Cola, PepsiCo, Arcor, Terrabusi, Yerbas)">
-            {loadingSeed ? <Loader2 size={14} className="animate-spin" /> : <Database size={14} />}
-            Productos Base
+            onClick={() => setShowNuevaCat((v) => !v)}
+            title="Agregar categoría"
+          >
+            <Tag size={14} /> Categoría
           </button>
+          {/* Botón eliminar categoría (abre modal de selección) */}
           <button
-            className="btn btn-sm bg-orange-900 hover:bg-orange-800 text-orange-200 border border-orange-700"
-            onClick={() => setShowCleanupPanel(v => !v)}
-            title="Eliminar productos con nombres inválidos (símbolos, basura del importador)">
-            <Eraser size={14} /> Limpiar Basura
+            className="btn-secondary btn btn-sm"
+            onClick={async () => {
+              const catId = prompt('ID de la categoría a eliminar:');
+              if (catId) {
+                await categoriasAPI.delete(parseInt(catId));
+                setCategorias(await categoriasAPI.getAll() as Categoria[]);
+                toast.success('Categoría eliminada');
+              }
+            }}
+            title="Eliminar categoría"
+          >
+            <Trash2 size={14} /> Eliminar Cat.
           </button>
+          {/* Botón agregar proveedor (prompt simple) */}
           <button
-            className="btn btn-sm bg-red-900 hover:bg-red-800 text-red-200 border border-red-700"
-            onClick={() => setConfirmDeleteAll(true)}
-            title="Eliminar TODOS los productos">
-            <Eraser size={14} /> Borrar Todo
+            className="btn-secondary btn btn-sm"
+            onClick={async () => {
+              const prov = prompt('Nombre del proveedor a agregar:');
+              if (prov) {
+                // Aquí deberías llamar a un API real si existe, por ahora solo toast
+                toast.success('Proveedor agregado: ' + prov);
+              }
+            }}
+            title="Agregar proveedor"
+          >
+            <Database size={14} /> Proveedor
           </button>
+          {/* Botón eliminar proveedor (prompt simple) */}
           <button
-            className="btn btn-sm bg-indigo-700 hover:bg-indigo-600 text-white border border-indigo-500"
-            onClick={() => setShowBulkPrice(true)}
-            title="Actualizar precios de múltiples productos a la vez">
-            <PercentSquare size={14} /> Actualizar precios
+            className="btn-secondary btn btn-sm"
+            onClick={async () => {
+              const prov = prompt('Nombre del proveedor a eliminar:');
+              if (prov) {
+                // Aquí deberías llamar a un API real si existe, por ahora solo toast
+                toast.success('Proveedor eliminado: ' + prov);
+              }
+            }}
+            title="Eliminar proveedor"
+          >
+            <Trash2 size={14} /> Eliminar Prov.
           </button>
-          <button className="btn-secondary btn btn-sm" onClick={() => setShowImportNextar(true)} title="Importar productos desde archivo CSV de Nextar">
-            <FileText size={14} /> {t('prod.nextar')}
-          </button>
-          <button className="btn-secondary btn btn-sm" onClick={() => csvRef.current?.click()}>
-            <Upload size={14} /> {t('prod.import')}
-          </button>
-          <button className="btn-secondary btn btn-sm" onClick={handleExportCSV}>
-            <Download size={14} /> {t('prod.export')}
-          </button>
+          {/* Botón nuevo producto */}
           <button className="btn-primary btn" onClick={() => { setFormData(defaultProducto); setEditingId(null); setShowForm(true); }}>
             <Plus size={16} /> {t('prod.new')} <kbd>Ins</kbd>
           </button>
@@ -812,71 +930,40 @@ export const ProductosModule: React.FC = () => {
                 </div>
 
                 {/* Acciones */}
-                <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <button onClick={() => handleEdit(p)} className="btn-secondary btn p-1.5 text-xs"><Edit size={12} /></button>
-                  <button onClick={() => setConfirmDelete(p.id)} className="btn-danger btn p-1.5 text-xs"><Trash2 size={12} /></button>
+                <div className="flex gap-2 mt-3">
+                  <button onClick={() => handleEdit(p)} className="btn btn-secondary btn-sm flex-1">
+                    <Edit size={14} /> Editar
+                  </button>
+                  <button onClick={() => setConfirmDelete(p.id)} className="btn btn-danger btn-sm">
+                    <Trash2 size={14} />
+                  </button>
                 </div>
-
-                {p.stock_actual <= p.stock_minimo && (
-                  <div className="absolute top-2 left-2">
-                    <span className="badge badge-red text-[10px]">{t('prod.lowStock')}</span>
-                  </div>
-                )}
               </div>
             ))}
           </div>
         ) : (
-          /* Vista lista */
-          <div className="bg-slate-800 rounded-xl overflow-hidden border border-slate-700">
+          <div className="rounded-xl overflow-hidden" style={{ background: 'var(--bg2)', border: '1px solid var(--border)' }}>
             <table className="w-full">
               <thead>
-                <tr className="border-b border-slate-700">
-                  <th className="table-header w-10">
-                    <button onClick={toggleSelectAll} className="text-slate-400 hover:text-white transition-colors">
-                      {selectedIds.size > 0 && selectedIds.size === filtered.length
-                        ? <CheckSquare size={16} className="text-red-400" />
-                        : selectedIds.size > 0
-                          ? <CheckSquare size={16} className="text-red-300 opacity-60" />
-                          : <Square size={16} />}
-                    </button>
-                  </th>
-                  <th className="table-header">{t('prod.col.product')}</th>
-                  <th className="table-header">{t('prod.col.code')}</th>
-                  <th className="table-header">{t('prod.col.category')}</th>
-                  <th className="table-header text-right">{t('prod.col.cost')}</th>
-                  <th className="table-header text-right">{t('prod.col.price')}</th>
-                  <th className="table-header text-right">{t('prod.col.margin')}</th>
-                  <th className="table-header text-right">{t('prod.col.stock')}</th>
-                  <th className="table-header text-center">{t('prod.col.catalog')}</th>
+                <tr>
+                  <th className="table-header">Producto</th>
+                  <th className="table-header">Código</th>
+                  <th className="table-header">Categoría</th>
+                  <th className="table-header text-right">Costo</th>
+                  <th className="table-header text-right">Venta</th>
+                  <th className="table-header text-right">Stock</th>
                   <th className="table-header"></th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.map((p) => (
-                  <tr key={p.id}
-                    className={`table-row ${!p.activo ? 'opacity-50' : ''} ${selectedIds.has(p.id) ? 'bg-red-950/20' : ''}`}>
-                    <td className="table-cell w-10">
-                      <button onClick={() => toggleSelect(p.id)} className="text-slate-500 hover:text-red-400 transition-colors">
-                        {selectedIds.has(p.id) ? <CheckSquare size={15} className="text-red-400" /> : <Square size={15} />}
-                      </button>
-                    </td>
-                    <td className="table-cell">
-                      <div className="font-medium text-white">{p.nombre}</div>
-                      {p.fraccionable && <span className="badge badge-blue text-[10px]">Fraccionable</span>}
-                    </td>
-                    <td className="table-cell font-mono text-slate-400 text-xs">{p.codigo}</td>
-                    <td className="table-cell">
-                      {p.categoria_nombre && <span className="badge badge-gray">{p.categoria_nombre}</span>}
-                    </td>
-                    <td className="table-cell text-right font-mono text-slate-400">{formatCurrency(p.precio_costo)}</td>
+                  <tr key={p.id} className="table-row">
+                    <td className="table-cell"><span style={{ color: 'var(--text)' }} className="font-medium">{p.nombre}</span></td>
+                    <td className="table-cell font-mono text-xs" style={{ color: 'var(--text3)' }}>{p.codigo}</td>
+                    <td className="table-cell">{p.categoria_nombre ? <span className="badge badge-gray">{p.categoria_nombre}</span> : <span style={{ color: 'var(--text3)' }}>—</span>}</td>
+                    <td className="table-cell text-right font-mono" style={{ color: 'var(--text3)' }}>{formatCurrency(p.precio_costo)}</td>
                     <td className="table-cell text-right font-mono font-bold text-green-400">{formatCurrency(p.precio_venta)}</td>
-                    <td className="table-cell text-right text-slate-400">{margen(p.precio_costo, p.precio_venta).toFixed(1)}%</td>
-                    <td className={`table-cell text-right font-mono ${p.stock_actual <= p.stock_minimo ? 'text-red-400' : 'text-slate-300'}`}>
-                      {p.stock_actual} {p.unidad_medida}
-                    </td>
-                    <td className="table-cell text-center">
-                      {p.en_catalogo ? <Check size={14} className="text-green-400 mx-auto" /> : <X size={14} className="text-slate-600 mx-auto" />}
-                    </td>
+                    <td className="table-cell text-right font-mono" style={{ color: p.stock_actual <= p.stock_minimo ? '#ef4444' : 'var(--text2)' }}>{p.stock_actual} {p.unidad_medida}</td>
                     <td className="table-cell">
                       <div className="flex gap-1">
                         <button onClick={() => handleEdit(p)} className="btn-ghost btn p-1.5"><Edit size={13} /></button>

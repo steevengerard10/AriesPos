@@ -41,6 +41,15 @@
   --text3:   #64748b;
 }
 
+/* En tema claro: evitar texto blanco por clases Tailwind hardcodeadas */
+[data-theme="claro"] .text-white,
+[data-theme="claro"] .text-slate-50,
+[data-theme="claro"] .text-slate-100,
+[data-theme="claro"] .text-slate-200,
+[data-theme="claro"] .text-slate-300 {
+  color: var(--text) !important;
+}
+
 /* ── Tema Negro ── */
 [data-theme="negro"] {
   --bg:      #000000;
