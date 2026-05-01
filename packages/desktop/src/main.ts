@@ -18,20 +18,29 @@ const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 
 function getAppIconPath(): string {
   if (process.platform === 'win32') {
-    return app.isPackaged
+    const icon = app.isPackaged
       ? path.join(process.resourcesPath, 'assets', 'icon.ico')
-      : path.join(__dirname, '../assets/icon.ico');
+      : path.join(app.getAppPath(), 'packages/desktop/assets/icon.ico');
+    // Asegurarse de que el archivo existe, si no, usar el PNG
+    if (!fs.existsSync(icon) && !app.isPackaged) {
+      return path.join(app.getAppPath(), 'packages/desktop/assets/icon.png');
+    }
+    return icon;
   }
   // linux/mac: usar png en runtime (el .icns lo maneja el bundle)
   return app.isPackaged
     ? path.join(process.resourcesPath, 'assets', 'icon.png')
-    : path.join(__dirname, '../assets/icon.png');
+    : path.join(app.getAppPath(), 'packages/desktop/assets/icon.png');
+}
+
+function getLogoPath(): string {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, 'logo', 'icon_logo.png')
+    : path.join(app.getAppPath(), 'packages/renderer/src/assets/icon_logo.png');
 }
 
 function createSplash(): void {
-  const logoPath = app.isPackaged
-    ? path.join(process.resourcesPath, 'logo', 'icon_logo.png')
-    : path.join(__dirname, '../../packages/renderer/src/assets/icon_logo.png');
+  const logoPath = getLogoPath();
 
   splashWindow = new BrowserWindow({
     width: 380,
@@ -46,13 +55,16 @@ function createSplash(): void {
     webPreferences: { contextIsolation: true, nodeIntegration: false },
   });
 
-  const logoUrl = `file://${logoPath.replace(/\\/g, '/')}`;
+  // Si el logo no existe, usar un fallback sin img tag
+  const imgTag = fs.existsSync(logoPath)
+    ? `<img src="file://${logoPath.replace(/\\/g, '/')}" style="width:150px;height:150px;object-fit:contain; filter:drop-shadow(0 0 24px rgba(190,50,120,0.7))" />`
+    : `<div style="width:150px;height:150px;display:flex;align-items:center;justify-content:center;font-size:32px;font-weight:800;color:#be3278">AP</div>`;
+
   splashWindow.loadURL(`data:text/html;charset=utf-8,<!DOCTYPE html>
 <html><body style="margin:0;background:transparent;display:flex;flex-direction:column;
   align-items:center;justify-content:center;height:100vh;
   font-family:'Segoe UI',sans-serif;-webkit-app-region:drag">
-  <img src="${logoUrl}" style="width:150px;height:150px;object-fit:contain;
-    filter:drop-shadow(0 0 24px rgba(190,50,120,0.7))" />
+  ${imgTag}
   <p style="color:#e2e8f0;font-size:20px;font-weight:700;margin:18px 0 4px;
     letter-spacing:0.08em">ARIES<span style="color:#be3278">POS</span></p>
   <p style="color:#64748b;font-size:11px;margin:0">Iniciando sistema...</p>

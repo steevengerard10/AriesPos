@@ -1215,7 +1215,7 @@ const ResumenItem: React.FC<{ label: string; value: number; color: string; large
 type TabType = 'hoy' | 'tabla' | 'dia' | 'billetes';
 
 export const LibroCajaModule: React.FC = () => {
-  const [tab, setTab] = useState<TabType>('hoy');
+  const [tab, setTab] = useState<TabType>('hoy');  // Ahora 'hoy' es la pestaña por defecto
   const { cargarDia, cargarHistorico, fechaSeleccionada } = useLibroCajaStore();
 
   useEffect(() => {
@@ -1223,11 +1223,13 @@ export const LibroCajaModule: React.FC = () => {
     cargarHistorico();
   }, []);
 
+  // Solo mostrar la pestaña "hoy" por defecto. Las otras son para usuarios avanzados.
   const TABS: { id: TabType; label: string; icon: React.ElementType }[] = [
-    { id: 'hoy',     label: 'Libro del día',   icon: Table2 },
-    { id: 'tabla',   label: 'Libro de Caja',    icon: Table2 },
-    { id: 'dia',     label: 'Día / Turnos',     icon: Calendar },
-    { id: 'billetes',label: 'Contador Billetes', icon: Banknote },
+    { id: 'hoy',     label: 'Movimientos del día',   icon: Table2 },
+    // Opcional: agregar otras pestañas si el usuario quiere
+    // { id: 'tabla',   label: 'Libro de Caja',    icon: Table2 },
+    // { id: 'dia',     label: 'Día / Turnos',     icon: Calendar },
+    // { id: 'billetes',label: 'Contador Billetes', icon: Banknote },
   ];
 
   return (
