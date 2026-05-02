@@ -289,9 +289,9 @@ export const ClientesModule: React.FC = () => {
         {/* Tabla con barra de totales fija y scroll condicional */}
         <div className="flex-1 flex flex-col px-6 pb-6">
           <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden flex flex-col h-full">
-            <div className="flex-1 overflow-hidden">
+            <div className="flex-1 overflow-hidden" style={{ maxHeight: 'calc(100vh - 340px)' }}>
               <table className="w-full">
-                <thead>
+                <thead style={{ position: 'sticky', top: 0, zIndex: 10 }}>
                   <tr className="border-b border-slate-700">
                     <th className="table-header">{t('clie.col.name')}</th>
                     <th className="table-header">{t('clie.col.contact')}</th>
@@ -301,8 +301,8 @@ export const ClientesModule: React.FC = () => {
                 </thead>
                 <tbody
                   ref={tableBodyRef}
-                  style={filtered.length > 6 ? { display: 'block', maxHeight: 56 * 6, overflowY: 'auto' } : {}}
-                  className={filtered.length > 6 ? 'block w-full' : ''}
+                  style={{ display: 'block', overflowY: 'auto', maxHeight: 'calc(100vh - 410px)', width: '100%', tableLayout: 'fixed' }}
+                  className="block w-full"
                 >
                   {loading ? (
                     <tr><td colSpan={4} className="text-center py-8 text-slate-400">{t('common.loading')}</td></tr>
@@ -312,7 +312,7 @@ export const ClientesModule: React.FC = () => {
                     <tr
                       key={c.id}
                       className={`table-row cursor-pointer ${selectedCliente?.id === c.id ? 'bg-blue-900/20' : ''}`}
-                      style={filtered.length > 6 ? { display: 'table', width: '100%', tableLayout: 'fixed' } : {}}
+                      style={{ display: 'table', width: '100%', tableLayout: 'fixed' }}
                       onClick={() => handleVerCuenta(c)}
                     >
                       <td className="table-cell">
