@@ -792,7 +792,7 @@ const PanelDia: React.FC = () => {
       ) : (
         <>
           {/* Cards de campos */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 10 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 10, maxHeight: 'calc(100vh - 300px)', overflowY: 'auto', padding: '0 12px' }}>
             {CAMPOS_EDITABLE.map(({ key, label, color, desc }) => (
               <CampoCard
                 key={key}

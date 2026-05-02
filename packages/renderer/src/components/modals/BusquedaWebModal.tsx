@@ -166,9 +166,9 @@ export const BusquedaWebModal: React.FC<BusquedaWebModalProps> = ({ onClose, onS
             </div>
           </div>
 
-          <div className="rounded-xl overflow-hidden border" style={{ borderColor: 'var(--border)' }}>
+          <div className="rounded-xl overflow-hidden border" style={{ borderColor: 'var(--border)', maxHeight: 'calc(100vh - 380px)', display: 'flex', flexDirection: 'column' }}>
             <table className="w-full text-sm">
-              <thead>
+              <thead style={{ position: 'sticky', top: 0, zIndex: 10 }}>
                 <tr style={{ background: 'var(--bg3)', borderBottom: '1px solid var(--border)' }}>
                   <th className="py-2 px-3 w-8"></th>
                   <th className="py-2 px-3 text-left" style={{ color: 'var(--text2)' }}>Búsqueda</th>
@@ -179,7 +179,7 @@ export const BusquedaWebModal: React.FC<BusquedaWebModalProps> = ({ onClose, onS
                   <th className="py-2 px-3 w-8"></th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody style={{ overflowY: 'auto', display: 'block', maxHeight: 'calc(100vh - 440px)' }}>
                 {results.map((r, i) => (
                   <tr key={i} style={{
                     borderBottom: '1px solid var(--border)',

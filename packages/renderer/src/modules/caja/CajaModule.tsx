@@ -329,9 +329,9 @@ export const CajaModule: React.FC = () => {
                 <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-2">
                   <FileText size={14} /> {t('caja.movements')}
                 </h3>
-                <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
+                <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden" style={{ maxHeight: 'calc(100vh - 480px)', display: 'flex', flexDirection: 'column' }}>
                   <table className="w-full">
-                    <thead>
+                    <thead style={{ position: 'sticky', top: 0, zIndex: 10, background: 'var(--bg2)' }}>
                       <tr className="border-b border-slate-700">
                         <th className="table-header">{t('caja.col.time')}</th>
                         <th className="table-header">{t('caja.col.type')}</th>
@@ -340,7 +340,7 @@ export const CajaModule: React.FC = () => {
                           <th className="table-header text-right">{t('caja.col.amount')}</th>
                       </tr>
                     </thead>
-                    <tbody>
+                    <tbody style={{ overflowY: 'auto', display: 'block', maxHeight: 'calc(100vh - 540px)' }}>
                       {movimientos.length === 0 ? (
                         <tr><td colSpan={6} className="text-center py-6 text-slate-500">{t('caja.noMovements')}</td></tr>
                       ) : movimientos.map((m) => (
@@ -369,9 +369,9 @@ export const CajaModule: React.FC = () => {
 
       {tab === 'historico' && (
         <div className="flex-1 overflow-auto px-6 py-4 pb-6">
-          <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
+          <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden" style={{ maxHeight: 'calc(100vh - 280px)', display: 'flex', flexDirection: 'column' }}>
             <table className="w-full">
-              <thead>
+              <thead style={{ position: 'sticky', top: 0, zIndex: 10, background: 'var(--bg2)' }}>
                 <tr className="border-b border-slate-700">
                   <th className="table-header">{t('caja.col.opening')}</th>
                   <th className="table-header">{t('caja.col.closing')}</th>

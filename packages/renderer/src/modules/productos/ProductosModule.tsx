@@ -888,7 +888,7 @@ export const ProductosModule: React.FC = () => {
             <p>{t('prod.empty')}</p>
           </div>
         ) : viewMode === 'grid' ? (
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 auto-rows-max" style={{ maxHeight: 'calc(100vh - 280px)', overflowY: 'auto' }}>
             {filtered.map((p) => (
               <div key={p.id} className={`card group relative overflow-hidden hover:border-blue-600/50 transition-all ${!p.activo ? 'opacity-50' : ''} ${selectedIds.has(p.id) ? 'border-red-500/50 bg-red-950/10' : ''}`}>
                 {/* Checkbox selección */}

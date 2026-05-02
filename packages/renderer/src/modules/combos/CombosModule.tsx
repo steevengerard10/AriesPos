@@ -356,10 +356,10 @@ export const CombosModule: React.FC = () => {
                     <p className="text-sm">{t('combo.form.emptyItems')}</p>
                   </div>
                 ) : (
-                  <div className="overflow-hidden rounded-lg border border-slate-700">
+                  <div className="overflow-hidden rounded-lg border border-slate-700" style={{ maxHeight: 'calc(100vh - 420px)', display: 'flex', flexDirection: 'column' }}>
                     <table className="w-full">
-                      <thead>
-                        <tr className="border-b border-slate-700">
+                      <thead style={{ position: 'sticky', top: 0, zIndex: 10 }}>
+                        <tr className="border-b border-slate-700" style={{ background: 'var(--bg2)' }}>
                           <th className="table-header">Producto</th>
                           <th className="table-header w-28 text-right">{t('combo.form.qty')}</th>
                           <th className="table-header w-36 text-right">{t('combo.form.unitPrice')}</th>
@@ -367,7 +367,7 @@ export const CombosModule: React.FC = () => {
                           <th className="table-header w-12"></th>
                         </tr>
                       </thead>
-                      <tbody>
+                      <tbody style={{ overflowY: 'auto', display: 'block', maxHeight: 'calc(100vh - 520px)' }}>
                         {formItems.map((item, idx) => (
                           <tr key={idx} className="table-row">
                             <td className="table-cell">

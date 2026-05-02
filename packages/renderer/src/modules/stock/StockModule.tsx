@@ -194,9 +194,9 @@ export const StockModule: React.FC = () => {
 
           {/* Tabla inventario */}
           <div className="flex-1 overflow-auto px-6 pb-6">
-            <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
+            <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden" style={{ maxHeight: 'calc(100vh - 340px)', display: 'flex', flexDirection: 'column' }}>
               <table className="w-full">
-                <thead>
+                <thead style={{ position: 'sticky', top: 0, zIndex: 10, background: 'var(--bg2)' }}>
                   <tr className="border-b border-slate-700">
                     <th className="table-header">{t('stock.col.product')}</th>
                     <th className="table-header">{t('stock.col.category')}</th>
@@ -207,7 +207,7 @@ export const StockModule: React.FC = () => {
                     <th className="table-header text-center">{t('stock.col.status')}</th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody style={{ overflowY: 'auto', display: 'block', maxHeight: 'calc(100vh - 400px)' }}>
                   {loading ? (
                     <tr><td colSpan={7} className="text-center py-8 text-slate-400">Cargando...</td></tr>
                   ) : filteredProductos.length === 0 ? (
@@ -250,9 +250,9 @@ export const StockModule: React.FC = () => {
 
       {tab === 'movimientos' && (
         <div className="flex-1 overflow-auto px-6 py-4 pb-6">
-          <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
+          <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden" style={{ maxHeight: 'calc(100vh - 280px)', display: 'flex', flexDirection: 'column' }}>
             <table className="w-full">
-              <thead>
+              <thead style={{ position: 'sticky', top: 0, zIndex: 10, background: 'var(--bg2)' }}>
                 <tr className="border-b border-slate-700">
                   <th className="table-header">{t('stock.col.date')}</th>
                   <th className="table-header">{t('stock.col.product')}</th>
