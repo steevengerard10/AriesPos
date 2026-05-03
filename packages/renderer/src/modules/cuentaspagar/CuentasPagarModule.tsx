@@ -6,6 +6,7 @@ import { Modal, ConfirmDialog } from '../../components/shared/Modal';
 import { formatCurrency, formatDate } from '../../lib/utils';
 import { useAppStore } from '../../store/useAppStore';
 import { useLibroCajaStore } from '../../store/useLibroCajaStore';
+import { cajaAPI } from '../../lib/api';
 
 interface CuentaPagar {
   id: number;
@@ -44,6 +45,7 @@ export const CuentasPagarModule: React.FC = () => {
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
   const [showPagar, setShowPagar] = useState<CuentaPagar | null>(null);
   const [montoAPagar, setMontoAPagar] = useState('');
+  const [sesionCajaId, setSesionCajaId] = useState<number | null>(null);
 
   // Estado de egresos rápidos
   const [egresoProveedor, setEgresoProveedor] = useState('');
@@ -65,6 +67,10 @@ export const CuentasPagarModule: React.FC = () => {
   useEffect(() => {
     loadData();
     cargarDia(); // cargar egresos del día actual
+    // Cargar sesión activa de caja
+    cajaAPI.getSesionActiva().then((sesion) => {
+      setSesionCajaId((sesion as any)?.id || null);
+    }).catch(() => setSesionCajaId(null));
   }, []);
 
   const handleAddEgreso = useCallback(async () => {
@@ -73,14 +79,26 @@ export const CuentasPagarModule: React.FC = () => {
     if (!monto || monto <= 0) { toast.error('Ingresá un monto válido'); return; }
     setAddingEgreso(true);
     try {
+      // Agregar a Libro de Caja
       await addEgreso(egresoProveedor.trim(), monto, egresoMedioPago);
+      
+      // Agregar a Caja si hay sesión activa
+      if (sesionCajaId) {
+        await cajaAPI.agregarMovimiento(sesionCajaId, {
+          tipo: 'egreso',
+          concepto: egresoProveedor.trim(),
+          monto,
+          metodo_pago: egresoMedioPago,
+        });
+      }
+      
       setEgresoProveedor('');
       setEgresoMonto('');
-      toast.success('Egreso registrado');
+      toast.success('Egreso registrado en Caja y Libro de Caja');
     } finally {
       setAddingEgreso(false);
     }
-  }, [egresoProveedor, egresoMonto, egresoMedioPago, addEgreso]);
+  }, [egresoProveedor, egresoMonto, egresoMedioPago, addEgreso, sesionCajaId]);
 
   const filtered = cuentas.filter((c) => {
     const matchSearch = !search.trim() ||

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   Vault, Play, StopCircle, Plus, Minus, RefreshCw, FileText, Check, DollarSign,
-  TrendingUp, CreditCard, Smartphone, Bitcoin, QrCode
+  TrendingUp, CreditCard, Smartphone, Bitcoin, QrCode, AlertCircle, Trash2
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { cajaAPI } from '../../lib/api';
@@ -71,9 +71,9 @@ export const CajaModule: React.FC = () => {
   const [historico, setHistorico] = useState<CajaSesion[]>([]);
   const [movimientos, setMovimientos] = useState<CajaMovimiento[]>([]);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<'actual' | 'historico'>('actual');
+  const [tab, setTab] = useState<'actual' | 'historico' | 'egresos'>('actual');
   const { t } = useTranslation();
-  const { cargarDia, cargarHistorico: cargarHistoricoLibro } = useLibroCajaStore();
+  const { cargarDia, cargarHistorico: cargarHistoricoLibro, diaActual, egresos: egresosLibro } = useLibroCajaStore();
   const { config } = useAppStore();
 
   const [showAbrirModal, setShowAbrirModal] = useState(false);
@@ -237,6 +237,9 @@ export const CajaModule: React.FC = () => {
         <button onClick={() => setTab('actual')} className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${tab === 'actual' ? 'border-blue-500 text-white' : 'border-transparent text-slate-400 hover:text-white'}`}>
           {t('caja.session')}
         </button>
+        <button onClick={() => setTab('egresos')} className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors flex items-center gap-2 ${tab === 'egresos' ? 'border-red-500 text-red-400' : 'border-transparent text-slate-400 hover:text-white'}`}>
+          <AlertCircle size={14} /> Egresos Rápidos
+        </button>
         <button onClick={() => setTab('historico')} className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${tab === 'historico' ? 'border-blue-500 text-white' : 'border-transparent text-slate-400 hover:text-white'}`}>
           {t('caja.history')}
         </button>
@@ -397,6 +400,86 @@ export const CajaModule: React.FC = () => {
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+
+      {tab === 'egresos' && (
+        <div className="flex-1 overflow-auto px-6 py-4 pb-6">
+          {!sesionActiva ? (
+            <div className="flex flex-col items-center justify-center h-48 text-slate-500 gap-3">
+              <Vault size={48} />
+              <p>{t('caja.closedMsg')}</p>
+            </div>
+          ) : (
+            <div className="space-y-6">
+              {/* Total Egresos */}
+              <div className="bg-gradient-to-r from-red-900/40 to-red-800/20 border border-red-700/50 rounded-xl p-5 flex items-center justify-between">
+                <div>
+                  <div className="text-sm text-red-400 uppercase tracking-wider font-semibold">Total de Egresos (Caja + Libro)</div>
+                  <div className="text-3xl font-mono font-bold text-white mt-1">
+                    $ {formatCurrency((movimientos.filter((m) => m.tipo === 'egreso').reduce((s, m) => s + m.monto, 0)) + (egresosLibro.reduce((s, e) => s + (e.monto || 0), 0)))}
+                  </div>
+                  <div className="text-xs text-red-300 mt-2">
+                    Caja: ${formatCurrency(movimientos.filter((m) => m.tipo === 'egreso').reduce((s, m) => s + m.monto, 0))} + Libro: ${formatCurrency(egresosLibro.reduce((s, e) => s + (e.monto || 0), 0))}
+                  </div>
+                </div>
+                <AlertCircle size={48} className="text-red-700" />
+              </div>
+
+              {/* Egresos Rápidos */}
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+                    <Minus size={14} /> Egresos Detallados
+                  </h3>
+                  <button className="btn-secondary btn btn-sm" onClick={() => { setTipoMovimiento('egreso'); setShowMovimientoModal(true); }}>
+                    <Plus size={14} /> Agregar
+                  </button>
+                </div>
+                <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden" style={{ maxHeight: 'calc(100vh - 340px)', display: 'flex', flexDirection: 'column' }}>
+                  <table className="w-full text-sm">
+                    <thead style={{ position: 'sticky', top: 0, zIndex: 10, background: 'var(--bg3)' }}>
+                      <tr className="border-b border-slate-700">
+                        <th className="table-header">Fuente</th>
+                        <th className="table-header">{t('caja.col.desc')}</th>
+                        <th className="table-header">Método</th>
+                        <th className="table-header text-right">{t('caja.col.amount')}</th>
+                        <th className="table-header text-right">Fecha</th>
+                      </tr>
+                    </thead>
+                    <tbody style={{ overflowY: 'auto', display: 'block', maxHeight: 'calc(100vh - 410px)' }}>
+                      {/* Egresos de caja */}
+                      {movimientos.filter((m) => m.tipo === 'egreso').length === 0 && egresosLibro.length === 0 ? (
+                        <tr><td colSpan={5} className="text-center py-6 text-slate-500">No hay egresos registrados</td></tr>
+                      ) : (
+                        <>
+                          {movimientos.filter((m) => m.tipo === 'egreso').map((m) => (
+                            <tr key={`caja-${m.id}`} className="table-row">
+                              <td className="table-cell"><span className="badge badge-blue text-xs">Caja</span></td>
+                              <td className="table-cell text-sm text-slate-300">{m.descripcion}</td>
+                              <td className="table-cell text-sm text-slate-400 capitalize">{m.metodo_pago}</td>
+                              <td className="table-cell text-right font-mono font-bold text-red-400">-${formatCurrency(m.monto)}</td>
+                              <td className="table-cell text-right text-xs text-slate-400">{new Date(m.fecha).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}</td>
+                            </tr>
+                          ))}
+                          {/* Egresos de libro de caja */}
+                          {egresosLibro.map((e) => (
+                            <tr key={`libro-${e.id}`} className="table-row">
+                              <td className="table-cell"><span className="badge badge-warning text-xs">Libro</span></td>
+                              <td className="table-cell text-sm text-slate-300">{e.proveedor}</td>
+                              <td className="table-cell text-sm text-slate-400 capitalize">{e.medio_pago || 'efectivo'}</td>
+                              <td className="table-cell text-right font-mono font-bold text-red-400">-${formatCurrency(e.monto)}</td>
+                              <td className="table-cell text-right text-xs text-slate-400">Libro</td>
+                            </tr>
+                          ))}
+                        </>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
