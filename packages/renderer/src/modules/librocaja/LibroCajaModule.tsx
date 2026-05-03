@@ -9,6 +9,7 @@ import { useLibroCajaStore } from '../../store/useLibroCajaStore';
 import { LibroCajaDia } from '../../lib/api';
 import { appAPI, cajaAPI } from '../../lib/api';
 import { useAppStore } from '../../store/useAppStore';
+import { ResumenDiarioExcel } from './ResumenDiarioExcel';
 
 // ── Utilidades ──────────────────────────────────────────────────────────────
 const fmt = (n: number) =>
@@ -1212,7 +1213,7 @@ const ResumenItem: React.FC<{ label: string; value: number; color: string; large
 );
 
 // ── Módulo principal ─────────────────────────────────────────────────────────
-type TabType = 'hoy' | 'tabla' | 'dia' | 'billetes';
+type TabType = 'hoy' | 'resumen' | 'tabla' | 'dia' | 'billetes';
 
 export const LibroCajaModule: React.FC = () => {
   const [tab, setTab] = useState<TabType>('hoy');  // Ahora 'hoy' es la pestaña por defecto
@@ -1226,6 +1227,7 @@ export const LibroCajaModule: React.FC = () => {
   // Solo mostrar la pestaña "hoy" por defecto. Las otras son para usuarios avanzados.
   const TABS: { id: TabType; label: string; icon: React.ElementType }[] = [
     { id: 'hoy',     label: 'Movimientos del día',   icon: Table2 },
+    { id: 'resumen', label: 'Resumen (Excel)',       icon: FileSpreadsheet },
     // Opcional: agregar otras pestañas si el usuario quiere
     // { id: 'tabla',   label: 'Libro de Caja',    icon: Table2 },
     // { id: 'dia',     label: 'Día / Turnos',     icon: Calendar },
@@ -1279,6 +1281,7 @@ export const LibroCajaModule: React.FC = () => {
       {/* Contenido */}
       <div style={{ flex: 1, overflow: 'auto', padding: 20 }}>
         {tab === 'hoy'      && <LibroCajaHoy />}
+        {tab === 'resumen'  && <ResumenDiarioExcel />}
         {tab === 'tabla'    && <TablaHistorico />}
         {tab === 'dia'      && <PanelDia />}
         {tab === 'billetes' && <ContadorBilletes />}
