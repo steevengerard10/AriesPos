@@ -191,9 +191,10 @@ export const CajaModule: React.FC = () => {
     return acc;
   }, {}), [movimientos]);
 
+  // Efectivo estimado: solo se afecta por ingresos/egresos de ESTA CAJA (POS), no por egresos rápidos (caja grande)
   const saldoEfectivoEstimado = (sesionActiva?.saldo_inicial || 0) +
     movimientos.filter((m) => m.metodo_pago === 'efectivo' && m.tipo === 'ingreso').reduce((s, m) => s + m.monto, 0) -
-    movimientos.filter((m) => m.tipo === 'egreso').reduce((s, m) => s + m.monto, 0);
+    movimientos.filter((m) => m.tipo === 'egreso' && m.metodo_pago === 'efectivo').reduce((s, m) => s + m.monto, 0);
 
   return (
     <div className="flex flex-col h-full">
