@@ -38,27 +38,109 @@
   --danger:  #dc2626;
   --text:    #0f172a;
   --text2:   #334155;
-  --text3:   #64748b;
+  --text3:   #475569;
 }
 
-/* En tema claro: evitar texto blanco por clases Tailwind hardcodeadas */
+/* Textos claros → negro */
 [data-theme="claro"] .text-white,
 [data-theme="claro"] .text-slate-50,
 [data-theme="claro"] .text-slate-100,
 [data-theme="claro"] .text-slate-200,
 [data-theme="claro"] .text-slate-300,
+[data-theme="claro"] .text-slate-400,
 [data-theme="claro"] .text-gray-50,
 [data-theme="claro"] .text-gray-100,
-[data-theme="claro"] .text-gray-200 {
+[data-theme="claro"] .text-gray-200,
+[data-theme="claro"] .text-gray-300,
+[data-theme="claro"] .text-gray-400 {
   color: var(--text) !important;
 }
 
-/* Fix: en tema claro, fondo blanco también debe ser visible */
+/* Fondos oscuros hardcodeados → claros */
+[data-theme="claro"] .bg-slate-800,
+[data-theme="claro"] .bg-slate-900,
+[data-theme="claro"] .bg-slate-950,
+[data-theme="claro"] .bg-gray-800,
+[data-theme="claro"] .bg-gray-900,
+[data-theme="claro"] .bg-gray-950,
+[data-theme="claro"] .bg-zinc-800,
+[data-theme="claro"] .bg-zinc-900,
+[data-theme="claro"] .bg-zinc-950,
+[data-theme="claro"] .bg-neutral-800,
+[data-theme="claro"] .bg-neutral-900 {
+  background-color: var(--bg2) !important;
+}
+
+/* Bordes oscuros */
+[data-theme="claro"] .border-slate-700,
+[data-theme="claro"] .border-slate-800,
+[data-theme="claro"] .border-gray-700,
+[data-theme="claro"] .border-gray-800,
+[data-theme="claro"] .border-zinc-700,
+[data-theme="claro"] .border-zinc-800 {
+  border-color: var(--border) !important;
+}
+
+/* Inline styles con colores oscuros hardcodeados */
 [data-theme="claro"] [style*="color: #e2e8f0"],
 [data-theme="claro"] [style*="color: #f0f0f0"],
 [data-theme="claro"] [style*="color: #f5f5f5"],
 [data-theme="claro"] [style*="color: #ffffff"],
-[data-theme="claro"] [style*="color: white"] {
+[data-theme="claro"] [style*="color: white"],
+[data-theme="claro"] [style*="color:#e2e8f0"],
+[data-theme="claro"] [style*="color:#f0f0f0"],
+[data-theme="claro"] [style*="color:#ffffff"] {
+  color: var(--text) !important;
+}
+
+[data-theme="claro"] [style*="background: #0d0f14"],
+[data-theme="claro"] [style*="background: #131720"],
+[data-theme="claro"] [style*="background: #1a1f2e"],
+[data-theme="claro"] [style*="background: #1f2535"],
+[data-theme="claro"] [style*="background:#0d0f14"],
+[data-theme="claro"] [style*="background:#131720"],
+[data-theme="claro"] [style*="background:#1a1f2e"],
+[data-theme="claro"] [style*="background:#1f2535"],
+[data-theme="claro"] [style*="background-color: #0d0f14"],
+[data-theme="claro"] [style*="background-color: #131720"],
+[data-theme="claro"] [style*="background-color: #1a1f2e"] {
+  background-color: var(--bg2) !important;
+}
+
+/* Diálogos y modales */
+[data-theme="claro"] [role="dialog"],
+[data-theme="claro"] [class*="modal"],
+[data-theme="claro"] [class*="Modal"],
+[data-theme="claro"] [class*="dialog"],
+[data-theme="claro"] [class*="Dialog"] {
+  background: var(--bg2) !important;
+  color: var(--text) !important;
+  border-color: var(--border) !important;
+}
+
+/* Inputs y selects */
+[data-theme="claro"] input,
+[data-theme="claro"] select,
+[data-theme="claro"] textarea {
+  background: var(--bg2) !important;
+  color: var(--text) !important;
+  border-color: var(--border) !important;
+}
+
+[data-theme="claro"] input::placeholder,
+[data-theme="claro"] textarea::placeholder {
+  color: var(--text3) !important;
+}
+
+/* Dropdowns / menús */
+[data-theme="claro"] [class*="dropdown"],
+[data-theme="claro"] [class*="Dropdown"],
+[data-theme="claro"] [class*="menu"],
+[data-theme="claro"] [class*="Menu"],
+[data-theme="claro"] [class*="popover"],
+[data-theme="claro"] [class*="Popover"] {
+  background: var(--bg2) !important;
+  border-color: var(--border) !important;
   color: var(--text) !important;
 }
 

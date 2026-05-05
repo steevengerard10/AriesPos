@@ -216,7 +216,11 @@ const App: React.FC = () => {
 
   // Aplicar tema guardado al montar y cuando cambia
   useEffect(() => {
-    document.documentElement.dataset.theme = theme === 'oscuro' ? '' : theme;
+    if (theme === 'oscuro') {
+      delete document.documentElement.dataset.theme;
+    } else {
+      document.documentElement.dataset.theme = theme;
+    }
   }, [theme]);
 
   // Aplicar fuente guardada al montar

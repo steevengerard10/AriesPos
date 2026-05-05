@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Save, RefreshCw, FileText, UserPlus, Percent, StickyNote, AlertTriangle,
   User, X
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { ProductSearch } from '../POS/ProductSearch';
+import type { ProductSearchHandle } from '../POS/ProductSearch';
 import { CartTable } from '../POS/CartTable';
 import { PaymentModal } from '../POS/PaymentModal';
 import { Modal } from '../shared/Modal';
@@ -48,6 +49,9 @@ export const POSWindow: React.FC = () => {
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [vendedores, setVendedores] = useState<Usuario[]>([]);
   const [descuentoInput, setDescuentoInput] = useState('0');
+
+  // Ref para acceder al ProductSearch y refocusarlo tras cobrar
+  const productSearchRef = useRef<ProductSearchHandle>(null);
   const [clienteSearch, setClienteSearch] = useState('');
   const [procesando, setProcesando] = useState(false);
   const [selectedPrecio, setSelectedPrecio] = useState<1 | 2 | 3>(1);
@@ -178,6 +182,11 @@ export const POSWindow: React.FC = () => {
 
       setShowPayment(false);
       resetSale();
+
+      // Refocus en el search bar para venta rápida
+      setTimeout(() => {
+        productSearchRef.current?.focus();
+      }, 100);
 
       // Imprimir ticket (fuera del try/catch principal para que un fallo al imprimir no cancele la venta)
       try {
@@ -339,7 +348,7 @@ export const POSWindow: React.FC = () => {
         className="shrink-0 px-3 py-2.5"
         style={{ background: 'var(--bg2)', borderBottom: '1px solid var(--border)' }}
       >
-        <ProductSearch autoFocus selectedPrecio={selectedPrecio} />
+        <ProductSearch ref={productSearchRef} autoFocus selectedPrecio={selectedPrecio} />
       </div>
 
       {/* ── Carrito (ocupa todo el espacio disponible) ───────────────────── */}

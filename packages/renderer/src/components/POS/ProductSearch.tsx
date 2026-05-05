@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useImperativeHandle } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Search, X, Loader2, CornerDownLeft } from 'lucide-react';
 import { productosAPI } from '../../lib/api';
@@ -27,14 +27,20 @@ interface ProductSearchProps {
   selectedPrecio?: 1 | 2 | 3;
 }
 
+interface ProductSearchHandle {
+  focus: () => void;
+}
+
+export type { ProductSearchHandle };
+
 // Pasos del flujo tipo Nextar: buscar → cantidad → precio → cargar
 type FlowStep = 'search' | 'qty' | 'price';
 
-export const ProductSearch: React.FC<ProductSearchProps> = ({
+export const ProductSearch = React.forwardRef<ProductSearchHandle, ProductSearchProps>(({
   onSelect,
   autoFocus = true,
   selectedPrecio = 1,
-}) => {
+}, ref) => {
   const { t } = useTranslation();
   const [query, setQuery] = useState('');
   const [qty, setQty] = useState('1');
@@ -59,6 +65,14 @@ export const ProductSearch: React.FC<ProductSearchProps> = ({
   useEffect(() => {
     if (autoFocus) inputRef.current?.focus();
   }, [autoFocus]);
+
+  // Exponer método focus desde el ref
+  useImperativeHandle(ref, () => ({
+    focus: () => {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    }
+  }), []);
 
   // Búsqueda con debounce — solo mientras no hay producto seleccionado
   useEffect(() => {
@@ -365,4 +379,4 @@ export const ProductSearch: React.FC<ProductSearchProps> = ({
     </div>
     </>
   );
-};
+});
