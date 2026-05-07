@@ -709,6 +709,37 @@ function runMigrations(db: Database.Database): void {
         console.log('[DB] Migración 013: libro_caja_periodos OK');
       },
     },
+    {
+      name: '014_libro_caja_manual',
+      run: (db: Database.Database) => {
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS libro_caja_manual (
+            fecha TEXT PRIMARY KEY,
+            target REAL DEFAULT 0,
+            cambio REAL DEFAULT 1500,
+            total_caja REAL DEFAULT 0,
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now'))
+          );
+          CREATE INDEX IF NOT EXISTS idx_lcm_fecha ON libro_caja_manual(fecha);
+        `);
+        console.log('[DB] Migración 014: libro_caja_manual OK');
+      },
+    },
+    {
+      name: '015_libro_caja_egresos_tipo',
+      run: (db: Database.Database) => {
+        const tableExists = db.prepare(
+          `SELECT name FROM sqlite_master WHERE type='table' AND name='libro_caja_egresos'`,
+        ).get();
+        if (!tableExists) return;
+        const cols = db.prepare(`PRAGMA table_info(libro_caja_egresos)`).all() as { name: string }[];
+        if (!cols.some(c => c.name === 'tipo')) {
+          db.exec(`ALTER TABLE libro_caja_egresos ADD COLUMN tipo TEXT NOT NULL DEFAULT 'egreso';`);
+        }
+        console.log('[DB] Migración 015: libro_caja_egresos.tipo OK');
+      },
+    },
   ];
 
   const executedMigrations: { name: string }[] = db

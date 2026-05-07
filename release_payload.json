@@ -1,0 +1,7 @@
+{
+  "tag_name": "v2.0.10",
+  "body": "v2.0.10: Auto-refocus product search after sale for quick sales workflow\n\nFeatured:\n- Cursor automatically returns to product search bar after completing a sale\n- Optimized for continuous quick sales workflow",
+  "name": "v2.0.10 - Auto-refocus after sale",
+  "draft": false,
+  "prerelease": false
+}

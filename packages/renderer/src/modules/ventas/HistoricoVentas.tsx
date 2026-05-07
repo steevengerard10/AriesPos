@@ -158,10 +158,10 @@ export const HistoricoVentas: React.FC = () => {
   const totalFiltrado = useMemo(() => filtered.reduce((s, v) => s + (v.estado !== 'anulada' ? v.total : 0), 0), [filtered]);
 
   // Ref para scroll automático
-  const tableBodyRef = React.useRef<HTMLTableSectionElement>(null);
+  const scrollRef = React.useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (tableBodyRef.current && filtered.length > 6) {
-      tableBodyRef.current.scrollTop = tableBodyRef.current.scrollHeight;
+    if (scrollRef.current && filtered.length > 6) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [filtered.length, loading]);
 
@@ -262,8 +262,8 @@ export const HistoricoVentas: React.FC = () => {
             className="rounded-xl overflow-hidden flex flex-col h-full"
             style={{ background: 'var(--bg2)', border: '1px solid var(--border)' }}
           >
-            <div className="flex-1 overflow-hidden">
-              <table className="w-full">
+            <div ref={scrollRef} className="flex-1 overflow-auto">
+              <table className="w-full" style={{ tableLayout: 'fixed' }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--border)' }}>
                     <th className="table-header">{t('hist.col.num')}</th>
@@ -276,11 +276,7 @@ export const HistoricoVentas: React.FC = () => {
                     <th className="table-header"></th>
                   </tr>
                 </thead>
-                <tbody
-                  ref={tableBodyRef}
-                  style={filtered.length > 6 ? { display: 'block', maxHeight: 56 * 6, overflowY: 'auto' } : {}}
-                  className={filtered.length > 6 ? 'block w-full' : ''}
-                >
+                <tbody>
                   {loading ? (
                     <tr><td colSpan={8} className="text-center py-12">
                       <div className="flex flex-col items-center gap-3">
@@ -291,7 +287,7 @@ export const HistoricoVentas: React.FC = () => {
                   ) : filtered.length === 0 ? (
                     <tr><td colSpan={8} className="text-center py-8 text-slate-500">{t('hist.empty')}</td></tr>
                   ) : filtered.map((v) => (
-                    <tr key={v.id} className="table-row cursor-pointer" style={filtered.length > 6 ? { display: 'table', width: '100%', tableLayout: 'fixed' } : {}} onClick={() => handleVerDetalle(v)}>
+                    <tr key={v.id} className="table-row cursor-pointer" onClick={() => handleVerDetalle(v)}>
                       <td className="table-cell font-mono text-blue-400 text-sm">#{v.numero}</td>
                       <td className="table-cell text-xs" style={{ color: 'var(--text3)' }}>
                         {formatDate(v.fecha)}{v.hora ? ` ${String(v.hora).slice(0, 5)}` : ''}

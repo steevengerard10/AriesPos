@@ -1067,6 +1067,104 @@ export function createSyncRouter(io: SocketIOServer, exportFiadosToExcel: Export
     res.json({ dia, turnos, billetes, egresos });
   });
 
+  router.get('/librocaja/diario', (req, res) => {
+    const db = getDb();
+    const { periodo } = req.query as { periodo?: string };
+    if (!periodo) { res.status(400).json({ error: 'periodo requerido' }); return; }
+    const desde = `${periodo}-01`;
+    const hasta = `${periodo}-31`;
+
+    const ventas = db.prepare(`
+      SELECT
+        fecha,
+        COALESCE(SUM(CASE
+          WHEN metodo_pago = 'efectivo' AND estado NOT IN ('cancelada','devolucion','anulada') THEN total
+          ELSE 0
+        END), 0) as ventas_efectivo,
+        COALESCE(SUM(CASE
+          WHEN metodo_pago IN ('transferencia','qr','mercadopago') AND estado NOT IN ('cancelada','devolucion','anulada') THEN total
+          ELSE 0
+        END), 0) as ventas_transferencia
+      FROM ventas
+      WHERE fecha BETWEEN ? AND ?
+      GROUP BY fecha
+    `).all(desde, hasta) as Array<{ fecha: string; ventas_efectivo: number; ventas_transferencia: number }>;
+    const ventasMap = new Map(ventas.map(v => [v.fecha, v]));
+
+    const dias = db.prepare(`
+      SELECT fecha, caja, egresos, gastos_tarjeta
+      FROM libro_caja_dias
+      WHERE fecha BETWEEN ? AND ?
+    `).all(desde, hasta) as Array<{ fecha: string; caja: number; egresos: number; gastos_tarjeta: number }>;
+    const diasMap = new Map(dias.map(d => [d.fecha, d]));
+
+    const manual = db.prepare(`
+      SELECT fecha, target, cambio, total_caja
+      FROM libro_caja_manual
+      WHERE fecha BETWEEN ? AND ?
+    `).all(desde, hasta) as Array<{ fecha: string; target: number; cambio: number; total_caja: number }>;
+    const manualMap = new Map(manual.map(m => [m.fecha, m]));
+
+    const [yy, mm] = periodo.split('-').map((x) => parseInt(x, 10));
+    const lastDay = new Date(yy, (mm - 1) + 1, 0).getDate();
+    const out: any[] = [];
+    for (let day = 1; day <= lastDay; day++) {
+      const fecha = `${periodo}-${String(day).padStart(2, '0')}`;
+      const v = ventasMap.get(fecha);
+      const d = diasMap.get(fecha);
+      const m = manualMap.get(fecha);
+      const ventasEfe = v?.ventas_efectivo || 0;
+      const ventasTransf = v?.ventas_transferencia || 0;
+      out.push({
+        fecha,
+        libro: ventasEfe + ventasTransf,
+        caja: d?.caja || 0,
+        egreso: d?.egresos || 0,
+        target: m?.target || 0,
+        cambio: (m?.cambio ?? 1500),
+        transferencias: ventasTransf,
+        gastos_tarjeta: d?.gastos_tarjeta || 0,
+        total_caja: m?.total_caja || 0,
+      });
+    }
+    res.json(out);
+  });
+
+  router.get('/librocaja/manual', (req, res) => {
+    const db = getDb();
+    const { periodo } = req.query as { periodo?: string };
+    if (!periodo) { res.status(400).json({ error: 'periodo requerido' }); return; }
+    const desde = `${periodo}-01`;
+    const hasta = `${periodo}-31`;
+    res.json(db.prepare(`
+      SELECT fecha, target, cambio, total_caja
+      FROM libro_caja_manual
+      WHERE fecha BETWEEN ? AND ?
+      ORDER BY fecha ASC
+    `).all(desde, hasta));
+  });
+
+  router.post('/librocaja/manual/:fecha', (req: Request, res: Response) => {
+    const db = getDb();
+    const { fecha } = req.params;
+    const data = req.body as { target?: number; cambio?: number; total_caja?: number };
+    const allowed = ['target', 'cambio', 'total_caja'] as const;
+    const filtered = Object.fromEntries(Object.entries(data || {}).filter(([k]) => (allowed as readonly string[]).includes(k)));
+    if (Object.keys(filtered).length === 0) { res.json({ success: true }); return; }
+    const exists = db.prepare(`SELECT fecha FROM libro_caja_manual WHERE fecha = ?`).get(fecha);
+    if (!exists) {
+      db.prepare(`
+        INSERT INTO libro_caja_manual (fecha, target, cambio, total_caja)
+        VALUES (@fecha, COALESCE(@target, 0), COALESCE(@cambio, 1500), COALESCE(@total_caja, 0))
+      `).run({ fecha, ...filtered });
+      res.json({ success: true });
+      return;
+    }
+    const fields = Object.keys(filtered).map(k => `${k} = @${k}`).join(', ');
+    db.prepare(`UPDATE libro_caja_manual SET ${fields}, updated_at = datetime('now') WHERE fecha = @fecha`).run({ fecha, ...filtered });
+    res.json({ success: true });
+  });
+
   router.get('/librocaja/historico', (req, res) => {
     const db = getDb();
     const { periodo } = req.query as { periodo?: string };
@@ -1184,11 +1282,12 @@ export function createSyncRouter(io: SocketIOServer, exportFiadosToExcel: Export
   router.post('/librocaja/:fecha/egreso', (req: Request, res: Response) => {
     const db = getDb();
     const { fecha } = req.params;
-    const { proveedor, monto, medio_pago = 'efectivo' } = req.body as { proveedor: string; monto: number; medio_pago?: string };
+    const { proveedor, monto, medio_pago = 'efectivo', tipo } = req.body as { proveedor: string; monto: number; medio_pago?: string; tipo?: string };
     const medioPago = medio_pago === 'transferencia' ? 'transferencia' : 'efectivo';
     db.prepare(`INSERT OR IGNORE INTO libro_caja_dias (fecha) VALUES (?)`).run(fecha);
     const dia = db.prepare(`SELECT id FROM libro_caja_dias WHERE fecha = ?`).get(fecha) as { id: number };
-    const result = db.prepare(`INSERT INTO libro_caja_egresos (dia_id, proveedor, monto, medio_pago) VALUES (?, ?, ?, ?)`).run(dia.id, proveedor, monto, medioPago);
+    const tipoVal = tipo === 'egreso_rapido' ? 'egreso_rapido' : 'egreso';
+    const result = db.prepare(`INSERT INTO libro_caja_egresos (dia_id, proveedor, monto, medio_pago, tipo) VALUES (?, ?, ?, ?, ?)`).run(dia.id, proveedor, monto, medioPago, tipoVal);
     // egresos acumula efectivo y resta de extra_caja (Caja Grande); transferencia afecta sus propios campos
     const totalEfectivo = (db.prepare(`SELECT COALESCE(SUM(monto),0) as t FROM libro_caja_egresos WHERE dia_id = ? AND medio_pago = 'efectivo'`).get(dia.id) as { t: number }).t;
     if (medioPago === 'efectivo') {

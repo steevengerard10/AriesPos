@@ -1779,6 +1779,119 @@ export function registerIpcHandlers(): void {
     return { dia, turnos, billetes, egresos };
   });
 
+  // ── LIBRO DE CAJA (manual por día / mes) ────────────────────────────────
+  ipcMain.handle('librocaja:manual:getMes', (_e, periodo: string) => {
+    const db = getDb();
+    const desde = `${periodo}-01`;
+    const hasta = `${periodo}-31`;
+    return db.prepare(`
+      SELECT fecha, target, cambio, total_caja
+      FROM libro_caja_manual
+      WHERE fecha BETWEEN ? AND ?
+      ORDER BY fecha ASC
+    `).all(desde, hasta);
+  });
+
+  ipcMain.handle('librocaja:manual:set', (_e, fecha: string, data: { target?: number; cambio?: number; total_caja?: number }) => {
+    const db = getDb();
+    const row = db.prepare(`SELECT fecha FROM libro_caja_manual WHERE fecha = ?`).get(fecha) as { fecha: string } | undefined;
+    const allowed = ['target', 'cambio', 'total_caja'] as const;
+    const filtered = Object.fromEntries(Object.entries(data || {}).filter(([k]) => (allowed as readonly string[]).includes(k)));
+    if (Object.keys(filtered).length === 0) return { success: true };
+
+    if (!row) {
+      db.prepare(`
+        INSERT INTO libro_caja_manual (fecha, target, cambio, total_caja)
+        VALUES (@fecha, COALESCE(@target, 0), COALESCE(@cambio, 1500), COALESCE(@total_caja, 0))
+      `).run({ fecha, ...filtered });
+      return { success: true };
+    }
+
+    const fields = Object.keys(filtered).map(k => `${k} = @${k}`).join(', ');
+    db.prepare(`UPDATE libro_caja_manual SET ${fields}, updated_at = datetime('now') WHERE fecha = @fecha`).run({ fecha, ...filtered });
+    return { success: true };
+  });
+
+  ipcMain.handle('librocaja:diario:getMes', (_e, periodo: string) => {
+    const db = getDb();
+    const desde = `${periodo}-01`;
+    const hasta = `${periodo}-31`;
+
+    // Ventas por día (para Libro y Transferencias)
+    const ventas = db.prepare(`
+      SELECT
+        fecha,
+        COALESCE(SUM(CASE
+          WHEN metodo_pago = 'efectivo' AND estado NOT IN ('cancelada','devolucion','anulada') THEN total
+          ELSE 0
+        END), 0) as ventas_efectivo,
+        COALESCE(SUM(CASE
+          WHEN metodo_pago IN ('transferencia','qr','mercadopago') AND estado NOT IN ('cancelada','devolucion','anulada') THEN total
+          ELSE 0
+        END), 0) as ventas_transferencia
+      FROM ventas
+      WHERE fecha BETWEEN ? AND ?
+      GROUP BY fecha
+    `).all(desde, hasta) as Array<{ fecha: string; ventas_efectivo: number; ventas_transferencia: number }>;
+    const ventasMap = new Map(ventas.map(v => [v.fecha, v]));
+
+    // Libro caja días (para Caja/Egreso/Gastos tarjeta)
+    const dias = db.prepare(`
+      SELECT fecha, caja, egresos, gastos_tarjeta
+      FROM libro_caja_dias
+      WHERE fecha BETWEEN ? AND ?
+    `).all(desde, hasta) as Array<{ fecha: string; caja: number; egresos: number; gastos_tarjeta: number }>;
+    const diasMap = new Map(dias.map(d => [d.fecha, d]));
+
+    // Manual (Target/Cambio/Total en caja)
+    const manual = db.prepare(`
+      SELECT fecha, target, cambio, total_caja
+      FROM libro_caja_manual
+      WHERE fecha BETWEEN ? AND ?
+    `).all(desde, hasta) as Array<{ fecha: string; target: number; cambio: number; total_caja: number }>;
+    const manualMap = new Map(manual.map(m => [m.fecha, m]));
+
+    // Generar todos los días del mes solicitado (1..31; luego se filtra por mes real desde JS en renderer si hiciera falta)
+    const out: Array<{
+      fecha: string;
+      libro: number;
+      caja: number;
+      egreso: number;
+      target: number;
+      cambio: number;
+      transferencias: number;
+      gastos_tarjeta: number;
+      total_caja: number;
+    }> = [];
+
+    // Determinar cantidad de días del mes real
+    const [yy, mm] = periodo.split('-').map((x) => parseInt(x, 10));
+    const lastDay = new Date(yy, (mm - 1) + 1, 0).getDate();
+
+    for (let day = 1; day <= lastDay; day++) {
+      const fecha = `${periodo}-${String(day).padStart(2, '0')}`;
+      const v = ventasMap.get(fecha);
+      const d = diasMap.get(fecha);
+      const m = manualMap.get(fecha);
+      const ventasEfe = v?.ventas_efectivo || 0;
+      const ventasTransf = v?.ventas_transferencia || 0;
+
+      out.push({
+        fecha,
+        libro: ventasEfe + ventasTransf,
+        caja: d?.caja || 0,
+        egreso: d?.egresos || 0,
+        target: m?.target || 0,
+        cambio: (m?.cambio ?? 1500),
+        transferencias: ventasTransf,
+        gastos_tarjeta: d?.gastos_tarjeta || 0,
+        total_caja: m?.total_caja || 0,
+      });
+    }
+
+    return out;
+  });
+
   ipcMain.handle('librocaja:getHistorico', (_e, periodo?: string) => {
     const db = getDb();
     if (periodo) {
@@ -1953,9 +2066,10 @@ export function registerIpcHandlers(): void {
       dia = { id: result.lastInsertRowid as number };
     }
     const medioPago = data.medio_pago === 'transferencia' ? 'transferencia' : 'efectivo';
+    const tipo = (data as { tipo?: string }).tipo === 'egreso_rapido' ? 'egreso_rapido' : 'egreso';
     const result = db.prepare(`
-      INSERT INTO libro_caja_egresos (dia_id, proveedor, monto, medio_pago) VALUES (?, ?, ?, ?)
-    `).run(dia.id, data.proveedor.trim(), data.monto, medioPago);
+      INSERT INTO libro_caja_egresos (dia_id, proveedor, monto, medio_pago, tipo) VALUES (?, ?, ?, ?, ?)
+    `).run(dia.id, data.proveedor.trim(), data.monto, medioPago, tipo);
 
     // egresos solo acumula egresos en efectivo; transferencia afecta sus propios campos
     const totalEgresosEfectivo = (db.prepare(`

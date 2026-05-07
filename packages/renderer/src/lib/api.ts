@@ -290,6 +290,19 @@ export interface LibroCajaEgreso {
   monto: number;
   fecha: string;
   medio_pago: 'efectivo' | 'transferencia';
+  tipo?: 'egreso' | 'egreso_rapido';
+}
+
+export interface LibroCajaDiarioRow {
+  fecha: string;
+  libro: number;
+  caja: number;
+  egreso: number;
+  target: number;
+  cambio: number;
+  transferencias: number;
+  gastos_tarjeta: number;
+  total_caja: number;
 }
 
 export const libroCajaAPI = {
@@ -321,6 +334,14 @@ export const libroCajaAPI = {
     invoke<{ success: boolean }>('librocaja:cerrarMes', periodo),
   reabrirMes: (periodo: string) =>
     invoke<{ success: boolean }>('librocaja:reabrirMes', periodo),
+
+  // Libro diario mensual (nuevo)
+  getDiarioMes: (periodo: string) =>
+    invoke<LibroCajaDiarioRow[]>('librocaja:diario:getMes', periodo),
+  getManualMes: (periodo: string) =>
+    invoke<Array<{ fecha: string; target: number; cambio: number; total_caja: number }>>('librocaja:manual:getMes', periodo),
+  setManual: (fecha: string, data: { target?: number; cambio?: number; total_caja?: number }) =>
+    invoke<{ success: boolean }>('librocaja:manual:set', fecha, data),
 };
 
 // ── AUTH ──────────────────────────────────────────────────

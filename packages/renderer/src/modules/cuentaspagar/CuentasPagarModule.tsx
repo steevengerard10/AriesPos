@@ -6,7 +6,6 @@ import { Modal, ConfirmDialog } from '../../components/shared/Modal';
 import { formatCurrency, formatDate } from '../../lib/utils';
 import { useAppStore } from '../../store/useAppStore';
 import { useLibroCajaStore } from '../../store/useLibroCajaStore';
-import { cajaAPI } from '../../lib/api';
 
 interface CuentaPagar {
   id: number;
@@ -32,7 +31,7 @@ export const CuentasPagarModule: React.FC = () => {
   const { t } = useTranslation();
   const { currentUser } = useAppStore();
   const isAdmin = currentUser?.rol === 'admin';
-  const { egresos, addEgreso, removeEgreso, cargarDia, fechaSeleccionada } = useLibroCajaStore();
+  const { egresos, removeEgreso, cargarDia, fechaSeleccionada } = useLibroCajaStore();
   const egresosListRef = useRef<HTMLDivElement>(null);
 
   const [cuentas, setCuentas] = useState<CuentaPagar[]>([]);
@@ -45,7 +44,6 @@ export const CuentasPagarModule: React.FC = () => {
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
   const [showPagar, setShowPagar] = useState<CuentaPagar | null>(null);
   const [montoAPagar, setMontoAPagar] = useState('');
-  const [sesionCajaId, setSesionCajaId] = useState<number | null>(null);
 
   // Estado de egresos rápidos
   const [egresoProveedor, setEgresoProveedor] = useState('');
@@ -67,10 +65,6 @@ export const CuentasPagarModule: React.FC = () => {
   useEffect(() => {
     loadData();
     cargarDia(); // cargar egresos del día actual
-    // Cargar sesión activa de caja
-    cajaAPI.getSesionActiva().then((sesion) => {
-      setSesionCajaId((sesion as any)?.id || null);
-    }).catch(() => setSesionCajaId(null));
   }, []);
 
   const handleAddEgreso = useCallback(async () => {
@@ -79,26 +73,23 @@ export const CuentasPagarModule: React.FC = () => {
     if (!monto || monto <= 0) { toast.error('Ingresá un monto válido'); return; }
     setAddingEgreso(true);
     try {
-      // Agregar a Libro de Caja
-      await addEgreso(egresoProveedor.trim(), monto, egresoMedioPago);
-      
-      // Agregar a Caja si hay sesión activa
-      if (sesionCajaId) {
-        await cajaAPI.agregarMovimiento(sesionCajaId, {
-          tipo: 'egreso',
-          concepto: egresoProveedor.trim(),
-          monto,
-          metodo_pago: egresoMedioPago,
-        });
-      }
+      // Agregar a Libro de Caja como "egreso_rapido" (no afecta caja diaria)
+      const { invoke } = (window as unknown as { electron: { invoke: (c: string, ...a: unknown[]) => Promise<unknown> } }).electron;
+      await invoke('librocaja:addEgreso', fechaSeleccionada, {
+        proveedor: egresoProveedor.trim(),
+        monto,
+        medio_pago: egresoMedioPago,
+        tipo: 'egreso_rapido',
+      });
+      await cargarDia(fechaSeleccionada);
       
       setEgresoProveedor('');
       setEgresoMonto('');
-      toast.success('Egreso registrado en Caja y Libro de Caja');
+      toast.success('Egreso rápido registrado (solo Libro de Caja)');
     } finally {
       setAddingEgreso(false);
     }
-  }, [egresoProveedor, egresoMonto, egresoMedioPago, addEgreso, sesionCajaId]);
+  }, [egresoProveedor, egresoMonto, egresoMedioPago, fechaSeleccionada, cargarDia]);
 
   const filtered = cuentas.filter((c) => {
     const matchSearch = !search.trim() ||

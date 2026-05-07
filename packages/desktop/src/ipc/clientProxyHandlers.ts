@@ -409,6 +409,15 @@ export function registerClientProxyHandlers(serverIP: string, port: number, serv
   ipcMain.handle('librocaja:getDia', (_e, fecha: string) =>
     get(`/api/sync/librocaja?fecha=${fecha}`));
 
+  ipcMain.handle('librocaja:diario:getMes', (_e, periodo: string) =>
+    get(`/api/sync/librocaja/diario?periodo=${periodo}`));
+
+  ipcMain.handle('librocaja:manual:getMes', (_e, periodo: string) =>
+    get(`/api/sync/librocaja/manual?periodo=${periodo}`));
+
+  ipcMain.handle('librocaja:manual:set', (_e, fecha: string, data: Record<string, unknown>) =>
+    post(`/api/sync/librocaja/manual/${fecha}`, data));
+
   ipcMain.handle('librocaja:getHistorico', (_e, periodo?: string) =>
     get(`/api/sync/librocaja/historico${periodo ? `?periodo=${periodo}` : ''}`));
 

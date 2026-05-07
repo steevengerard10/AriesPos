@@ -1,6 +1,6 @@
 {
   "name": "ariespos",
-  "version": "2.0.10",
+  "version": "2.1.0",
   "private": true,
   "description": "ARIESPos - Sistema de Punto de Venta",
   "scripts": {

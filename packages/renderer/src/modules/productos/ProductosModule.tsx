@@ -673,10 +673,6 @@ export const ProductosModule: React.FC = () => {
 
             </div>
 
-// ------------------- FIN DEL FORMULARIO -------------------
-
-// (El bloque de estado y hooks de proveedores se movió al inicio del componente, antes de cualquier return)
-
             {/* Checkboxes */}
             <div className="col-span-4 flex items-center gap-8 pt-2">
               <label className="flex items-center gap-2 cursor-pointer text-sm" style={{ color: 'var(--text2)' }}>
