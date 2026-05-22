@@ -67,6 +67,8 @@ export const productosAPI = {
     invoke<BulkProductRow[]>('productos:bulkGetByFilters', filters),
   bulkUpdatePrices: (payload: { productIds: number[]; percentage: number }) =>
     invoke<{ updated: number }>('productos:bulkUpdatePrices', payload),
+  updateProveedor: (oldName: string, newName: string) =>
+    invoke<{ success: boolean; updated: number }>('productos:updateProveedor', oldName, newName),
 };
 
 // ── CATEGORIAS ──────────────────────────────────────────────────
@@ -108,6 +110,13 @@ export const ventasAPI = {
   convertirPedido: (pedidoId: number) => invoke('ventas:convertirPedido', pedidoId),
   editar: (ventaId: number, changes: { observaciones?: string; metodo_pago?: string; cliente_id?: number | null }) =>
     invoke('ventas:editar', ventaId, changes),
+  /** Persiste igual que `editar` (IPC `ventas:editar`, SQLite). */
+  update: (ventaId: number, changes: { observaciones?: string; metodo_pago?: string; cliente_id?: number | null }) =>
+    invoke<{ success: boolean; error?: string }>('ventas:editar', ventaId, changes),
+  getCanceladas: (filters?: { desde?: string; hasta?: string }) =>
+    invoke('ventas:getCanceladas', filters),
+  cancelar: (ventaId: number, meta?: { motivo?: string }) =>
+    invoke<{ success: boolean; error?: string }>('ventas:cancelar', ventaId, meta),
 };
 
 // ── STOCK ──────────────────────────────────────────────────
@@ -155,6 +164,8 @@ export const cajaAPI = {
 export const statsAPI = {
   dashboard: () => invoke('stats:dashboard'),
   ventasPorPeriodo: (desde: string, hasta: string) => invoke('stats:ventasPorPeriodo', desde, hasta),
+  margenesPeriodo: (desde: string, hasta: string) =>
+    invoke<{ total_ganancia: number; total_perdida: number; balance_neto: number }>('stats:margenesPeriodo', desde, hasta),
 };
 
 // ── COMBOS ──────────────────────────────────────────────────
@@ -188,6 +199,8 @@ export const usuariosAPI = {
 export const configAPI = {
   getAll: () => invoke<Record<string, string>>('config:getAll'),
   set: (clave: string, valor: string) => invoke('config:set', clave, valor),
+  /** Persiste igual que `set`; alias nombrado como en otros módulos. */
+  update: (clave: string, valor: string) => invoke('config:set', clave, valor),
   setMultiple: (data: Record<string, string>) => invoke('config:setMultiple', data),
 };
 
@@ -290,7 +303,7 @@ export interface LibroCajaEgreso {
   monto: number;
   fecha: string;
   medio_pago: 'efectivo' | 'transferencia';
-  tipo?: 'egreso' | 'egreso_rapido';
+  tipo?: 'egreso' | 'egreso_rapido' | 'egreso_efectivo' | 'egreso_transferencia';
 }
 
 export interface LibroCajaDiarioRow {
@@ -311,7 +324,7 @@ export const libroCajaAPI = {
   getHistorico: (periodo?: string) =>
     invoke<LibroCajaDia[]>('librocaja:getHistorico', periodo),
   updateDia: (fecha: string, data: Partial<LibroCajaDia>) =>
-    invoke<{ success: boolean }>('librocaja:updateDia', fecha, data),
+    invoke<{ success: boolean; error?: string }>('librocaja:updateDia', fecha, data),
   syncFromVentas: (fecha: string) =>
     invoke<{ tarjetas: number; transferencias: number }>('librocaja:syncFromVentas', fecha),
   abrirTurno: (fecha: string, data?: { monto_apertura?: number; usuario_id?: number; notas?: string }) =>
@@ -340,8 +353,8 @@ export const libroCajaAPI = {
     invoke<LibroCajaDiarioRow[]>('librocaja:diario:getMes', periodo),
   getManualMes: (periodo: string) =>
     invoke<Array<{ fecha: string; target: number; cambio: number; total_caja: number }>>('librocaja:manual:getMes', periodo),
-  setManual: (fecha: string, data: { target?: number; cambio?: number; total_caja?: number }) =>
-    invoke<{ success: boolean }>('librocaja:manual:set', fecha, data),
+  setManual: (fecha: string, data: { target?: number; cambio?: number; total_caja?: number; tarjeta_override?: number | null }) =>
+    invoke<{ success: boolean; error?: string }>('librocaja:manual:set', fecha, data),
 };
 
 // ── AUTH ──────────────────────────────────────────────────

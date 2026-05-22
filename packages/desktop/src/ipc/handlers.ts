@@ -596,6 +596,22 @@ export function registerIpcHandlers(): void {
     return importNixtarBackup(resolvedPath, sendProgress);
   });
 
+  // ── ACTUALIZAR PROVEEDOR (renombrar en todos los productos) ────
+  ipcMain.handle('productos:updateProveedor', (_e, oldName: string, newName: string) => {
+    const db = getDb();
+    if (!oldName || !newName) return { success: false, updated: 0 };
+    
+    // Actualizar todos los productos con el proveedor antiguo
+    const result = db.prepare(`
+      UPDATE productos
+      SET proveedor = @newName, updated_at = datetime('now')
+      WHERE proveedor = @oldName
+    `).run({ oldName, newName });
+    
+    emitToWeb('producto:actualizado', { reload: true });
+    return { success: true, updated: result.changes };
+  });
+
   // ── CATEGORIAS ────────────────────────────────────────────────
   ipcMain.handle('categorias:getAll', () => {
     const db = getDb();
@@ -944,8 +960,132 @@ export function registerIpcHandlers(): void {
     if (filters?.cliente_id) { query += ` AND v.cliente_id = ?`; params.push(filters.cliente_id); }
     if (filters?.vendedor_id) { query += ` AND v.vendedor_id = ?`; params.push(filters.vendedor_id); }
 
+    query += ` AND (v.estado IS NULL OR v.estado NOT IN ('cancelada'))`;
     query += ` ORDER BY v.created_at DESC LIMIT 500`;
     return db.prepare(query).all(...params);
+  });
+
+  ipcMain.handle('ventas:getCanceladas', (_e, filters?: { desde?: string; hasta?: string }) => {
+    const db = getDb();
+    let query = `
+      SELECT vc.*,
+        (SELECT COUNT(*) FROM venta_cancelada_items vci WHERE vci.venta_cancelada_id = vc.id) as total_items,
+        (SELECT GROUP_CONCAT(
+          COALESCE(vci.producto_nombre, 'Item') || ' x' || CAST(vci.cantidad AS TEXT),
+          ' | '
+        )
+        FROM venta_cancelada_items vci
+        WHERE vci.venta_cancelada_id = vc.id
+        ) as productos
+      FROM ventas_canceladas vc
+      WHERE 1=1
+    `;
+    const params: unknown[] = [];
+    if (filters?.desde) { query += ` AND vc.fecha >= ?`; params.push(filters.desde); }
+    if (filters?.hasta) { query += ` AND vc.fecha <= ?`; params.push(filters.hasta); }
+    query += ` ORDER BY vc.cancelada_at DESC LIMIT 500`;
+    return db.prepare(query).all(...params);
+  });
+
+  ipcMain.handle('ventas:cancelar', (_e, ventaId: number, meta?: { motivo?: string }) => {
+    const db = getDb();
+    const venta = db.prepare(`
+      SELECT v.*, c.nombre as cliente_nombre, u.nombre as vendedor_nombre
+      FROM ventas v
+      LEFT JOIN clientes c ON v.cliente_id = c.id
+      LEFT JOIN usuarios u ON v.vendedor_id = u.id
+      WHERE v.id = ?
+    `).get(ventaId) as Record<string, unknown> | undefined;
+    if (!venta) return { success: false, error: 'Venta no encontrada' };
+
+    const items = db.prepare(`
+      SELECT vi.*, p.nombre as producto_nombre, p.codigo as producto_codigo
+      FROM venta_items vi
+      LEFT JOIN productos p ON p.id = vi.producto_id
+      WHERE vi.venta_id = ?
+    `).all(ventaId) as {
+      producto_id: number; cantidad: number; precio_unitario: number; descuento: number; total: number;
+      producto_nombre: string; producto_codigo: string;
+    }[];
+
+    const sesionActiva = db.prepare(`SELECT id FROM caja_sesiones WHERE fecha_cierre IS NULL ORDER BY id DESC LIMIT 1`).get() as { id: number } | undefined;
+    const motivo = meta?.motivo?.trim() || 'Cancelación manual';
+
+    db.transaction(() => {
+      const cancelId = (db.prepare(`
+        INSERT INTO ventas_canceladas (
+          venta_id_original, numero, tipo, estado, fecha, hora, cliente_id, vendedor_id,
+          subtotal, descuento, total, metodo_pago, es_fiado, observaciones,
+          cliente_nombre, vendedor_nombre, motivo, created_at_original
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        ventaId,
+        venta.numero,
+        venta.tipo,
+        venta.estado,
+        venta.fecha,
+        venta.hora,
+        venta.cliente_id,
+        venta.vendedor_id,
+        venta.subtotal,
+        venta.descuento,
+        venta.total,
+        venta.metodo_pago,
+        venta.es_fiado,
+        venta.observaciones,
+        venta.cliente_nombre,
+        venta.vendedor_nombre,
+        motivo,
+        venta.created_at,
+      ) as { lastInsertRowid: number }).lastInsertRowid;
+
+      for (const item of items) {
+        db.prepare(`
+          INSERT INTO venta_cancelada_items (
+            venta_cancelada_id, producto_id, producto_nombre, producto_codigo,
+            cantidad, precio_unitario, descuento, total
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          cancelId, item.producto_id, item.producto_nombre, item.producto_codigo,
+          item.cantidad, item.precio_unitario, item.descuento, item.total,
+        );
+
+        if (venta.tipo === 'venta' && item.producto_id) {
+          const prodStock = db.prepare(`SELECT stock_actual FROM productos WHERE id = ?`).get(item.producto_id) as { stock_actual: number } | undefined;
+          const stockPrevio = prodStock?.stock_actual ?? 0;
+          const stockNuevo = stockPrevio + item.cantidad;
+          db.prepare(`UPDATE productos SET stock_actual = stock_actual + ?, updated_at = datetime('now') WHERE id = ?`)
+            .run(item.cantidad, item.producto_id);
+          db.prepare(`
+            INSERT INTO stock_movimientos (producto_id, tipo, cantidad, motivo, venta_id, stock_previo, stock_nuevo)
+            VALUES (?, 'entrada', ?, ?, NULL, ?, ?)
+          `).run(item.producto_id, item.cantidad, `Cancelación venta #${venta.numero}`, stockPrevio, stockNuevo);
+        }
+      }
+
+      const esFiado = Number(venta.es_fiado || 0) === 1;
+      if (venta.tipo === 'venta' && !esFiado && sesionActiva) {
+        const ingresos = db.prepare(`
+          SELECT id, monto, metodo_pago FROM caja_movimientos
+          WHERE venta_id = ? AND tipo = 'ingreso'
+        `).all(ventaId) as { id: number; monto: number; metodo_pago: string }[];
+        for (const ing of ingresos) {
+          db.prepare(`
+            INSERT INTO caja_movimientos (sesion_id, tipo, monto, descripcion, metodo_pago, venta_id)
+            VALUES (?, 'egreso', ?, ?, ?, NULL)
+          `).run(sesionActiva.id, ing.monto, `Cancelación venta #${venta.numero}`, ing.metodo_pago || venta.metodo_pago);
+        }
+      }
+
+      db.prepare(`DELETE FROM ventas WHERE id = ?`).run(ventaId);
+    })();
+
+    emitToWeb('stock:actualizado', {});
+    emitToWeb('venta:actualizada', { ventaId });
+    if (Number(venta.es_fiado || 0) === 1 && venta.cliente_id) {
+      emitToWeb('fiados:list-changed', { clienteId: venta.cliente_id });
+    }
+    return { success: true };
   });
 
   ipcMain.handle('ventas:editar', (_e, ventaId: number, changes: {
@@ -956,7 +1096,9 @@ export function registerIpcHandlers(): void {
     const db = getDb();
     const venta = db.prepare('SELECT * FROM ventas WHERE id = ?').get(ventaId) as Record<string, unknown> | undefined;
     if (!venta) return { success: false, error: 'Venta no encontrada' };
-    if (venta.estado === 'anulada') return { success: false, error: 'No se puede editar una venta anulada' };
+    if (venta.estado === 'anulada' || venta.estado === 'cancelada') {
+      return { success: false, error: 'No se puede editar una venta cancelada o anulada' };
+    }
 
     db.transaction(() => {
       const sets: string[] = [];
@@ -1388,6 +1530,25 @@ export function registerIpcHandlers(): void {
     `).all(desde, hasta);
   });
 
+  /** Margen por ítem: (precio_unitario venta − precio_costo producto actual) × cantidad; ventas no anuladas */
+  ipcMain.handle('stats:margenesPeriodo', (_e, desde: string, hasta: string) => {
+    const db = getDb();
+    const row = db.prepare(`
+      SELECT
+        COALESCE(SUM(CASE WHEN (vi.precio_unitario - COALESCE(p.precio_costo, 0)) * vi.cantidad > 0
+          THEN (vi.precio_unitario - COALESCE(p.precio_costo, 0)) * vi.cantidad ELSE 0 END), 0) AS total_ganancia,
+        COALESCE(SUM(CASE WHEN (vi.precio_unitario - COALESCE(p.precio_costo, 0)) * vi.cantidad < 0
+          THEN -(vi.precio_unitario - COALESCE(p.precio_costo, 0)) * vi.cantidad ELSE 0 END), 0) AS total_perdida,
+        COALESCE(SUM((vi.precio_unitario - COALESCE(p.precio_costo, 0)) * vi.cantidad), 0) AS balance_neto
+      FROM venta_items vi
+      JOIN ventas v ON v.id = vi.venta_id AND v.tipo = 'venta'
+        AND (v.estado IS NULL OR v.estado <> 'anulada')
+      JOIN productos p ON p.id = vi.producto_id
+      WHERE date(v.fecha) BETWEEN date(?) AND date(?)
+    `).get(desde, hasta) as { total_ganancia: number; total_perdida: number; balance_neto: number };
+    return row;
+  });
+
   // ── CUENTAS A PAGAR ────────────────────────────────────────────────
   ipcMain.handle('cuentaspagar:getAll', () => {
     const db = getDb();
@@ -1785,31 +1946,45 @@ export function registerIpcHandlers(): void {
     const desde = `${periodo}-01`;
     const hasta = `${periodo}-31`;
     return db.prepare(`
-      SELECT fecha, target, cambio, total_caja
+      SELECT fecha, target, cambio, total_caja, tarjeta_override
       FROM libro_caja_manual
       WHERE fecha BETWEEN ? AND ?
       ORDER BY fecha ASC
     `).all(desde, hasta);
   });
 
-  ipcMain.handle('librocaja:manual:set', (_e, fecha: string, data: { target?: number; cambio?: number; total_caja?: number }) => {
-    const db = getDb();
-    const row = db.prepare(`SELECT fecha FROM libro_caja_manual WHERE fecha = ?`).get(fecha) as { fecha: string } | undefined;
-    const allowed = ['target', 'cambio', 'total_caja'] as const;
-    const filtered = Object.fromEntries(Object.entries(data || {}).filter(([k]) => (allowed as readonly string[]).includes(k)));
-    if (Object.keys(filtered).length === 0) return { success: true };
+  ipcMain.handle('librocaja:manual:set', (_e, fecha: string, data: { target?: number; cambio?: number; total_caja?: number; tarjeta_override?: number | null }) => {
+    try {
+      const db = getDb();
+      const row = db.prepare(`SELECT fecha FROM libro_caja_manual WHERE fecha = ?`).get(fecha) as { fecha: string } | undefined;
+      const allowed = ['target', 'cambio', 'total_caja', 'tarjeta_override'] as const;
+      const filtered = Object.fromEntries(Object.entries(data || {}).filter(([k]) => (allowed as readonly string[]).includes(k)));
+      if (Object.keys(filtered).length === 0) return { success: true };
 
-    if (!row) {
-      db.prepare(`
-        INSERT INTO libro_caja_manual (fecha, target, cambio, total_caja)
-        VALUES (@fecha, COALESCE(@target, 0), COALESCE(@cambio, 1500), COALESCE(@total_caja, 0))
-      `).run({ fecha, ...filtered });
+      if (!row) {
+        const ins = {
+          fecha,
+          target: (filtered as { target?: number }).target ?? 0,
+          cambio: (filtered as { cambio?: number }).cambio ?? 1500,
+          total_caja: (filtered as { total_caja?: number }).total_caja ?? 0,
+          tarjeta_override: Object.prototype.hasOwnProperty.call(filtered, 'tarjeta_override')
+            ? (filtered as { tarjeta_override?: number | null }).tarjeta_override ?? null
+            : null,
+        };
+        db.prepare(`
+          INSERT INTO libro_caja_manual (fecha, target, cambio, total_caja, tarjeta_override)
+          VALUES (@fecha, @target, @cambio, @total_caja, @tarjeta_override)
+        `).run(ins);
+        return { success: true };
+      }
+
+      const fields = Object.keys(filtered).map(k => `${k} = @${k}`).join(', ');
+      db.prepare(`UPDATE libro_caja_manual SET ${fields}, updated_at = datetime('now') WHERE fecha = @fecha`).run({ fecha, ...filtered });
       return { success: true };
+    } catch (err) {
+      console.error('[librocaja:manual:set]', err);
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
     }
-
-    const fields = Object.keys(filtered).map(k => `${k} = @${k}`).join(', ');
-    db.prepare(`UPDATE libro_caja_manual SET ${fields}, updated_at = datetime('now') WHERE fecha = @fecha`).run({ fecha, ...filtered });
-    return { success: true };
   });
 
   ipcMain.handle('librocaja:diario:getMes', (_e, periodo: string) => {
@@ -1817,41 +1992,66 @@ export function registerIpcHandlers(): void {
     const desde = `${periodo}-01`;
     const hasta = `${periodo}-31`;
 
-    // Ventas por día (para Libro y Transferencias)
     const ventas = db.prepare(`
+      WITH movimientos_dia AS (
+        SELECT
+          v.fecha,
+          CASE
+            WHEN v.metodo_pago = 'efectivo' THEN 'libro'
+            WHEN v.metodo_pago IN ('tarjeta_debito','tarjeta_credito','qr','tarjeta') THEN 'target'
+            WHEN v.metodo_pago = 'transferencia' THEN 'transferencias'
+            ELSE NULL
+          END AS col,
+          v.total AS monto
+        FROM ventas v
+        WHERE v.fecha BETWEEN ? AND ?
+          AND v.tipo = 'venta'
+          AND v.es_fiado = 0
+          AND v.metodo_pago != 'mixto'
+          AND v.estado NOT IN ('cancelada','devolucion','anulada')
+        UNION ALL
+        SELECT
+          v.fecha,
+          CASE
+            WHEN cm.metodo_pago = 'efectivo' THEN 'libro'
+            WHEN cm.metodo_pago IN ('tarjeta_debito','tarjeta_credito','qr','tarjeta') THEN 'target'
+            WHEN cm.metodo_pago = 'transferencia' THEN 'transferencias'
+            ELSE NULL
+          END AS col,
+          cm.monto AS monto
+        FROM ventas v
+        INNER JOIN caja_movimientos cm ON cm.venta_id = v.id AND cm.tipo = 'ingreso'
+        WHERE v.fecha BETWEEN ? AND ?
+          AND v.tipo = 'venta'
+          AND v.es_fiado = 0
+          AND v.metodo_pago = 'mixto'
+          AND v.estado NOT IN ('cancelada','devolucion','anulada')
+      )
       SELECT
         fecha,
-        COALESCE(SUM(CASE
-          WHEN metodo_pago = 'efectivo' AND estado NOT IN ('cancelada','devolucion','anulada') THEN total
-          ELSE 0
-        END), 0) as ventas_efectivo,
-        COALESCE(SUM(CASE
-          WHEN metodo_pago IN ('transferencia','qr','mercadopago') AND estado NOT IN ('cancelada','devolucion','anulada') THEN total
-          ELSE 0
-        END), 0) as ventas_transferencia
-      FROM ventas
-      WHERE fecha BETWEEN ? AND ?
+        COALESCE(SUM(CASE WHEN col = 'libro' THEN monto ELSE 0 END), 0) as ventas_efectivo,
+        COALESCE(SUM(CASE WHEN col = 'target' THEN monto ELSE 0 END), 0) as ventas_target,
+        COALESCE(SUM(CASE WHEN col = 'transferencias' THEN monto ELSE 0 END), 0) as ventas_transferencia
+      FROM movimientos_dia
+      WHERE col IS NOT NULL
       GROUP BY fecha
-    `).all(desde, hasta) as Array<{ fecha: string; ventas_efectivo: number; ventas_transferencia: number }>;
+    `).all(desde, hasta, desde, hasta) as Array<{ fecha: string; ventas_efectivo: number; ventas_target: number; ventas_transferencia: number }>;
     const ventasMap = new Map(ventas.map(v => [v.fecha, v]));
 
-    // Libro caja días (para Caja/Egreso/Gastos tarjeta)
     const dias = db.prepare(`
-      SELECT fecha, caja, egresos, gastos_tarjeta
+      SELECT fecha, caja, egresos, gastos_tarjeta, transferencias
       FROM libro_caja_dias
       WHERE fecha BETWEEN ? AND ?
-    `).all(desde, hasta) as Array<{ fecha: string; caja: number; egresos: number; gastos_tarjeta: number }>;
+    `).all(desde, hasta) as Array<{ fecha: string; caja: number; egresos: number; gastos_tarjeta: number; transferencias: number }>;
     const diasMap = new Map(dias.map(d => [d.fecha, d]));
 
-    // Manual (Target/Cambio/Total en caja)
     const manual = db.prepare(`
-      SELECT fecha, target, cambio, total_caja
+      SELECT fecha, target, cambio, total_caja, tarjeta_override
       FROM libro_caja_manual
       WHERE fecha BETWEEN ? AND ?
-    `).all(desde, hasta) as Array<{ fecha: string; target: number; cambio: number; total_caja: number }>;
+    `).all(desde, hasta) as Array<{ fecha: string; target: number; cambio: number; total_caja: number; tarjeta_override: number | null }>;
     const manualMap = new Map(manual.map(m => [m.fecha, m]));
 
-    // Generar todos los días del mes solicitado (1..31; luego se filtra por mes real desde JS en renderer si hiciera falta)
     const out: Array<{
       fecha: string;
       libro: number;
@@ -1864,7 +2064,6 @@ export function registerIpcHandlers(): void {
       total_caja: number;
     }> = [];
 
-    // Determinar cantidad de días del mes real
     const [yy, mm] = periodo.split('-').map((x) => parseInt(x, 10));
     const lastDay = new Date(yy, (mm - 1) + 1, 0).getDate();
 
@@ -1874,14 +2073,15 @@ export function registerIpcHandlers(): void {
       const d = diasMap.get(fecha);
       const m = manualMap.get(fecha);
       const ventasEfe = v?.ventas_efectivo || 0;
+      const ventasTarget = v?.ventas_target || 0;
       const ventasTransf = v?.ventas_transferencia || 0;
 
       out.push({
         fecha,
-        libro: ventasEfe + ventasTransf,
+        libro: ventasEfe,
         caja: d?.caja || 0,
         egreso: d?.egresos || 0,
-        target: m?.target || 0,
+        target: m?.target != null ? m.target : ventasTarget,
         cambio: (m?.cambio ?? 1500),
         transferencias: ventasTransf,
         gastos_tarjeta: d?.gastos_tarjeta || 0,
@@ -1966,18 +2166,23 @@ export function registerIpcHandlers(): void {
   });
 
   ipcMain.handle('librocaja:updateDia', (_e, fecha: string, data: Record<string, unknown>) => {
-    const db = getDb();
-    let dia = db.prepare(`SELECT * FROM libro_caja_dias WHERE fecha = ?`).get(fecha) as { id: number } | undefined;
-    if (!dia) {
-      const result = db.prepare(`INSERT INTO libro_caja_dias (fecha, cambio) VALUES (?, 1500)`).run(fecha);
-      dia = { id: result.lastInsertRowid as number };
+    try {
+      const db = getDb();
+      db.prepare(`INSERT OR IGNORE INTO libro_caja_dias (fecha, cambio) VALUES (?, 1500)`).run(fecha);
+      const dia = db.prepare(`SELECT id FROM libro_caja_dias WHERE fecha = ?`).get(fecha) as { id: number } | undefined;
+      if (!dia) return { success: false, error: 'No se pudo crear el día en libro de caja' };
+
+      const allowed = ['libro', 'caja', 'egresos', 'tarjetas', 'cambio', 'transferencias', 'gastos_tarjeta', 'extra_caja', 'notas'];
+      const filtered = Object.fromEntries(Object.entries(data || {}).filter(([k]) => allowed.includes(k)));
+      if (Object.keys(filtered).length === 0) return { success: true };
+
+      const fields = Object.keys(filtered).map(k => `${k} = @${k}`).join(', ');
+      db.prepare(`UPDATE libro_caja_dias SET ${fields}, updated_at = datetime('now') WHERE id = @id`).run({ ...filtered, id: dia.id });
+      return { success: true };
+    } catch (err) {
+      console.error('[librocaja:updateDia]', err);
+      return { success: false, error: err instanceof Error ? err.message : String(err) };
     }
-    const allowed = ['libro', 'caja', 'egresos', 'tarjetas', 'cambio', 'transferencias', 'gastos_tarjeta', 'extra_caja', 'notas'];
-    const filtered = Object.fromEntries(Object.entries(data).filter(([k]) => allowed.includes(k)));
-    if (Object.keys(filtered).length === 0) return { success: true };
-    const fields = Object.keys(filtered).map(k => `${k} = @${k}`).join(', ');
-    db.prepare(`UPDATE libro_caja_dias SET ${fields}, updated_at = datetime('now') WHERE id = @id`).run({ ...filtered, id: dia.id });
-    return { success: true };
   });
 
   ipcMain.handle('librocaja:syncFromVentas', (_e, fecha: string) => {
@@ -1985,13 +2190,13 @@ export function registerIpcHandlers(): void {
     const tarjetas = (db.prepare(`
       SELECT COALESCE(SUM(total), 0) as total
       FROM ventas
-      WHERE fecha = ? AND metodo_pago IN ('tarjeta','debito','credito') AND estado NOT IN ('cancelada','devolucion')
+      WHERE fecha = ? AND metodo_pago IN ('tarjeta','qr','debito','credito') AND estado NOT IN ('cancelada','devolucion')
     `).get(fecha) as { total: number }).total;
 
     const transferencias = (db.prepare(`
       SELECT COALESCE(SUM(total), 0) as total
       FROM ventas
-      WHERE fecha = ? AND metodo_pago IN ('transferencia','qr','mercadopago') AND estado NOT IN ('cancelada','devolucion')
+      WHERE fecha = ? AND metodo_pago IN ('transferencia','mercadopago') AND estado NOT IN ('cancelada','devolucion')
     `).get(fecha) as { total: number }).total;
 
     let dia = db.prepare(`SELECT * FROM libro_caja_dias WHERE fecha = ?`).get(fecha) as { id: number } | undefined;
@@ -2066,7 +2271,13 @@ export function registerIpcHandlers(): void {
       dia = { id: result.lastInsertRowid as number };
     }
     const medioPago = data.medio_pago === 'transferencia' ? 'transferencia' : 'efectivo';
-    const tipo = (data as { tipo?: string }).tipo === 'egreso_rapido' ? 'egreso_rapido' : 'egreso';
+    const rawTipo = (data as { tipo?: string }).tipo;
+    const tipo =
+      rawTipo === 'egreso_efectivo' || rawTipo === 'egreso_transferencia'
+        ? rawTipo
+        : rawTipo === 'egreso_rapido'
+          ? (medioPago === 'transferencia' ? 'egreso_transferencia' : 'egreso_efectivo')
+          : 'egreso';
     const result = db.prepare(`
       INSERT INTO libro_caja_egresos (dia_id, proveedor, monto, medio_pago, tipo) VALUES (?, ?, ?, ?, ?)
     `).run(dia.id, data.proveedor.trim(), data.monto, medioPago, tipo);

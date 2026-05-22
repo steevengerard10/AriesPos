@@ -601,7 +601,31 @@ export function createSyncRouter(io: SocketIOServer, exportFiadosToExcel: Export
     if (tipo) { query += ` AND v.tipo = ?`; params.push(tipo); }
     if (cliente_id) { query += ` AND v.cliente_id = ?`; params.push(parseInt(cliente_id)); }
     if (vendedor_id) { query += ` AND v.vendedor_id = ?`; params.push(parseInt(vendedor_id)); }
+    query += ` AND (v.estado IS NULL OR v.estado NOT IN ('cancelada'))`;
     query += ` ORDER BY v.created_at DESC LIMIT 500`;
+    res.json(db.prepare(query).all(...params));
+  });
+
+  router.get('/ventas/canceladas', (req, res) => {
+    const db = getDb();
+    const { desde, hasta } = req.query as Record<string, string>;
+    let query = `
+      SELECT vc.*,
+        (SELECT COUNT(*) FROM venta_cancelada_items vci WHERE vci.venta_cancelada_id = vc.id) as total_items,
+        (SELECT GROUP_CONCAT(
+          COALESCE(vci.producto_nombre, 'Item') || ' x' || CAST(vci.cantidad AS TEXT),
+          ' | '
+        )
+        FROM venta_cancelada_items vci
+        WHERE vci.venta_cancelada_id = vc.id
+        ) as productos
+      FROM ventas_canceladas vc
+      WHERE 1=1
+    `;
+    const params: unknown[] = [];
+    if (desde) { query += ` AND vc.fecha >= ?`; params.push(desde); }
+    if (hasta) { query += ` AND vc.fecha <= ?`; params.push(hasta); }
+    query += ` ORDER BY vc.cancelada_at DESC LIMIT 500`;
     res.json(db.prepare(query).all(...params));
   });
 
@@ -628,15 +652,105 @@ export function createSyncRouter(io: SocketIOServer, exportFiadosToExcel: Export
     const db = getDb();
     const id = parseInt(req.params.id);
     const changes = req.body as { observaciones?: string; metodo_pago?: string; cliente_id?: number | null };
-    const sets: string[] = [];
-    const params: unknown[] = [];
-    if (changes.observaciones !== undefined) { sets.push('observaciones = ?'); params.push(changes.observaciones); }
-    if (changes.metodo_pago !== undefined) { sets.push('metodo_pago = ?'); params.push(changes.metodo_pago); }
-    if ('cliente_id' in changes) { sets.push('cliente_id = ?'); params.push(changes.cliente_id ?? null); }
-    if (sets.length) {
-      params.push(id);
-      db.prepare(`UPDATE ventas SET ${sets.join(', ')} WHERE id = ?`).run(...params);
+    const venta = db.prepare('SELECT * FROM ventas WHERE id = ?').get(id) as Record<string, unknown> | undefined;
+    if (!venta) { res.status(404).json({ success: false, error: 'Venta no encontrada' }); return; }
+    if (venta.estado === 'anulada' || venta.estado === 'cancelada') {
+      res.status(400).json({ success: false, error: 'No se puede editar una venta cancelada o anulada' });
+      return;
     }
+    db.transaction(() => {
+      const sets: string[] = [];
+      const params: unknown[] = [];
+      if (changes.observaciones !== undefined) { sets.push('observaciones = ?'); params.push(changes.observaciones); }
+      if (changes.metodo_pago !== undefined) { sets.push('metodo_pago = ?'); params.push(changes.metodo_pago); }
+      if ('cliente_id' in changes) { sets.push('cliente_id = ?'); params.push(changes.cliente_id ?? null); }
+      if (sets.length) {
+        params.push(id);
+        db.prepare(`UPDATE ventas SET ${sets.join(', ')} WHERE id = ?`).run(...params);
+      }
+      if (changes.metodo_pago !== undefined) {
+        const esVenta = venta.tipo === 'venta';
+        const esFiado = Number(venta.es_fiado || 0) === 1 || String(venta.metodo_pago || '') === 'fiado';
+        if (esVenta && !esFiado) {
+          db.prepare(`UPDATE caja_movimientos SET metodo_pago = ? WHERE venta_id = ? AND tipo = 'ingreso'`)
+            .run(changes.metodo_pago, id);
+        }
+      }
+    })();
+    res.json({ success: true });
+  });
+
+  router.post('/ventas/:id/cancelar', (req: Request, res: Response) => {
+    const db = getDb();
+    const ventaId = parseInt(req.params.id);
+    const motivo = (req.body as { motivo?: string })?.motivo?.trim() || 'Cancelación manual';
+    const venta = db.prepare(`
+      SELECT v.*, c.nombre as cliente_nombre, u.nombre as vendedor_nombre
+      FROM ventas v
+      LEFT JOIN clientes c ON v.cliente_id = c.id
+      LEFT JOIN usuarios u ON v.vendedor_id = u.id
+      WHERE v.id = ?
+    `).get(ventaId) as Record<string, unknown> | undefined;
+    if (!venta) { res.status(404).json({ success: false, error: 'Venta no encontrada' }); return; }
+
+    const items = db.prepare(`
+      SELECT vi.*, p.nombre as producto_nombre, p.codigo as producto_codigo
+      FROM venta_items vi
+      LEFT JOIN productos p ON p.id = vi.producto_id
+      WHERE vi.venta_id = ?
+    `).all(ventaId) as {
+      producto_id: number; cantidad: number; precio_unitario: number; descuento: number; total: number;
+      producto_nombre: string; producto_codigo: string;
+    }[];
+
+    const sesion = db.prepare(`SELECT id FROM caja_sesiones WHERE fecha_cierre IS NULL ORDER BY id DESC LIMIT 1`).get() as { id: number } | undefined;
+
+    db.transaction(() => {
+      const cancelId = (db.prepare(`
+        INSERT INTO ventas_canceladas (
+          venta_id_original, numero, tipo, estado, fecha, hora, cliente_id, vendedor_id,
+          subtotal, descuento, total, metodo_pago, es_fiado, observaciones,
+          cliente_nombre, vendedor_nombre, motivo, created_at_original
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        ventaId, venta.numero, venta.tipo, venta.estado, venta.fecha, venta.hora,
+        venta.cliente_id, venta.vendedor_id, venta.subtotal, venta.descuento, venta.total,
+        venta.metodo_pago, venta.es_fiado, venta.observaciones,
+        venta.cliente_nombre, venta.vendedor_nombre, motivo, venta.created_at,
+      ) as { lastInsertRowid: number }).lastInsertRowid;
+
+      for (const item of items) {
+        db.prepare(`
+          INSERT INTO venta_cancelada_items (
+            venta_cancelada_id, producto_id, producto_nombre, producto_codigo,
+            cantidad, precio_unitario, descuento, total
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          cancelId, item.producto_id, item.producto_nombre, item.producto_codigo,
+          item.cantidad, item.precio_unitario, item.descuento, item.total,
+        );
+        if (venta.tipo === 'venta' && item.producto_id) {
+          const prod = db.prepare(`SELECT stock_actual FROM productos WHERE id = ?`).get(item.producto_id) as { stock_actual: number } | undefined;
+          const prev = prod?.stock_actual ?? 0;
+          const nuevo = prev + item.cantidad;
+          db.prepare(`UPDATE productos SET stock_actual = stock_actual + ?, updated_at = datetime('now') WHERE id = ?`).run(item.cantidad, item.producto_id);
+          db.prepare(`INSERT INTO stock_movimientos (producto_id, tipo, cantidad, motivo, venta_id, stock_previo, stock_nuevo) VALUES (?, 'entrada', ?, ?, NULL, ?, ?)`)
+            .run(item.producto_id, item.cantidad, `Cancelación venta #${venta.numero}`, prev, nuevo);
+        }
+      }
+
+      const esFiado = Number(venta.es_fiado || 0) === 1;
+      if (venta.tipo === 'venta' && !esFiado && sesion) {
+        const ingresos = db.prepare(`SELECT monto, metodo_pago FROM caja_movimientos WHERE venta_id = ? AND tipo = 'ingreso'`).all(ventaId) as { monto: number; metodo_pago: string }[];
+        for (const ing of ingresos) {
+          db.prepare(`INSERT INTO caja_movimientos (sesion_id, tipo, monto, descripcion, metodo_pago, venta_id) VALUES (?, 'egreso', ?, ?, ?, NULL)`)
+            .run(sesion.id, ing.monto, `Cancelación venta #${venta.numero}`, ing.metodo_pago || venta.metodo_pago);
+        }
+      }
+      db.prepare(`DELETE FROM ventas WHERE id = ?`).run(ventaId);
+    })();
+
+    emit('stock:actualizado', {});
     res.json({ success: true });
   });
 
@@ -879,6 +993,25 @@ export function createSyncRouter(io: SocketIOServer, exportFiadosToExcel: Export
     `).all(desde, hasta));
   });
 
+  router.get('/stats/margenes', (req, res) => {
+    const db = getDb();
+    const { desde, hasta } = req.query as { desde: string; hasta: string };
+    const row = db.prepare(`
+      SELECT
+        COALESCE(SUM(CASE WHEN (vi.precio_unitario - COALESCE(p.precio_costo, 0)) * vi.cantidad > 0
+          THEN (vi.precio_unitario - COALESCE(p.precio_costo, 0)) * vi.cantidad ELSE 0 END), 0) AS total_ganancia,
+        COALESCE(SUM(CASE WHEN (vi.precio_unitario - COALESCE(p.precio_costo, 0)) * vi.cantidad < 0
+          THEN -(vi.precio_unitario - COALESCE(p.precio_costo, 0)) * vi.cantidad ELSE 0 END), 0) AS total_perdida,
+        COALESCE(SUM((vi.precio_unitario - COALESCE(p.precio_costo, 0)) * vi.cantidad), 0) AS balance_neto
+      FROM venta_items vi
+      JOIN ventas v ON v.id = vi.venta_id AND v.tipo = 'venta'
+        AND (v.estado IS NULL OR v.estado <> 'anulada')
+      JOIN productos p ON p.id = vi.producto_id
+      WHERE date(v.fecha) BETWEEN date(?) AND date(?)
+    `).get(desde, hasta) as { total_ganancia: number; total_perdida: number; balance_neto: number };
+    res.json(row);
+  });
+
   // ── CUENTAS A PAGAR ──────────────────────────────────────────────────────────────
 
   router.get('/cuentaspagar', (_req, res) => {
@@ -1075,34 +1208,63 @@ export function createSyncRouter(io: SocketIOServer, exportFiadosToExcel: Export
     const hasta = `${periodo}-31`;
 
     const ventas = db.prepare(`
+      WITH movimientos_dia AS (
+        SELECT
+          v.fecha,
+          CASE
+            WHEN v.metodo_pago = 'efectivo' THEN 'libro'
+            WHEN v.metodo_pago IN ('tarjeta_debito','tarjeta_credito','qr','tarjeta') THEN 'target'
+            WHEN v.metodo_pago = 'transferencia' THEN 'transferencias'
+            ELSE NULL
+          END AS col,
+          v.total AS monto
+        FROM ventas v
+        WHERE v.fecha BETWEEN ? AND ?
+          AND v.tipo = 'venta'
+          AND v.es_fiado = 0
+          AND v.metodo_pago != 'mixto'
+          AND v.estado NOT IN ('cancelada','devolucion','anulada')
+        UNION ALL
+        SELECT
+          v.fecha,
+          CASE
+            WHEN cm.metodo_pago = 'efectivo' THEN 'libro'
+            WHEN cm.metodo_pago IN ('tarjeta_debito','tarjeta_credito','qr','tarjeta') THEN 'target'
+            WHEN cm.metodo_pago = 'transferencia' THEN 'transferencias'
+            ELSE NULL
+          END AS col,
+          cm.monto AS monto
+        FROM ventas v
+        INNER JOIN caja_movimientos cm ON cm.venta_id = v.id AND cm.tipo = 'ingreso'
+        WHERE v.fecha BETWEEN ? AND ?
+          AND v.tipo = 'venta'
+          AND v.es_fiado = 0
+          AND v.metodo_pago = 'mixto'
+          AND v.estado NOT IN ('cancelada','devolucion','anulada')
+      )
       SELECT
         fecha,
-        COALESCE(SUM(CASE
-          WHEN metodo_pago = 'efectivo' AND estado NOT IN ('cancelada','devolucion','anulada') THEN total
-          ELSE 0
-        END), 0) as ventas_efectivo,
-        COALESCE(SUM(CASE
-          WHEN metodo_pago IN ('transferencia','qr','mercadopago') AND estado NOT IN ('cancelada','devolucion','anulada') THEN total
-          ELSE 0
-        END), 0) as ventas_transferencia
-      FROM ventas
-      WHERE fecha BETWEEN ? AND ?
+        COALESCE(SUM(CASE WHEN col = 'libro' THEN monto ELSE 0 END), 0) as ventas_efectivo,
+        COALESCE(SUM(CASE WHEN col = 'target' THEN monto ELSE 0 END), 0) as ventas_target,
+        COALESCE(SUM(CASE WHEN col = 'transferencias' THEN monto ELSE 0 END), 0) as ventas_transferencia
+      FROM movimientos_dia
+      WHERE col IS NOT NULL
       GROUP BY fecha
-    `).all(desde, hasta) as Array<{ fecha: string; ventas_efectivo: number; ventas_transferencia: number }>;
+    `).all(desde, hasta, desde, hasta) as Array<{ fecha: string; ventas_efectivo: number; ventas_target: number; ventas_transferencia: number }>;
     const ventasMap = new Map(ventas.map(v => [v.fecha, v]));
 
     const dias = db.prepare(`
-      SELECT fecha, caja, egresos, gastos_tarjeta
+      SELECT fecha, caja, egresos, gastos_tarjeta, transferencias
       FROM libro_caja_dias
       WHERE fecha BETWEEN ? AND ?
-    `).all(desde, hasta) as Array<{ fecha: string; caja: number; egresos: number; gastos_tarjeta: number }>;
+    `).all(desde, hasta) as Array<{ fecha: string; caja: number; egresos: number; gastos_tarjeta: number; transferencias: number }>;
     const diasMap = new Map(dias.map(d => [d.fecha, d]));
 
     const manual = db.prepare(`
-      SELECT fecha, target, cambio, total_caja
+      SELECT fecha, target, cambio, total_caja, tarjeta_override
       FROM libro_caja_manual
       WHERE fecha BETWEEN ? AND ?
-    `).all(desde, hasta) as Array<{ fecha: string; target: number; cambio: number; total_caja: number }>;
+    `).all(desde, hasta) as Array<{ fecha: string; target: number; cambio: number; total_caja: number; tarjeta_override: number | null }>;
     const manualMap = new Map(manual.map(m => [m.fecha, m]));
 
     const [yy, mm] = periodo.split('-').map((x) => parseInt(x, 10));
@@ -1114,13 +1276,14 @@ export function createSyncRouter(io: SocketIOServer, exportFiadosToExcel: Export
       const d = diasMap.get(fecha);
       const m = manualMap.get(fecha);
       const ventasEfe = v?.ventas_efectivo || 0;
+      const ventasTarget = v?.ventas_target || 0;
       const ventasTransf = v?.ventas_transferencia || 0;
       out.push({
         fecha,
-        libro: ventasEfe + ventasTransf,
+        libro: ventasEfe,
         caja: d?.caja || 0,
         egreso: d?.egresos || 0,
-        target: m?.target || 0,
+        target: m?.target != null ? m.target : ventasTarget,
         cambio: (m?.cambio ?? 1500),
         transferencias: ventasTransf,
         gastos_tarjeta: d?.gastos_tarjeta || 0,
@@ -1137,7 +1300,7 @@ export function createSyncRouter(io: SocketIOServer, exportFiadosToExcel: Export
     const desde = `${periodo}-01`;
     const hasta = `${periodo}-31`;
     res.json(db.prepare(`
-      SELECT fecha, target, cambio, total_caja
+      SELECT fecha, target, cambio, total_caja, tarjeta_override
       FROM libro_caja_manual
       WHERE fecha BETWEEN ? AND ?
       ORDER BY fecha ASC
@@ -1145,24 +1308,38 @@ export function createSyncRouter(io: SocketIOServer, exportFiadosToExcel: Export
   });
 
   router.post('/librocaja/manual/:fecha', (req: Request, res: Response) => {
-    const db = getDb();
-    const { fecha } = req.params;
-    const data = req.body as { target?: number; cambio?: number; total_caja?: number };
-    const allowed = ['target', 'cambio', 'total_caja'] as const;
-    const filtered = Object.fromEntries(Object.entries(data || {}).filter(([k]) => (allowed as readonly string[]).includes(k)));
-    if (Object.keys(filtered).length === 0) { res.json({ success: true }); return; }
-    const exists = db.prepare(`SELECT fecha FROM libro_caja_manual WHERE fecha = ?`).get(fecha);
-    if (!exists) {
-      db.prepare(`
-        INSERT INTO libro_caja_manual (fecha, target, cambio, total_caja)
-        VALUES (@fecha, COALESCE(@target, 0), COALESCE(@cambio, 1500), COALESCE(@total_caja, 0))
-      `).run({ fecha, ...filtered });
+    try {
+      const db = getDb();
+      const { fecha } = req.params;
+      const data = req.body as { target?: number; cambio?: number; total_caja?: number; tarjeta_override?: number | null };
+      const allowed = ['target', 'cambio', 'total_caja', 'tarjeta_override'] as const;
+      const filtered = Object.fromEntries(Object.entries(data || {}).filter(([k]) => (allowed as readonly string[]).includes(k)));
+      if (Object.keys(filtered).length === 0) { res.json({ success: true }); return; }
+      const exists = db.prepare(`SELECT fecha FROM libro_caja_manual WHERE fecha = ?`).get(fecha);
+      if (!exists) {
+        const ins = {
+          fecha,
+          target: (filtered as { target?: number }).target ?? 0,
+          cambio: (filtered as { cambio?: number }).cambio ?? 1500,
+          total_caja: (filtered as { total_caja?: number }).total_caja ?? 0,
+          tarjeta_override: Object.prototype.hasOwnProperty.call(filtered, 'tarjeta_override')
+            ? (filtered as { tarjeta_override?: number | null }).tarjeta_override ?? null
+            : null,
+        };
+        db.prepare(`
+          INSERT INTO libro_caja_manual (fecha, target, cambio, total_caja, tarjeta_override)
+          VALUES (@fecha, @target, @cambio, @total_caja, @tarjeta_override)
+        `).run(ins);
+        res.json({ success: true });
+        return;
+      }
+      const fields = Object.keys(filtered).map(k => `${k} = @${k}`).join(', ');
+      db.prepare(`UPDATE libro_caja_manual SET ${fields}, updated_at = datetime('now') WHERE fecha = @fecha`).run({ fecha, ...filtered });
       res.json({ success: true });
-      return;
+    } catch (err) {
+      console.error('[sync librocaja/manual]', err);
+      res.status(500).json({ success: false, error: err instanceof Error ? err.message : String(err) });
     }
-    const fields = Object.keys(filtered).map(k => `${k} = @${k}`).join(', ');
-    db.prepare(`UPDATE libro_caja_manual SET ${fields}, updated_at = datetime('now') WHERE fecha = @fecha`).run({ fecha, ...filtered });
-    res.json({ success: true });
   });
 
   router.get('/librocaja/historico', (req, res) => {
@@ -1219,18 +1396,24 @@ export function createSyncRouter(io: SocketIOServer, exportFiadosToExcel: Export
   });
 
   router.put('/librocaja/:fecha', (req: Request, res: Response) => {
-    const db = getDb();
-    const { fecha } = req.params;
-    const data = req.body as Record<string, unknown>;
-    db.prepare(`INSERT OR IGNORE INTO libro_caja_dias (fecha) VALUES (?)`).run(fecha);
-    const dia = db.prepare(`SELECT id FROM libro_caja_dias WHERE fecha = ?`).get(fecha) as { id: number };
-    const allowed = ['caja','tarjetas','transferencias','egresos','cambio','notas','gastos_tarjeta','libro','extra_caja'];
-    const filtered = Object.fromEntries(Object.entries(data).filter(([k]) => allowed.includes(k)));
-    if (Object.keys(filtered).length) {
-      const fields = Object.keys(filtered).map(k => `${k} = @${k}`).join(', ');
-      db.prepare(`UPDATE libro_caja_dias SET ${fields}, updated_at = datetime('now') WHERE id = @id`).run({ ...filtered, id: dia.id });
+    try {
+      const db = getDb();
+      const { fecha } = req.params;
+      const data = req.body as Record<string, unknown>;
+      db.prepare(`INSERT OR IGNORE INTO libro_caja_dias (fecha, cambio) VALUES (?, 1500)`).run(fecha);
+      const dia = db.prepare(`SELECT id FROM libro_caja_dias WHERE fecha = ?`).get(fecha) as { id: number } | undefined;
+      if (!dia) { res.status(500).json({ success: false, error: 'No se pudo crear el día' }); return; }
+      const allowed = ['caja','tarjetas','transferencias','egresos','cambio','notas','gastos_tarjeta','libro','extra_caja'];
+      const filtered = Object.fromEntries(Object.entries(data || {}).filter(([k]) => allowed.includes(k)));
+      if (Object.keys(filtered).length) {
+        const fields = Object.keys(filtered).map(k => `${k} = @${k}`).join(', ');
+        db.prepare(`UPDATE libro_caja_dias SET ${fields}, updated_at = datetime('now') WHERE id = @id`).run({ ...filtered, id: dia.id });
+      }
+      res.json({ success: true });
+    } catch (err) {
+      console.error('[sync librocaja PUT]', err);
+      res.status(500).json({ success: false, error: err instanceof Error ? err.message : String(err) });
     }
-    res.json({ success: true });
   });
 
   router.post('/librocaja/:fecha/sync', (req, res) => {
@@ -1239,8 +1422,8 @@ export function createSyncRouter(io: SocketIOServer, exportFiadosToExcel: Export
     const tots = db.prepare(`
       SELECT
         COALESCE(SUM(CASE WHEN v.metodo_pago='efectivo' AND v.tipo='venta' AND v.es_fiado=0 THEN v.total ELSE 0 END),0) as efectivo,
-        COALESCE(SUM(CASE WHEN v.metodo_pago IN ('tarjeta','debito','credito') AND v.tipo='venta' THEN v.total ELSE 0 END),0) as tarjetas,
-        COALESCE(SUM(CASE WHEN v.metodo_pago IN ('transferencia','qr','mercadopago') AND v.tipo='venta' THEN v.total ELSE 0 END),0) as transferencias
+        COALESCE(SUM(CASE WHEN v.metodo_pago IN ('tarjeta','qr','debito','credito') AND v.tipo='venta' THEN v.total ELSE 0 END),0) as tarjetas,
+        COALESCE(SUM(CASE WHEN v.metodo_pago IN ('transferencia','mercadopago') AND v.tipo='venta' THEN v.total ELSE 0 END),0) as transferencias
       FROM ventas v WHERE v.fecha = ?
     `).get(fecha) as { efectivo: number; tarjetas: number; transferencias: number };
     db.prepare(`INSERT OR IGNORE INTO libro_caja_dias (fecha) VALUES (?)`).run(fecha);
@@ -1286,7 +1469,12 @@ export function createSyncRouter(io: SocketIOServer, exportFiadosToExcel: Export
     const medioPago = medio_pago === 'transferencia' ? 'transferencia' : 'efectivo';
     db.prepare(`INSERT OR IGNORE INTO libro_caja_dias (fecha) VALUES (?)`).run(fecha);
     const dia = db.prepare(`SELECT id FROM libro_caja_dias WHERE fecha = ?`).get(fecha) as { id: number };
-    const tipoVal = tipo === 'egreso_rapido' ? 'egreso_rapido' : 'egreso';
+    const tipoVal =
+      tipo === 'egreso_efectivo' || tipo === 'egreso_transferencia'
+        ? tipo
+        : tipo === 'egreso_rapido'
+          ? (medioPago === 'transferencia' ? 'egreso_transferencia' : 'egreso_efectivo')
+          : 'egreso';
     const result = db.prepare(`INSERT INTO libro_caja_egresos (dia_id, proveedor, monto, medio_pago, tipo) VALUES (?, ?, ?, ?, ?)`).run(dia.id, proveedor, monto, medioPago, tipoVal);
     // egresos acumula efectivo y resta de extra_caja (Caja Grande); transferencia afecta sus propios campos
     const totalEfectivo = (db.prepare(`SELECT COALESCE(SUM(monto),0) as t FROM libro_caja_egresos WHERE dia_id = ? AND medio_pago = 'efectivo'`).get(dia.id) as { t: number }).t;

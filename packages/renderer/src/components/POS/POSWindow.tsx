@@ -13,7 +13,7 @@ import { Modal } from '../shared/Modal';
 import { useVentasStore } from '../../store/useVentasStore';
 import { useAppStore } from '../../store/useAppStore';
 import { formatCurrency, generateTicketHTML } from '../../lib/utils';
-import { ventasAPI, clientesAPI, usuariosAPI, configAPI, appAPI, sendEvent } from '../../lib/api';
+import { ventasAPI, clientesAPI, usuariosAPI, configAPI, appAPI, sendEvent, onEvent } from '../../lib/api';
 import { useTranslation } from 'react-i18next';
 
 interface Cliente {
@@ -55,6 +55,10 @@ export const POSWindow: React.FC = () => {
   const [clienteSearch, setClienteSearch] = useState('');
   const [procesando, setProcesando] = useState(false);
   const [selectedPrecio, setSelectedPrecio] = useState<1 | 2 | 3>(1);
+  const [editVenta, setEditVenta] = useState<{ id: number; numero: string } | null>(null);
+  const [editMetodo, setEditMetodo] = useState('efectivo');
+  const [editObs, setEditObs] = useState('');
+  const [editSaving, setEditSaving] = useState(false);
   const { t } = useTranslation();
 
   const simbolo = config.simbolo_moneda || '$';
@@ -78,6 +82,45 @@ export const POSWindow: React.FC = () => {
     clientesAPI.getAll().then((data) => setClientes(data as Cliente[]));
     usuariosAPI.getAll().then((data) => setVendedores((data as Usuario[]).filter((u) => u.rol !== 'readonly')));
   }, []);
+
+  useEffect(() => {
+    const cleanup = onEvent('pos:edit-venta', async (data) => {
+      const { ventaId } = data as { ventaId: number };
+      try {
+        const v = await ventasAPI.getById(ventaId) as {
+          id: number; numero: string; metodo_pago: string; observaciones: string; estado: string;
+        };
+        if (v.estado === 'anulada') {
+          toast.error('No se puede editar una venta anulada');
+          return;
+        }
+        setEditVenta({ id: v.id, numero: v.numero });
+        setEditMetodo(v.metodo_pago || 'efectivo');
+        setEditObs(v.observaciones || '');
+      } catch {
+        toast.error('No se pudo cargar la venta para editar');
+      }
+    });
+    return cleanup;
+  }, []);
+
+  const handleSaveEditVenta = async () => {
+    if (!editVenta) return;
+    setEditSaving(true);
+    try {
+      const res = await ventasAPI.update(editVenta.id, {
+        metodo_pago: editMetodo,
+        observaciones: editObs,
+      });
+      if (!res?.success) throw new Error(res?.error || 'No se pudo guardar');
+      toast.success(`Venta #${editVenta.numero} actualizada`);
+      setEditVenta(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al guardar');
+    } finally {
+      setEditSaving(false);
+    }
+  };
 
   // Atajos de teclado
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
@@ -221,6 +264,41 @@ export const POSWindow: React.FC = () => {
 
   return (
     <div className="flex flex-col h-screen" style={{ background: 'var(--bg)', color: 'var(--text)' }}>
+
+      {editVenta && (
+        <div
+          className="shrink-0 px-4 py-3 flex flex-wrap items-end gap-3"
+          style={{ background: 'rgba(59,130,246,0.12)', borderBottom: '1px solid rgba(59,130,246,0.35)' }}
+        >
+          <div className="text-sm font-semibold" style={{ color: 'var(--accent)' }}>
+            Editando venta #{editVenta.numero}
+          </div>
+          <div className="flex flex-col gap-1 min-w-[140px]">
+            <label className="text-[10px] uppercase tracking-wider" style={{ color: 'var(--text3)' }}>Método de pago</label>
+            <select className="input text-sm py-1.5" value={editMetodo} onChange={(e) => setEditMetodo(e.target.value)}>
+              <option value="efectivo">Efectivo</option>
+              <option value="tarjeta_debito">Tarjeta débito</option>
+              <option value="tarjeta_credito">Tarjeta crédito</option>
+              <option value="transferencia">Transferencia</option>
+              <option value="qr">QR</option>
+              <option value="mixto">Mixto</option>
+              <option value="fiado">Fiado</option>
+            </select>
+          </div>
+          <div className="flex flex-col gap-1 flex-1 min-w-[200px]">
+            <label className="text-[10px] uppercase tracking-wider" style={{ color: 'var(--text3)' }}>Observaciones</label>
+            <input className="input text-sm py-1.5" value={editObs} onChange={(e) => setEditObs(e.target.value)} placeholder="Notas…" />
+          </div>
+          <div className="flex gap-2 ml-auto">
+            <button type="button" className="btn-secondary btn btn-sm" disabled={editSaving} onClick={() => setEditVenta(null)}>
+              Cancelar
+            </button>
+            <button type="button" className="btn-primary btn btn-sm flex items-center gap-1" disabled={editSaving} onClick={handleSaveEditVenta}>
+              <Save size={14} /> {editSaving ? 'Guardando…' : 'Guardar'}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ── Barra de meta-acciones (cliente, precio, tipo) ──────────────── */}
       <div
@@ -446,7 +524,7 @@ export const POSWindow: React.FC = () => {
       </Modal>
 
       <Modal isOpen={showVendedorModal} onClose={() => setShowVendedorModal(false)} title={t('pos.sellerModal')} size="sm">
-        <div className="space-y-1">
+        <div className="space-y-1 max-h-64 overflow-y-auto">
           <button
             className="w-full text-left px-3 py-2 rounded-lg"
             style={{ color: 'var(--text2)' }}

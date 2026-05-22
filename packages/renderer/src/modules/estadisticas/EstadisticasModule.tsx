@@ -1,16 +1,16 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   BarChart2, TrendingUp, TrendingDown, DollarSign, ShoppingCart,
   Users, Package, RefreshCw, AlertTriangle, Clock, Zap,
-  ArrowUpRight, ArrowDownRight,
+  ArrowUpRight, ArrowDownRight, Scale,
 } from 'lucide-react';
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, PieChart, Pie, Cell,
 } from 'recharts';
 import { statsAPI } from '../../lib/api';
-import { formatCurrency, weekAgo, today, monthStart } from '../../lib/utils';
+import { formatCurrency, weekAgo, today, monthStart, formatNowTime } from '../../lib/utils';
 
 interface DashboardStats {
   ventas_hoy: number;
@@ -96,6 +96,16 @@ export const EstadisticasModule: React.FC = () => {
   const [ventasPeriodo, setVentasPeriodo] = useState<{ fecha: string; total: number; cantidad: number; efectivo: number; tarjeta: number }[]>([]);
   const [reloj, setReloj] = useState(new Date());
   const [lastRefresh, setLastRefresh] = useState(new Date());
+  const [margenVista, setMargenVista] = useState<'dia' | 'semana' | 'mes'>('dia');
+  const [margenes, setMargenes] = useState<{ total_ganancia: number; total_perdida: number; balance_neto: number } | null>(null);
+  const [margenLoading, setMargenLoading] = useState(false);
+
+  const margenDesdeHasta = useMemo(() => {
+    const fin = today();
+    if (margenVista === 'dia') return { desde: fin, hasta: fin };
+    if (margenVista === 'semana') return { desde: weekAgo(), hasta: fin };
+    return { desde: monthStart(), hasta: fin };
+  }, [margenVista]);
 
   // Reloj en tiempo real
   useEffect(() => {
@@ -127,14 +137,28 @@ export const EstadisticasModule: React.FC = () => {
     } catch { setVentasPeriodo([]); }
   }, [periodo, desde, hasta]);
 
+  const loadMargenes = useCallback(async () => {
+    setMargenLoading(true);
+    try {
+      const { desde, hasta } = margenDesdeHasta;
+      const row = await statsAPI.margenesPeriodo(desde, hasta);
+      setMargenes(row);
+    } catch {
+      setMargenes(null);
+    } finally {
+      setMargenLoading(false);
+    }
+  }, [margenDesdeHasta]);
+
   useEffect(() => { loadDashboard(); }, [loadDashboard]);
   useEffect(() => { loadVentasPeriodo(); }, [loadVentasPeriodo]);
+  useEffect(() => { loadMargenes(); }, [loadMargenes]);
 
   // Auto-refresh cada 90 segundos
   useEffect(() => {
-    const t = setInterval(() => { loadDashboard(); loadVentasPeriodo(); }, 90_000);
+    const t = setInterval(() => { loadDashboard(); loadVentasPeriodo(); loadMargenes(); }, 90_000);
     return () => clearInterval(t);
-  }, [loadDashboard, loadVentasPeriodo]);
+  }, [loadDashboard, loadVentasPeriodo, loadMargenes]);
 
   if (loading && !stats) {
     return (
@@ -175,7 +199,7 @@ export const EstadisticasModule: React.FC = () => {
   }));
 
   return (
-    <div className="flex flex-col h-full overflow-auto">
+    <div className="flex flex-col h-full min-h-0 flex-1 w-full overflow-hidden">
       {/* ── Header ───────────────────────────────────────────────── */}
       <div className="shrink-0 px-6 pt-5 pb-4 flex items-center justify-between border-b border-slate-800">
         <div>
@@ -184,7 +208,7 @@ export const EstadisticasModule: React.FC = () => {
           </h1>
           <p className="text-xs text-slate-500 mt-0.5 flex items-center gap-2">
             <Clock size={11} />
-            {reloj.toLocaleTimeString('es-AR')} · Actualizado {lastRefresh.toLocaleTimeString('es-AR')}
+            {formatNowTime(reloj)} · Actualizado {formatNowTime(lastRefresh)}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -192,13 +216,13 @@ export const EstadisticasModule: React.FC = () => {
           <span className="flex items-center gap-1 text-xs text-emerald-400 bg-emerald-400/10 px-2 py-1 rounded-full">
             <Zap size={10} /> {t('stats.live')}
           </span>
-          <button className="btn-ghost btn p-2" title="Actualizar" onClick={() => { loadDashboard(); loadVentasPeriodo(); }}>
+          <button className="btn-ghost btn p-2" title="Actualizar" onClick={() => { loadDashboard(); loadVentasPeriodo(); loadMargenes(); }}>
             <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
           </button>
         </div>
       </div>
 
-      <div className="flex-1 overflow-auto px-6 py-5 space-y-5">
+      <div className="flex-1 min-h-0 overflow-y-auto px-6 py-5 space-y-5">
 
         {/* ── KPIs principales ─────────────────────────────────────── */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -261,6 +285,65 @@ export const EstadisticasModule: React.FC = () => {
               </div>
             </div>
           </div>
+        </div>
+
+        {/* ── Resumen márgenes (ganancia sobre costo) ───────────────── */}
+        <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
+            <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+              <Scale size={16} className="text-emerald-400" />
+              Ganancias / pérdidas sobre costo
+            </h3>
+            <div className="flex gap-1 shrink-0">
+              {([
+                { id: 'dia' as const, label: 'Diario' },
+                { id: 'semana' as const, label: 'Semanal' },
+                { id: 'mes' as const, label: 'Mensual' },
+              ]).map(({ id, label }) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setMargenVista(id)}
+                  className={`px-3 py-1.5 text-xs rounded-lg font-medium transition-colors ${
+                    margenVista === id ? 'bg-emerald-600 text-white' : 'bg-slate-700 text-slate-400 hover:text-white'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <p className="text-xs text-slate-500 mb-4">
+            Por cada ítem vendido (ventas no anuladas): (precio de venta unitario − costo actual del producto) × cantidad,
+            período <span className="font-mono text-slate-400">{margenDesdeHasta.desde}</span> — <span className="font-mono text-slate-400">{margenDesdeHasta.hasta}</span>.
+          </p>
+          {margenLoading ? (
+            <div className="flex justify-center py-10">
+              <div className="w-8 h-8 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+            </div>
+          ) : !margenes ? (
+            <div className="text-sm text-slate-500 py-6 text-center">No se pudieron calcular los márgenes.</div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="rounded-lg border border-emerald-500/25 bg-emerald-500/5 p-4">
+                <div className="text-xs text-slate-500 uppercase tracking-wider mb-1">Total ganancia</div>
+                <div className="text-xl font-mono font-bold text-emerald-400">{formatCurrency(margenes.total_ganancia)}</div>
+                <div className="text-[11px] text-slate-500 mt-1">Suma de márgenes positivos</div>
+              </div>
+              <div className="rounded-lg border border-red-500/25 bg-red-500/5 p-4">
+                <div className="text-xs text-slate-500 uppercase tracking-wider mb-1">Total pérdida</div>
+                <div className="text-xl font-mono font-bold text-red-400">{formatCurrency(margenes.total_perdida)}</div>
+                <div className="text-[11px] text-slate-500 mt-1">Vendido por debajo del costo actual</div>
+              </div>
+              <div className="rounded-lg border border-slate-600 bg-slate-900/50 p-4">
+                <div className="text-xs text-slate-500 uppercase tracking-wider mb-1">Balance neto</div>
+                <div className={`text-xl font-mono font-bold ${margenes.balance_neto >= 0 ? 'text-white' : 'text-red-300'}`}>
+                  {formatCurrency(margenes.balance_neto)}
+                </div>
+                <div className="text-[11px] text-slate-500 mt-1">Ganancia − pérdida</div>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* ── Gráfico de ventas + métodos de pago ──────────────────── */}

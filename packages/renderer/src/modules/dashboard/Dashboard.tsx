@@ -7,6 +7,7 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from 'recharts';
 import { statsAPI, ventasAPI } from '../../lib/api';
+import { formatDayShort, formatLocaleDateFull } from '../../lib/utils';
 import { useAppStore } from '../../store/useAppStore';
 import { useTranslation } from 'react-i18next';
 
@@ -39,10 +40,6 @@ interface Venta {
 
 function fmt(n: number) {
   return '$' + n.toLocaleString('es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
-}
-
-function fmtDate(d: string) {
-  return new Date(d + 'T12:00:00').toLocaleDateString('es-AR', { day: '2-digit', month: 'short' });
 }
 
 interface KPIProps {
@@ -133,16 +130,16 @@ export default function Dashboard() {
   const chartData =
     (stats?.ventas_por_dia ?? [])
       .slice(-14)
-      .map((d) => ({ name: fmtDate(d.fecha), total: d.total }));
+      .map((d) => ({ name: formatDayShort(d.fecha), total: d.total }));
 
   return (
-    <div className="flex-1 overflow-y-auto animate-fade-up" style={{ padding: '20px 24px', background: 'var(--bg)' }}>
+    <div className="flex-1 min-h-0 overflow-y-auto animate-fade-up" style={{ padding: '20px 24px', background: 'var(--bg)' }}>
       {/* Header */}
       <div className="module-header">
         <div>
           <h2 className="module-title">{t('dash.summary')}</h2>
           <p style={{ fontSize: 12, color: 'var(--text3)', marginTop: 2 }}>
-            {new Date().toLocaleDateString('es-AR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+            {formatLocaleDateFull()}
           </p>
         </div>
         <button onClick={load} className="btn btn-ghost btn-sm" disabled={loading}>

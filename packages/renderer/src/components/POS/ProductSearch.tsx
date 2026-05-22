@@ -345,15 +345,13 @@ export const ProductSearch = React.forwardRef<ProductSearchHandle, ProductSearch
       {showDropdown && results.length > 0 && (
         <div
           ref={dropdownRef}
-          className="absolute top-full left-0 mt-1 bg-slate-800 border border-slate-600 rounded-xl shadow-2xl z-50 overflow-auto w-[min(600px,70%)]"
-          style={{ maxHeight: `${9 * 56}px` }} // 56px aprox por ítem
+          className="absolute top-full left-0 mt-1 bg-slate-800 border border-slate-600 rounded-xl shadow-2xl z-50 overflow-y-auto max-h-72 w-[min(600px,70%)]"
         >
           {results.slice(0, 9).map((p, i) => (
             <button
               key={p.id}
               className={`w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-slate-700 transition-colors ${i === selectedIndex ? 'bg-slate-700' : ''}`}
               onMouseDown={(e) => { e.preventDefault(); selectProduct(p); }}
-              onMouseEnter={() => setSelectedIndex(i)}
             >
               <div className="flex-1 min-w-0">
                 <div className="font-medium text-sm truncate" style={{ color: 'var(--text)' }}>{p.nombre}</div>

@@ -740,6 +740,62 @@ function runMigrations(db: Database.Database): void {
         console.log('[DB] Migración 015: libro_caja_egresos.tipo OK');
       },
     },
+    {
+      name: '016_libro_caja_manual_tarjeta_override',
+      run: (db: Database.Database) => {
+        const tableExists = db.prepare(
+          `SELECT name FROM sqlite_master WHERE type='table' AND name='libro_caja_manual'`,
+        ).get();
+        if (!tableExists) return;
+        const cols = db.prepare(`PRAGMA table_info(libro_caja_manual)`).all() as { name: string }[];
+        if (!cols.some(c => c.name === 'tarjeta_override')) {
+          db.exec(`ALTER TABLE libro_caja_manual ADD COLUMN tarjeta_override REAL;`);
+        }
+        console.log('[DB] Migración 016: libro_caja_manual.tarjeta_override OK');
+      },
+    },
+    {
+      name: '017_ventas_canceladas',
+      run: (db: Database.Database) => {
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS ventas_canceladas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            venta_id_original INTEGER NOT NULL,
+            numero TEXT NOT NULL,
+            tipo TEXT DEFAULT 'venta',
+            estado TEXT,
+            fecha TEXT NOT NULL,
+            hora TEXT NOT NULL,
+            cliente_id INTEGER,
+            vendedor_id INTEGER,
+            subtotal REAL DEFAULT 0,
+            descuento REAL DEFAULT 0,
+            total REAL DEFAULT 0,
+            metodo_pago TEXT DEFAULT 'efectivo',
+            es_fiado INTEGER DEFAULT 0,
+            observaciones TEXT DEFAULT '',
+            cliente_nombre TEXT,
+            vendedor_nombre TEXT,
+            motivo TEXT DEFAULT '',
+            cancelada_at TEXT DEFAULT (datetime('now')),
+            created_at_original TEXT
+          );
+          CREATE INDEX IF NOT EXISTS idx_ventas_canceladas_fecha ON ventas_canceladas(fecha);
+          CREATE TABLE IF NOT EXISTS venta_cancelada_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            venta_cancelada_id INTEGER NOT NULL REFERENCES ventas_canceladas(id) ON DELETE CASCADE,
+            producto_id INTEGER,
+            producto_nombre TEXT,
+            producto_codigo TEXT,
+            cantidad REAL NOT NULL,
+            precio_unitario REAL NOT NULL,
+            descuento REAL DEFAULT 0,
+            total REAL NOT NULL
+          );
+        `);
+        console.log('[DB] Migración 017: ventas_canceladas OK');
+      },
+    },
   ];
 
   const executedMigrations: { name: string }[] = db

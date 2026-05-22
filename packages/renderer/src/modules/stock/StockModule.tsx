@@ -144,7 +144,7 @@ export const StockModule: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full min-h-0 flex-1 w-full">
       {/* Header */}
       <div className="shrink-0 module-header px-6 pt-6">
         <div>
@@ -193,13 +193,22 @@ export const StockModule: React.FC = () => {
           </div>
 
           {/* Tabla inventario */}
-          <div className="flex-1 overflow-auto px-6 pb-6">
-            <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden" style={{ maxHeight: 'calc(100vh - 340px)', display: 'flex', flexDirection: 'column' }}>
-              <table className="w-full">
+          <div className="flex-1 min-h-0 overflow-y-auto px-6 pb-6 w-full">
+            <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden min-h-0">
+              <table className="w-full border-collapse table-fixed">
+                <colgroup>
+                  <col />
+                  <col style={{ width: '15%' }} />
+                  <col style={{ width: '12%' }} />
+                  <col style={{ width: '12%' }} />
+                  <col style={{ width: '12%' }} />
+                  <col style={{ width: '12%' }} />
+                  <col style={{ width: '13%' }} />
+                </colgroup>
                 <thead style={{ position: 'sticky', top: 0, zIndex: 10, background: 'var(--bg2)' }}>
                   <tr className="border-b border-slate-700">
-                    <th className="table-header">{t('stock.col.product')}</th>
-                    <th className="table-header">{t('stock.col.category')}</th>
+                    <th className="table-header text-left">{t('stock.col.product')}</th>
+                    <th className="table-header text-left">{t('stock.col.category')}</th>
                     <th className="table-header text-right">{t('stock.col.current')}</th>
                     <th className="table-header text-right">{t('stock.col.min')}</th>
                     <th className="table-header text-right">{t('stock.col.cost')}</th>
@@ -207,7 +216,7 @@ export const StockModule: React.FC = () => {
                     <th className="table-header text-center">{t('stock.col.status')}</th>
                   </tr>
                 </thead>
-                <tbody style={{ overflowY: 'auto', display: 'block', maxHeight: 'calc(100vh - 400px)' }}>
+                <tbody>
                   {loading ? (
                     <tr><td colSpan={7} className="text-center py-8 text-slate-400">Cargando...</td></tr>
                   ) : filteredProductos.length === 0 ? (
@@ -216,17 +225,17 @@ export const StockModule: React.FC = () => {
                     const bajStock = p.stock_actual <= p.stock_minimo;
                     return (
                       <tr key={p.id} className="table-row">
-                        <td className="table-cell">
-                          <div className="font-medium text-white">{p.nombre}</div>
-                          <div className="text-xs font-mono text-slate-500">{p.codigo}</div>
+                        <td className="table-cell align-top">
+                          <div className="font-medium text-white truncate" title={p.nombre}>{p.nombre}</div>
+                          <div className="text-xs font-mono text-slate-500 truncate">{p.codigo}</div>
                         </td>
-                        <td className="table-cell text-sm text-slate-400">{p.categoria_nombre || '—'}</td>
-                        <td className={`table-cell text-right font-mono font-bold ${bajStock ? 'text-red-400' : 'text-white'}`}>
+                        <td className="table-cell text-left text-sm text-slate-400 align-top truncate" title={p.categoria_nombre || ''}>{p.categoria_nombre || '—'}</td>
+                        <td className={`table-cell text-right font-mono font-bold align-top whitespace-nowrap ${bajStock ? 'text-red-400' : 'text-white'}`}>
                           {p.stock_actual} {p.unidad_medida}
                         </td>
-                        <td className="table-cell text-right font-mono text-slate-400">{p.stock_minimo} {p.unidad_medida}</td>
-                        <td className="table-cell text-right font-mono text-slate-400">{formatCurrency(p.precio_costo)}</td>
-                        <td className="table-cell text-right font-mono text-white">{formatCurrency(p.stock_actual * p.precio_costo)}</td>
+                        <td className="table-cell text-right font-mono text-slate-400 align-top whitespace-nowrap">{p.stock_minimo} {p.unidad_medida}</td>
+                        <td className="table-cell text-right font-mono text-slate-400 align-top whitespace-nowrap">{formatCurrency(p.precio_costo)}</td>
+                        <td className="table-cell text-right font-mono text-white align-top whitespace-nowrap">{formatCurrency(p.stock_actual * p.precio_costo)}</td>
                         <td className="table-cell text-center">
                           {bajStock ? (
                             <span className="badge badge-red flex items-center gap-1 justify-center">
@@ -249,8 +258,8 @@ export const StockModule: React.FC = () => {
       )}
 
       {tab === 'movimientos' && (
-        <div className="flex-1 overflow-auto px-6 py-4 pb-6">
-          <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden" style={{ maxHeight: 'calc(100vh - 280px)', display: 'flex', flexDirection: 'column' }}>
+        <div className="flex-1 min-h-0 overflow-y-auto px-6 py-4 pb-6 w-full">
+          <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden min-h-0">
             <table className="w-full">
               <thead style={{ position: 'sticky', top: 0, zIndex: 10, background: 'var(--bg2)' }}>
                 <tr className="border-b border-slate-700">

@@ -83,9 +83,9 @@ export const ImportNixtarModal: React.FC<Props> = ({ onClose }) => {
 
   return (
     <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4" onClick={(e) => { if (e.target === e.currentTarget) handleClose(); }}>
-      <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-lg shadow-2xl">
+      <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-lg max-h-[80vh] flex flex-col overflow-hidden shadow-2xl">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700 shrink-0">
           <h2 className="text-lg font-semibold text-white flex items-center gap-2">
             <Archive size={20} className="text-blue-400" />
             Importar backup completo de Nextar
@@ -98,7 +98,7 @@ export const ImportNixtarModal: React.FC<Props> = ({ onClose }) => {
         </div>
 
         {/* Body */}
-        <div className="px-6 py-5">
+        <div className="px-6 py-5 flex-1 min-h-0 overflow-y-auto">
           {stage === 'idle' && (
             <div className="space-y-4">
               <p className="text-sm text-slate-300">

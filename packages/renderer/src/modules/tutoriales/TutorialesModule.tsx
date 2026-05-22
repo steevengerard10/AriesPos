@@ -4,7 +4,7 @@ import {
   ChevronRight, BookOpen, ShoppingCart, Package, Users,
   Archive, Wallet, CreditCard, Layers, BarChart2, Settings,
   CheckCircle, Maximize2, Minimize2, Volume2, VolumeX, Subtitles,
-  MessageSquare,
+  MessageSquare, DoorOpen, Receipt, PackagePlus, HandCoins, Lock, HardDriveDownload,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
@@ -333,41 +333,174 @@ const CombosVisual: React.FC<{ step?: number }> = ({ step = 0 }) => (
   </div>
 );
 
+// ─── Pasos numerados con íconos (contenido operativo) ─────────────────────────
+
+const StepGuide: React.FC<{ steps: { icon: React.ReactNode; text: string }[] }> = ({ steps }) => (
+  <div className="w-full h-full flex items-center justify-center p-6" style={{ background: '#0d0d1a' }}>
+    <div className="w-full max-w-md space-y-3">
+      {steps.map((s, i) => (
+        <div
+          key={i}
+          className="flex items-start gap-3 rounded-xl px-4 py-3"
+          style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}
+        >
+          <div
+            className="shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold"
+            style={{ background: 'var(--accent)', color: '#fff' }}
+          >
+            {i + 1}
+          </div>
+          <div className="shrink-0 w-8 h-8 flex items-center justify-center opacity-90" style={{ color: 'var(--accent)' }}>
+            {s.icon}
+          </div>
+          <p className="text-sm leading-snug flex-1" style={{ color: 'var(--text2)' }}>{s.text}</p>
+        </div>
+      ))}
+    </div>
+  </div>
+);
+
 // ─── Datos de tutoriales con waypoints ───────────────────────────────────────
 
 const TUTORIALES: Tutorial[] = [
+  {
+    id: 'guia-operaciones',
+    title: 'Guía rápida del kiosco',
+    description: 'Pasos reales: caja, venta, productos, fiados, cierre y backup',
+    icon: <BookOpen size={20} />,
+    color: '#4f8ef7',
+    slides: [
+      {
+        title: 'Abrir caja del día',
+        captionES: 'Antes de vender, abrí la sesión de caja para que ARIESPos registre efectivo, tarjeta y movimientos del turno.',
+        captionEN: 'Before selling, open the cash session so ARIESPos tracks cash, card, and shift movements.',
+        visual: (
+          <StepGuide
+            steps={[
+              { icon: <Wallet size={18} />, text: 'Menú lateral → Caja del día (F7).' },
+              { icon: <DoorOpen size={18} />, text: 'Si no hay sesión abierta, tocá «Abrir caja» e ingresá el monto inicial en efectivo (puede ser $0).' },
+              { icon: <CheckCircle size={18} />, text: 'Confirmá: el estado pasa a «Abierta» y el POS ya puede registrar cobros en esa sesión.' },
+            ]}
+          />
+        ),
+        duration: 10,
+        waypoints: [{ x: 15, y: 50, t: 0 }, { x: 50, y: 40, t: 3, click: true }, { x: 50, y: 70, t: 7 }],
+      },
+      {
+        title: 'Registrar una venta',
+        captionES: 'Flujo completo en el POS: buscar productos, revisar el carrito y cobrar con el método correcto.',
+        captionEN: 'Full POS flow: search products, review the cart, and charge with the right payment method.',
+        visual: (
+          <StepGuide
+            steps={[
+              { icon: <ShoppingCart size={18} />, text: 'F2 o «Nueva venta» abre el POS a pantalla completa.' },
+              { icon: <Receipt size={18} />, text: 'Buscá por nombre o escaneá código; Enter agrega el primer resultado o el ítem seleccionado con flechas.' },
+              { icon: <CreditCard size={18} />, text: 'F2 para cobrar: elegí método con clic o flechas ↑↓ y Enter (no confirma por hover).' },
+              { icon: <CheckCircle size={18} />, text: 'Confirmá: la venta queda en SQLite, descuenta stock y suma en caja (salvo fiado).' },
+            ]}
+          />
+        ),
+        duration: 12,
+        waypoints: [{ x: 20, y: 12, t: 0 }, { x: 65, y: 50, t: 4 }, { x: 73, y: 85, t: 8 }],
+      },
+      {
+        title: 'Agregar un producto al catálogo',
+        captionES: 'Cargá artículos nuevos para que aparezcan en el buscador del POS al instante.',
+        captionEN: 'Add new items so they appear in the POS search immediately.',
+        visual: (
+          <StepGuide
+            steps={[
+              { icon: <Package size={18} />, text: 'Menú Productos → botón «Nuevo producto» (+).' },
+              { icon: <PackagePlus size={18} />, text: 'Completá nombre, código o barras, precio de venta, costo, stock inicial y categoría.' },
+              { icon: <CheckCircle size={18} />, text: 'Guardá: el producto queda activo y se puede vender desde el POS sin reiniciar.' },
+            ]}
+          />
+        ),
+        duration: 9,
+        waypoints: [{ x: 72, y: 12, t: 0, click: true }, { x: 50, y: 55, t: 4 }, { x: 50, y: 55, t: 7 }],
+      },
+      {
+        title: 'Vender a fiado (cuenta corriente)',
+        captionES: 'Para fiar, siempre asigná un cliente con límite; el saldo se actualiza en Clientes.',
+        captionEN: 'For credit sales, always assign a client with a limit; balance updates in Clients.',
+        visual: (
+          <StepGuide
+            steps={[
+              { icon: <Users size={18} />, text: 'En el POS, F5 y elegí el cliente (o creá uno en Clientes si no existe).' },
+              { icon: <HandCoins size={18} />, text: 'F8 activa modo fiado; al cobrar elegí «Fiado» como método de pago.' },
+              { icon: <Receipt size={18} />, text: 'La venta suma deuda al cliente; cobrá después con «Registrar pago» en su ficha.' },
+            ]}
+          />
+        ),
+        duration: 10,
+        waypoints: [{ x: 65, y: 20, t: 0 }, { x: 73, y: 85, t: 4 }, { x: 22, y: 45, t: 7 }],
+      },
+      {
+        title: 'Cerrar caja',
+        captionES: 'Al fin del turno cerrá la sesión para fijar totales y detectar diferencias de efectivo.',
+        captionEN: 'At shift end, close the session to lock totals and spot cash differences.',
+        visual: (
+          <StepGuide
+            steps={[
+              { icon: <Wallet size={18} />, text: 'Caja del día → revisá resumen: efectivo, Target (tarjeta/QR), transferencias y fiados.' },
+              { icon: <Lock size={18} />, text: '«Cerrar caja»: contá el efectivo real e ingresalo en el campo de cierre.' },
+              { icon: <CheckCircle size={18} />, text: 'Confirmá el cierre; la sesión queda cerrada y el día queda listo para el Libro de Caja.' },
+            ]}
+          />
+        ),
+        duration: 10,
+        waypoints: [{ x: 50, y: 40, t: 0 }, { x: 50, y: 75, t: 4, click: true }, { x: 50, y: 75, t: 8 }],
+      },
+      {
+        title: 'Backup de la base de datos',
+        captionES: 'Hacé copias de seguridad periódicas de SQLite desde Configuración.',
+        captionEN: 'Make periodic SQLite backups from Settings.',
+        visual: (
+          <StepGuide
+            steps={[
+              { icon: <Settings size={18} />, text: 'Configuración (F9) → pestaña Backup.' },
+              { icon: <HardDriveDownload size={18} />, text: '«Crear backup ahora»: guarda una copia en la carpeta userData/backups del equipo.' },
+              { icon: <CheckCircle size={18} />, text: 'Para restaurar, elegí un archivo de la lista y «Restaurar» (reiniciá la app si te lo pide).' },
+            ]}
+          />
+        ),
+        duration: 9,
+        waypoints: [{ x: 15, y: 50, t: 0 }, { x: 50, y: 50, t: 3 }, { x: 50, y: 70, t: 6 }],
+      },
+    ],
+  },
   {
     id: 'pos', title: 'Punto de Venta (POS)', description: 'Cómo registrar ventas, agregar productos y cobrar',
     icon: <ShoppingCart size={20} />, color: '#4f8ef7',
     slides: [
       {
         title: 'Abrir el POS',
-        captionES: 'Presioná F2 o hacé clic en Nueva Venta en la barra lateral para abrir el punto de venta. La ventana del POS se abre lista para recibir productos.',
-        captionEN: 'Press F2 or click New Sale in the sidebar to open the point of sale. The POS window opens ready to receive products.',
+        captionES: 'En ARIESPos, presioná F2 o tocá «Nueva venta» en la barra lateral izquierda. Se abre el Punto de Venta a pantalla completa: desde ahí cobrás sin salir del flujo de trabajo del kiosco.',
+        captionEN: 'In ARIESPos, press F2 or tap New sale in the left sidebar. The POS opens full screen so you can check out without leaving your workflow.',
         visual: <PosVisual />,
         duration: 7,
         waypoints: [{x:10,y:25,t:0},{x:10,y:25,t:1,click:true},{x:45,y:50,t:2.5},{x:20,y:12,t:4},{x:20,y:12,t:6}],
       },
       {
         title: 'Buscar y agregar productos',
-        captionES: 'Escribí el nombre del producto en el buscador o escaneá el código de barras. Los resultados aparecen en tiempo real. Hacé clic para agregar al carrito.',
-        captionEN: 'Type the product name or scan a barcode. Results appear in real time. Click to add it to the cart.',
+        captionES: 'Escribí en el buscador del POS o pasá el lector por el código de barras: el catálogo filtra al instante. Un clic en el producto lo suma al carrito; podés seguir buscando sin cerrar la venta.',
+        captionEN: 'Type in the POS search or scan a barcode: the catalog filters instantly. One click adds to the cart; you can keep searching without closing the sale.',
         visual: <PosVisual highlight="search" />,
         duration: 8,
         waypoints: [{x:20,y:12,t:0,click:true},{x:20,y:12,t:1.5},{x:20,y:35,t:3,click:true},{x:65,y:50,t:5},{x:65,y:50,t:7}],
       },
       {
         title: 'Modificar cantidad y precio',
-        captionES: 'Hacé clic sobre la cantidad en el carrito para editarla directamente. Para aplicar un descuento al ítem, usá el ícono de porcentaje que aparece en cada producto.',
-        captionEN: 'Click the quantity in the cart to edit it directly. To apply a discount, use the percentage icon that appears on each product.',
+        captionES: 'En la lista del carrito, tocá la cantidad para cambiarla al vuelo. Si el producto lo permite, usá el ícono de descuento por ítem antes de cobrar: el total se recalcula solo.',
+        captionEN: 'In the cart list, tap quantity to change it on the fly. If allowed, use the per-item discount icon before payment—the total updates automatically.',
         visual: <PosVisual highlight="qty" />,
         duration: 7,
         waypoints: [{x:65,y:48,t:0},{x:73,y:55,t:1.5,click:true},{x:73,y:55,t:3},{x:73,y:62,t:4.5,click:true},{x:73,y:55,t:6}],
       },
       {
         title: 'Cobrar y cerrar la venta',
-        captionES: 'Revisá el total en la parte inferior. Elegí el método de pago y presioná Confirmar venta o la tecla Enter para registrar la operación.',
-        captionEN: 'Check the total at the bottom. Choose the payment method and press Confirm sale or Enter to complete the transaction.',
+        captionES: 'Revisá el total abajo, elegí efectivo, tarjeta, QR, transferencia o fiado según corresponda, y confirmá con el botón o con Enter. La venta queda guardada en SQLite y actualiza caja y stock.',
+        captionEN: 'Check the bottom total, pick cash, card, QR, transfer, or credit as needed, then confirm with the button or Enter. The sale is saved and updates cash and stock.',
         visual: <PosVisual highlight="confirm" />,
         duration: 8,
         waypoints: [{x:65,y:70,t:0},{x:73,y:85,t:2},{x:73,y:90,t:3.5,click:true},{x:73,y:90,t:7}],
@@ -380,32 +513,32 @@ const TUTORIALES: Tutorial[] = [
     slides: [
       {
         title: 'Vista del catálogo',
-        captionES: 'En el módulo Productos encontrás todo tu catálogo. Podés alternar entre vista grilla y lista. Los productos con stock bajo aparecen resaltados.',
-        captionEN: 'In the Products module you will find your full catalog. Toggle between grid and list view. Products with low stock are highlighted.',
+        captionES: 'Desde el ícono Productos en ARIESPos ves todo el catálogo local. Cambiá entre grilla y lista con los botones de la barra superior; los ítems con stock bajo se marcan para que repongas rápido.',
+        captionEN: 'From the Products icon you see your full local catalog. Switch grid or list from the top bar; low-stock items are marked so you can restock quickly.',
         visual: <ProductosVisual />,
         duration: 7,
         waypoints: [{x:50,y:50,t:0},{x:22,y:55,t:2},{x:50,y:55,t:4},{x:78,y:55,t:6}],
       },
       {
         title: 'Buscar productos',
-        captionES: 'Usá el buscador para encontrar productos por nombre, código de barras o código interno. La búsqueda es instantánea mientras escribís.',
-        captionEN: 'Use the search bar to find products by name, barcode, or internal code. The search is instant as you type.',
+        captionES: 'El buscador filtra por nombre, código interno o código de barras sin esperar: ideal cuando el cliente ya tiene el producto en la mano. Combiná con el filtro de categoría si tenés muchos ítems.',
+        captionEN: 'The search filters by name, internal code, or barcode with no wait—ideal at the counter. Pair it with the category filter if you have a large catalog.',
         visual: <ProductosVisual highlight="search" />,
         duration: 6,
         waypoints: [{x:40,y:20,t:0,click:true},{x:40,y:20,t:2},{x:40,y:20,t:4},{x:50,y:55,t:5.5}],
       },
       {
         title: 'Editar un producto',
-        captionES: 'Hacé doble clic en cualquier producto para abrir el formulario de edición. Podés cambiar nombre, precios, stock mínimo, categoría e imagen.',
-        captionEN: 'Double-click any product to open the edit form. You can change the name, prices, minimum stock, category, and image.',
+        captionES: 'Doble clic en una tarjeta o fila abre la ficha: ajustá precio de venta, costo, IVA si lo usás, stock mínimo y categoría. Guardá y el POS tomará los nuevos valores en la próxima venta.',
+        captionEN: 'Double-click a card or row to open the form: set sale price, cost, VAT if needed, minimum stock, and category. Save and the POS picks up values on the next sale.',
         visual: <ProductosVisual highlight="form" />,
         duration: 8,
         waypoints: [{x:22,y:55,t:0},{x:22,y:55,t:1,click:true},{x:22,y:55,t:1.3,click:true},{x:50,y:55,t:4},{x:50,y:55,t:7}],
       },
       {
         title: 'Importar desde Nextar',
-        captionES: 'Usá el botón Importar para cargar productos desde un backup de Nextar o desde una carpeta. El sistema detecta automáticamente el formato y evita duplicados.',
-        captionEN: 'Use the Import button to load products from a Nextar backup or a folder. The system automatically detects the format and avoids duplicates.',
+        captionES: 'Importar te permite traer listas desde un respaldo de Nextar u otros archivos compatibles: revisá el resumen antes de confirmar para no pisar datos que ya tenías cargados a mano.',
+        captionEN: 'Import brings lists from a Nextar backup or compatible files—review the summary before confirming so you do not overwrite data you already entered.',
         visual: <ProductosVisual highlight="import" />,
         duration: 8,
         waypoints: [{x:50,y:55,t:0},{x:72,y:20,t:2,click:true},{x:72,y:20,t:4},{x:50,y:55,t:7}],
@@ -418,24 +551,24 @@ const TUTORIALES: Tutorial[] = [
     slides: [
       {
         title: 'Lista de clientes',
-        captionES: 'En el módulo Clientes encontrás todos los clientes registrados. Los que tienen saldo pendiente de fiado aparecen con una etiqueta roja.',
-        captionEN: 'In the Clients module you will find all registered clients. Those with pending credit appear with a red label.',
+        captionES: 'En Clientes ves la libreta de cuentas del negocio: nombre, contacto y etiquetas. Quienes deben dinero aparecen marcados para que priorices el cobro sin revisar papel.',
+        captionEN: 'Clients shows your account ledger: names, contacts, and tags. Anyone owing money is flagged so you can collect without digging through paper.',
         visual: <ClientesVisual step={0} />,
         duration: 6,
         waypoints: [{x:22,y:35,t:0},{x:22,y:45,t:1.5},{x:22,y:55,t:3},{x:22,y:65,t:4.5}],
       },
       {
         title: 'Ver cuenta corriente',
-        captionES: 'Hacé clic en un cliente para ver su ficha completa con el saldo de fiado, historial de compras y límite de crédito.',
-        captionEN: 'Click a client to see their full profile with credit balance, purchase history, and credit limit.',
+        captionES: 'Al elegir un cliente se abre el detalle: saldo actual, tope de fiado configurado y movimientos recientes. Usalo antes de autorizar una nueva venta a cuenta.',
+        captionEN: 'Selecting a client opens detail: current balance, configured credit limit, and recent movements. Use it before approving another sale on account.',
         visual: <ClientesVisual step={1} />,
         duration: 7,
         waypoints: [{x:22,y:45,t:0,click:true},{x:65,y:55,t:2},{x:65,y:65,t:4},{x:65,y:55,t:6}],
       },
       {
         title: 'Registrar un pago',
-        captionES: 'Cuando un cliente abona su deuda, usá el botón verde Registrar pago para descontarle el monto del saldo. Podés ingresar el monto parcial o total.',
-        captionEN: 'When a client pays their debt, use the green Register payment button to deduct the amount. You can enter a partial or full payment.',
+        captionES: 'Cuando cobrás una deuda, «Registrar pago» descuenta el monto del saldo en la base y deja constancia del día. Podés cargar un adelanto parcial y seguir vendiendo con límites claros.',
+        captionEN: 'When you collect, Register payment reduces the balance in the database with a dated record. Enter a partial payment and keep selling within clear limits.',
         visual: <ClientesVisual step={2} />,
         duration: 8,
         waypoints: [{x:65,y:55,t:0},{x:65,y:75,t:2,click:true},{x:65,y:75,t:5},{x:65,y:55,t:7}],
@@ -448,24 +581,24 @@ const TUTORIALES: Tutorial[] = [
     slides: [
       {
         title: 'Tabla de inventario',
-        captionES: 'El módulo Stock muestra todos tus productos con su cantidad actual. Podés ordenar por nombre, stock, categoría y filtrar por estado.',
-        captionEN: 'The Stock module shows all your products with their current quantity. You can sort by name, stock, category, and filter by status.',
+        captionES: 'Stock centraliza existencias reales según los movimientos del sistema. Ordená por producto o categoría y usá filtros para ver solo faltantes o por debajo del mínimo.',
+        captionEN: 'Stock centralizes on-hand quantities from system movements. Sort by product or category and filter to see shortages or below-minimum items.',
         visual: <StockVisual />,
         duration: 6,
         waypoints: [{x:50,y:30,t:0},{x:50,y:45,t:1.5},{x:50,y:58,t:3},{x:50,y:70,t:4.5}],
       },
       {
         title: 'Alertas de stock bajo',
-        captionES: 'Los productos por debajo del stock mínimo configurado aparecen en amarillo. Los que están sin stock, en rojo. El mínimo se define en la ficha de cada producto.',
-        captionEN: 'Products below the configured minimum stock appear in yellow. Those with no stock appear in red. The minimum is defined in each product form.',
+        captionES: 'El mínimo lo definís en cada producto; quien está por debajo se destaca en amarillo y el agotado en rojo. Así armás pedidos al proveedor sin revisar pasillo por pasillo.',
+        captionEN: 'You set the minimum per product; below-minimum shows yellow and out-of-stock red—so you can order from suppliers without walking every aisle.',
         visual: <StockVisual highlight="low" />,
         duration: 7,
         waypoints: [{x:20,y:45,t:0},{x:20,y:58,t:1.5},{x:50,y:58,t:3},{x:80,y:58,t:4.5},{x:20,y:70,t:6}],
       },
       {
         title: 'Ajustes de inventario',
-        captionES: 'Usá el botón Ajustar stock para ingresar mercadería recibida o corregir diferencias. Cada movimiento queda registrado en el historial.',
-        captionEN: 'Use the Adjust stock button to enter received goods or correct differences. Every movement is recorded in the history.',
+        captionES: 'Ajustar stock sirve para cargar remitos de proveedor o corregir roturas y mermas. Cada cambio queda auditado: útil cuando el conteo físico no coincide con la pantalla.',
+        captionEN: 'Adjust stock for supplier deliveries or shrinkage. Each change is audited—handy when the physical count does not match the screen.',
         visual: <StockVisual highlight="btn" />,
         duration: 7,
         waypoints: [{x:50,y:50,t:0},{x:80,y:10,t:2,click:true},{x:80,y:10,t:4},{x:50,y:50,t:6}],
@@ -477,20 +610,44 @@ const TUTORIALES: Tutorial[] = [
     icon: <Wallet size={20} />, color: '#ef4444',
     slides: [
       {
+        title: 'Abrir la caja del día',
+        captionES: 'Al iniciar el turno, abrí sesión de caja con el efectivo inicial. Sin caja abierta, las ventas en efectivo no impactan el resumen diario.',
+        captionEN: 'At shift start, open the cash session with opening cash. Without it, cash sales won’t hit the daily summary.',
+        visual: (
+          <StepGuide
+            steps={[
+              { icon: <DoorOpen size={18} />, text: 'Ir a Caja del día (F7).' },
+              { icon: <Wallet size={18} />, text: 'Pulsar «Abrir caja» e indicar efectivo inicial.' },
+              { icon: <CheckCircle size={18} />, text: 'Confirmar apertura antes de cobrar en el POS.' },
+            ]}
+          />
+        ),
+        duration: 8,
+        waypoints: [{ x: 15, y: 50, t: 0 }, { x: 50, y: 60, t: 3, click: true }, { x: 50, y: 60, t: 6 }],
+      },
+      {
         title: 'Resumen de la caja',
-        captionES: 'El módulo Caja muestra el resumen diario de ventas agrupado por método de pago: efectivo, tarjeta y fiado. Se actualiza en tiempo real con cada venta.',
-        captionEN: 'The Cash module shows the daily sales summary grouped by payment method: cash, card, and credit. It updates in real time with each sale.',
+        captionES: 'Caja del día resume efectivo, tarjeta/QR, transferencias y fiados según lo cobrado en el POS. Sirve para cuadrar el mostrador antes del cierre sin abrir planillas aparte.',
+        captionEN: 'Daily Cash summarizes cash, card/QR, transfers, and credit sales from the POS—use it to reconcile the counter before closing.',
         visual: <CajaVisual step={0} />,
         duration: 7,
         waypoints: [{x:20,y:40,t:0},{x:50,y:40,t:1.5},{x:80,y:40,t:3},{x:50,y:65,t:5},{x:50,y:75,t:6}],
       },
       {
         title: 'Cerrar la caja',
-        captionES: 'Al finalizar el día, cerrá la caja para guardar el resumen definitivo. El cierre genera un informe con el total, la cantidad de ventas y el desglose por método de pago.',
-        captionEN: 'At the end of the day, close the cash register to save the final report. The close generates a summary with totals and breakdown by payment method.',
+        captionES: 'Al cortar turno, registrá el efectivo contado y cerrá la sesión para dejar fijo el resumen del día. Si hay diferencias, anotalas antes de confirmar para revisarlas después con tranquilidad.',
+        captionEN: 'At shift end, enter counted cash and close the session to lock the daily summary. Note discrepancies before confirming so you can review them later.',
         visual: <CajaVisual step={1} />,
         duration: 8,
         waypoints: [{x:50,y:50,t:0},{x:50,y:75,t:2},{x:50,y:80,t:3.5,click:true},{x:50,y:80,t:7}],
+      },
+      {
+        title: 'Libro de caja mensual',
+        captionES: 'En la barra lateral abrí Libro de Caja: ves cada día del mes con ventas, efectivo, tarjeta y QR, transferencias y gastos. Los administradores pueden corregir montos por celda y quedan guardados en la base.',
+        captionEN: 'Open Monthly Cash Book from the sidebar: each day shows sales, cash, card and QR, transfers, and expenses. Admins can fix amounts per cell and they are saved to the database.',
+        visual: <CajaVisual step={0} />,
+        duration: 9,
+        waypoints: [{x:15,y:50,t:0},{x:50,y:40,t:2},{x:80,y:35,t:4},{x:50,y:70,t:6},{x:50,y:70,t:8}],
       },
     ],
   },
@@ -500,24 +657,24 @@ const TUTORIALES: Tutorial[] = [
     slides: [
       {
         title: '¿Qué son los combos?',
-        captionES: 'Los combos permiten agrupar varios productos y venderlos juntos a un precio especial. Son perfectos para ofertas, canastas o packs de temporada.',
-        captionEN: 'Combos let you group products and sell them together at a special price. Perfect for promotions, baskets, or seasonal packs.',
+        captionES: 'Un combo en ARIESPos agrupa ítems que sueles vender juntos y les ponés un precio promo: el cliente ve el ahorro y vos movés stock coordinado sin rebajar artículo por artículo en el mostrador.',
+        captionEN: 'A combo bundles items you often sell together at a promo price—customers see savings and you move coordinated stock without discounting item by item.',
         visual: <CombosVisual step={0} />,
         duration: 6,
         waypoints: [{x:25,y:45,t:0},{x:75,y:45,t:2},{x:25,y:70,t:4},{x:75,y:70,t:5.5}],
       },
       {
         title: 'Crear un combo',
-        captionES: 'Hacé clic en el botón Nuevo, asignale un nombre, añadí los productos que lo componen y definí el precio total. El sistema calcula el descuento automáticamente.',
-        captionEN: 'Click the New button, assign a name, add its products, and set the total price. The system automatically calculates the discount percentage.',
+        captionES: 'En el módulo Combos, Nuevo combo: nombre descriptivo, lista de productos con cantidades y precio final del pack. El porcentaje de descuento respecto al precio suelto se calcula solo para que revises la oferta.',
+        captionEN: 'In Combos, New combo: descriptive name, product lines with quantities, and pack price. The discount percentage vs selling separately is calculated for you.',
         visual: <CombosVisual step={1} />,
         duration: 8,
         waypoints: [{x:80,y:10,t:0,click:true},{x:50,y:40,t:2},{x:25,y:50,t:4},{x:25,y:65,t:6,click:true}],
       },
       {
         title: 'Vender un combo desde el POS',
-        captionES: 'Los combos aparecen en el buscador del POS igual que los productos individuales. Al vender un combo, el stock de cada producto incluido se descuenta automáticamente.',
-        captionEN: 'Combos appear in the POS search just like individual products. When you sell a combo, the stock of each included product is automatically deducted.',
+        captionES: 'En el POS buscá el combo como cualquier artículo: al confirmar la venta, ARIESPos descuenta el stock de cada componente según la receta del pack y registra un solo total en caja.',
+        captionEN: 'In the POS search the combo like any item—on sale, ARIESPos deducts each component per the pack recipe and records one total in cash.',
         visual: <PosVisual highlight="search" />,
         duration: 7,
         waypoints: [{x:20,y:12,t:0,click:true},{x:20,y:12,t:1.5},{x:20,y:30,t:3,click:true},{x:65,y:50,t:5},{x:65,y:50,t:6.5}],

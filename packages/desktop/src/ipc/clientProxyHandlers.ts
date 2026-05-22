@@ -280,6 +280,12 @@ export function registerClientProxyHandlers(serverIP: string, port: number, serv
   ipcMain.handle('ventas:editar', (_e, id: number, changes: Record<string, unknown>) =>
     put(`/api/sync/ventas/${id}`, changes));
 
+  ipcMain.handle('ventas:getCanceladas', (_e, filters?: Record<string, unknown>) =>
+    get(`/api/sync/ventas/canceladas${buildQuery(filters)}`));
+
+  ipcMain.handle('ventas:cancelar', (_e, ventaId: number, meta?: Record<string, unknown>) =>
+    post(`/api/sync/ventas/${ventaId}/cancelar`, meta ?? {}));
+
   ipcMain.handle('ventas:devolución', (_e, ventaId: number, items: unknown[]) =>
     post(`/api/sync/ventas/${ventaId}/devolucion`, { items }));
 
@@ -317,7 +323,10 @@ export function registerClientProxyHandlers(serverIP: string, port: number, serv
     get('/api/sync/stats/dashboard'));
 
   ipcMain.handle('stats:ventasPorPeriodo', (_e, desde: string, hasta: string) =>
-    get(`/api/sync/stats/periodo?desde=${desde}&hasta=${hasta}`));
+    get(`/api/sync/stats/periodo?desde=${encodeURIComponent(desde)}&hasta=${encodeURIComponent(hasta)}`));
+
+  ipcMain.handle('stats:margenesPeriodo', (_e, desde: string, hasta: string) =>
+    get(`/api/sync/stats/margenes?desde=${encodeURIComponent(desde)}&hasta=${encodeURIComponent(hasta)}`));
 
   // ── CUENTAS A PAGAR ──────────────────────────────────────────────────
   ipcMain.handle('cuentaspagar:getAll', () =>

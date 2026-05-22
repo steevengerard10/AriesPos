@@ -1,41 +1,65 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { BookOpen, ChevronLeft, ChevronRight } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { BookOpen, ChevronLeft, ChevronRight, Lock } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { libroCajaAPI, LibroCajaDiarioRow } from '../../lib/api';
-import { useAppStore } from '../../store/useAppStore';
+import { authAPI, libroCajaAPI, LibroCajaDiarioRow } from '../../lib/api';
+import { Modal } from '../../components/shared/Modal';
 
 const fmt = (n: number) => n.toLocaleString('es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 
 const meses = ['ENERO','FEBRERO','MARZO','ABRIL','MAYO','JUNIO','JULIO','AGOSTO','SEPTIEMBRE','OCTUBRE','NOVIEMBRE','DICIEMBRE'];
+const COL_COUNT = 9;
+const EDIT_SESSION_MS = 5 * 60 * 1000;
 
 function mesActualISO(): string {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 }
 
-type EditableField = 'target' | 'cambio' | 'total_caja';
+type ManualField = 'target' | 'cambio' | 'total_caja';
+
+function assertLibroSave(res: { success: boolean; error?: string }, fallback: string) {
+  if (!res?.success) throw new Error(res?.error || fallback);
+}
 
 const EditableCell: React.FC<{
   value: number;
   onSave: (v: number) => Promise<void> | void;
-  isAdmin: boolean;
-}> = ({ value, onSave, isAdmin }) => {
+  onRequestEdit: (startEdit: () => void) => void;
+}> = ({ value, onSave, onRequestEdit }) => {
   const [editing, setEditing] = useState(false);
   const [val, setVal] = useState('');
   const ref = useRef<HTMLInputElement>(null);
+  const committingRef = useRef(false);
 
-  const start = () => {
-    if (!isAdmin) { toast.error('Solo administradores pueden editar'); return; }
+  const beginEdit = useCallback(() => {
     setVal(String(value ?? 0));
     setEditing(true);
-    setTimeout(() => ref.current?.select(), 10);
-  };
+    requestAnimationFrame(() => {
+      ref.current?.focus();
+      ref.current?.select();
+    });
+  }, [value]);
 
-  const commit = async () => {
-    const n = parseFloat(val.replace(',', '.'));
-    setEditing(false);
-    if (isNaN(n)) return;
-    await onSave(n);
+  const commit = useCallback(async () => {
+    if (committingRef.current) return;
+    committingRef.current = true;
+    try {
+      const n = parseFloat(String(val).replace(',', '.'));
+      setEditing(false);
+      if (!isNaN(n) && Math.abs(n - (value ?? 0)) > 0.0001) {
+        await onSave(n);
+      }
+    } catch (err) {
+      setEditing(false);
+      const msg = err instanceof Error ? err.message : 'No se pudo guardar';
+      toast.error(msg);
+    } finally {
+      committingRef.current = false;
+    }
+  }, [onSave, val, value]);
+
+  const start = () => {
+    onRequestEdit(beginEdit);
   };
 
   if (editing) {
@@ -43,11 +67,22 @@ const EditableCell: React.FC<{
       <input
         ref={ref}
         type="number"
+        step="0.01"
         value={val}
         onChange={(e) => setVal(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => { if (e.key === 'Enter') void commit(); if (e.key === 'Escape') setEditing(false); }}
-        className="input font-mono text-right"
+        onBlur={() => { void commit(); }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            void commit();
+          }
+          if (e.key === 'Escape') {
+            e.preventDefault();
+            committingRef.current = false;
+            setEditing(false);
+          }
+        }}
+        className="input font-mono text-right w-full"
         style={{ padding: '4px 8px', minWidth: 90 }}
       />
     );
@@ -55,18 +90,19 @@ const EditableCell: React.FC<{
 
   return (
     <button
+      type="button"
       onClick={start}
       className="font-mono text-right w-full"
       style={{
         background: 'transparent',
         border: '1px dashed transparent',
         padding: '4px 8px',
-        cursor: isAdmin ? 'text' : 'default',
+        cursor: 'text',
         color: 'var(--text)',
         borderRadius: 6,
       }}
-      title={isAdmin ? 'Clic para editar' : ''}
-      onMouseEnter={(e) => { if (isAdmin) (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--border)'; }}
+      title="Clic para editar"
+      onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--border)'; }}
       onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = 'transparent'; }}
     >
       $ {fmt(value || 0)}
@@ -75,17 +111,60 @@ const EditableCell: React.FC<{
 };
 
 export const LibroCajaModule: React.FC = () => {
-  const { currentUser } = useAppStore();
-  const isAdmin = currentUser?.rol === 'admin';
-
   const [periodo, setPeriodo] = useState<string>(mesActualISO());
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<LibroCajaDiarioRow[]>([]);
+  const [editUnlockedUntil, setEditUnlockedUntil] = useState(0);
+  const [showAdminModal, setShowAdminModal] = useState(false);
+  const [adminPin, setAdminPin] = useState('');
+  const [adminChecking, setAdminChecking] = useState(false);
+  const pendingEditRef = useRef<(() => void) | null>(null);
 
   const labelMes = useMemo(() => {
     const [y, m] = periodo.split('-');
     return `${meses[parseInt(m, 10) - 1]} ${y}`;
   }, [periodo]);
+
+  const isEditUnlocked = useCallback(() => Date.now() < editUnlockedUntil, [editUnlockedUntil]);
+
+  const requestEditAccess = useCallback((startEdit: () => void) => {
+    if (isEditUnlocked()) {
+      startEdit();
+      return;
+    }
+    pendingEditRef.current = startEdit;
+    setShowAdminModal(true);
+  }, [isEditUnlocked]);
+
+  const closeAdminModal = () => {
+    setShowAdminModal(false);
+    setAdminPin('');
+    pendingEditRef.current = null;
+  };
+
+  const handleAdminSubmit = async () => {
+    if (!adminPin.trim()) {
+      toast.error('Ingresá el PIN de administrador');
+      return;
+    }
+    setAdminChecking(true);
+    try {
+      const res = await authAPI.validateAdmin(adminPin.trim());
+      if (!res.ok) {
+        toast.error(res.error || 'PIN de administrador incorrecto');
+        return;
+      }
+      setEditUnlockedUntil(Date.now() + EDIT_SESSION_MS);
+      setShowAdminModal(false);
+      setAdminPin('');
+      const pending = pendingEditRef.current;
+      pendingEditRef.current = null;
+      pending?.();
+      toast.success('Edición habilitada por 5 minutos', { duration: 2000 });
+    } finally {
+      setAdminChecking(false);
+    }
+  };
 
   const load = async () => {
     setLoading(true);
@@ -117,11 +196,30 @@ export const LibroCajaModule: React.FC = () => {
     setPeriodo(p);
   };
 
-  const saveManual = async (fecha: string, field: EditableField, value: number) => {
-    await libroCajaAPI.setManual(fecha, { [field]: value } as any);
-    setRows((prev) => prev.map((r) => (r.fecha === fecha ? { ...r, [field]: value } as any : r)));
+  const saveManual = async (fecha: string, field: ManualField, value: number) => {
+    const res = await libroCajaAPI.setManual(fecha, { [field]: value });
+    assertLibroSave(res, 'Error al guardar valor manual');
+    setRows((prev) => prev.map((r) => (r.fecha === fecha ? { ...r, [field]: value } as LibroCajaDiarioRow : r)));
     toast.success('Guardado', { duration: 700 });
   };
+
+  const saveDia = async (
+    fecha: string,
+    field: 'caja' | 'egresos' | 'gastos_tarjeta',
+    value: number,
+    rowKey: keyof Pick<LibroCajaDiarioRow, 'caja' | 'egreso' | 'gastos_tarjeta'>,
+  ) => {
+    const res = await libroCajaAPI.updateDia(fecha, { [field]: value });
+    assertLibroSave(res, 'Error al guardar en libro de caja');
+    setRows((prev) => prev.map((r) => (r.fecha === fecha ? { ...r, [rowKey]: value } : r)));
+    toast.success('Guardado', { duration: 700 });
+  };
+
+  const headers = ['Día','Libro','Caja','Egresos','Target','Cambio','Transferencia','Gastos tarjeta','Total en caja'];
+
+  const editUnlockedLabel = isEditUnlocked()
+    ? `Edición activa (${Math.max(1, Math.ceil((editUnlockedUntil - Date.now()) / 60000))} min)`
+    : null;
 
   return (
     <div className="flex flex-col h-full" style={{ background: 'var(--bg)' }}>
@@ -137,10 +235,15 @@ export const LibroCajaModule: React.FC = () => {
             Libro de Caja — {labelMes}
           </div>
           <div style={{ fontSize: 11, color: 'var(--text3)' }}>
-            Una fila por día · Totales al final
+            Libro = efectivo · Target = débito/crédito/QR (incl. pagos mixtos) · Transferencias = transferencia
           </div>
         </div>
         <div style={{ flex: 1 }} />
+        {editUnlockedLabel && (
+          <span className="text-xs px-2 py-1 rounded-md" style={{ background: 'rgba(34,197,94,0.15)', color: '#4ade80' }}>
+            {editUnlockedLabel}
+          </span>
+        )}
         <div className="flex items-center gap-2">
           <button className="btn btn-secondary btn-sm" onClick={() => go(-1)} title="Mes anterior">
             <ChevronLeft size={14} />
@@ -151,37 +254,43 @@ export const LibroCajaModule: React.FC = () => {
         </div>
       </div>
 
-      <div className="flex-1 overflow-auto px-6 pb-6">
+      <div className="flex-1 min-h-0 overflow-y-auto px-6 pb-6">
         <div className="rounded-xl overflow-hidden" style={{ background: 'var(--bg2)', border: '1px solid var(--border)' }}>
-          <table className="w-full text-sm" style={{ borderCollapse: 'collapse', minWidth: 1040 }}>
+          <table className="w-full text-sm" style={{ borderCollapse: 'collapse', minWidth: 1080 }}>
             <thead>
               <tr style={{ background: 'var(--bg3)', borderBottom: '1px solid var(--border)' }}>
-                {['Día','Libro','Caja','Egreso','Target','Cambio','Transferencias','Gastos tarjeta','Total en caja'].map((h) => (
+                {headers.map((h) => (
                   <th key={h} className="table-header" style={{ textAlign: h === 'Día' ? 'left' : 'right' }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={9} className="text-center py-10" style={{ color: 'var(--text3)' }}>Cargando…</td></tr>
+                <tr><td colSpan={COL_COUNT} className="text-center py-10" style={{ color: 'var(--text3)' }}>Cargando…</td></tr>
               ) : rows.map((r) => {
                 const day = parseInt(r.fecha.slice(8, 10), 10);
                 return (
                   <tr key={r.fecha} className="table-row" style={{ borderBottom: '1px solid var(--border)' }}>
                     <td className="table-cell" style={{ fontWeight: 700, color: 'var(--text)' }}>{day}</td>
-                    <td className="table-cell text-right font-mono" style={{ color: 'var(--text)' }}>$ {fmt(r.libro || 0)}</td>
-                    <td className="table-cell text-right font-mono" style={{ color: 'var(--text)' }}>$ {fmt(r.caja || 0)}</td>
-                    <td className="table-cell text-right font-mono" style={{ color: '#ef4444' }}>$ {fmt(r.egreso || 0)}</td>
+                    <td className="table-cell text-right font-mono" style={{ color: 'var(--text)' }} title="Ventas en efectivo (auto)">$ {fmt(r.libro || 0)}</td>
                     <td className="table-cell text-right">
-                      <EditableCell value={r.target || 0} isAdmin={isAdmin} onSave={(v) => saveManual(r.fecha, 'target', v)} />
+                      <EditableCell value={r.caja || 0} onRequestEdit={requestEditAccess} onSave={(v) => saveDia(r.fecha, 'caja', v, 'caja')} />
                     </td>
                     <td className="table-cell text-right">
-                      <EditableCell value={r.cambio ?? 1500} isAdmin={isAdmin} onSave={(v) => saveManual(r.fecha, 'cambio', v)} />
+                      <EditableCell value={r.egreso || 0} onRequestEdit={requestEditAccess} onSave={(v) => saveDia(r.fecha, 'egresos', v, 'egreso')} />
                     </td>
-                    <td className="table-cell text-right font-mono" style={{ color: 'var(--text)' }}>$ {fmt(r.transferencias || 0)}</td>
-                    <td className="table-cell text-right font-mono" style={{ color: 'var(--text)' }}>$ {fmt(r.gastos_tarjeta || 0)}</td>
+                    <td className="table-cell text-right" title="Ventas tarjeta/QR (auto; editable manual)">
+                      <EditableCell value={r.target || 0} onRequestEdit={requestEditAccess} onSave={(v) => saveManual(r.fecha, 'target', v)} />
+                    </td>
                     <td className="table-cell text-right">
-                      <EditableCell value={r.total_caja || 0} isAdmin={isAdmin} onSave={(v) => saveManual(r.fecha, 'total_caja', v)} />
+                      <EditableCell value={r.cambio ?? 1500} onRequestEdit={requestEditAccess} onSave={(v) => saveManual(r.fecha, 'cambio', v)} />
+                    </td>
+                    <td className="table-cell text-right font-mono" style={{ color: 'var(--text)' }} title="Ventas por transferencia (auto)">$ {fmt(r.transferencias || 0)}</td>
+                    <td className="table-cell text-right">
+                      <EditableCell value={r.gastos_tarjeta || 0} onRequestEdit={requestEditAccess} onSave={(v) => saveDia(r.fecha, 'gastos_tarjeta', v, 'gastos_tarjeta')} />
+                    </td>
+                    <td className="table-cell text-right">
+                      <EditableCell value={r.total_caja || 0} onRequestEdit={requestEditAccess} onSave={(v) => saveManual(r.fecha, 'total_caja', v)} />
                     </td>
                   </tr>
                 );
@@ -205,6 +314,38 @@ export const LibroCajaModule: React.FC = () => {
           </table>
         </div>
       </div>
+
+      <Modal
+        isOpen={showAdminModal}
+        onClose={closeAdminModal}
+        title="Autorización de administrador"
+        size="sm"
+        footer={(
+          <>
+            <button type="button" className="btn-secondary btn" onClick={closeAdminModal} disabled={adminChecking}>
+              Cancelar
+            </button>
+            <button type="button" className="btn-primary btn" onClick={() => void handleAdminSubmit()} disabled={adminChecking}>
+              <Lock size={14} /> {adminChecking ? 'Verificando…' : 'Confirmar'}
+            </button>
+          </>
+        )}
+      >
+        <p className="text-sm mb-4" style={{ color: 'var(--text2)' }}>
+          Ingresá el PIN de un usuario con rol administrador para editar celdas del libro de caja. La edición queda habilitada por 5 minutos.
+        </p>
+        <label className="label">PIN de administrador</label>
+        <input
+          type="password"
+          className="input font-mono"
+          value={adminPin}
+          onChange={(e) => setAdminPin(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') void handleAdminSubmit(); }}
+          placeholder="••••"
+          autoFocus
+          disabled={adminChecking}
+        />
+      </Modal>
     </div>
   );
 };

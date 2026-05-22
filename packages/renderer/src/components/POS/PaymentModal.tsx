@@ -233,7 +233,6 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onC
                       key={id}
                       disabled={disabled}
                       onClick={() => !disabled && handleSelectMetodo(id as MetodoPago)}
-                      onMouseEnter={() => !disabled && setSelectedIdx(i)}
                       style={{
                         background: isSelected ? colorBg : 'var(--bg3)',
                         border: `2px solid ${isSelected ? colorBorder : 'var(--border)'}`,
@@ -259,7 +258,6 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onC
                   return (
                     <button
                       onClick={handleOpenMixto}
-                      onMouseEnter={() => setSelectedIdx(methods.length)}
                       style={{
                         background: isMixtoSel ? 'rgba(124,58,237,0.12)' : 'var(--bg3)',
                         border: `2px solid ${isMixtoSel ? 'rgba(124,58,237,0.4)' : 'var(--border)'}`,

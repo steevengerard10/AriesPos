@@ -247,18 +247,10 @@ export const ClientesModule: React.FC = () => {
 
   const totalFiado = useMemo(() => clientes.reduce((s, c) => s + c.saldo_pendiente, 0), [clientes]);
 
-  // Ref para scroll automático
-  const tableBodyRef = React.useRef<HTMLTableSectionElement>(null);
-  useEffect(() => {
-    if (tableBodyRef.current && filtered.length > 6) {
-      tableBodyRef.current.scrollTop = tableBodyRef.current.scrollHeight;
-    }
-  }, [filtered.length, loading]);
-
   return (
-    <div className="flex h-full gap-4">
+    <div className="flex flex-col lg:flex-row h-full min-h-0 flex-1 w-full overflow-y-auto lg:overflow-hidden gap-4">
       {/* Lista de clientes */}
-      <div className={`flex flex-col ${selectedCliente ? 'w-1/2' : 'w-full'} transition-all`}>
+      <div className={`flex flex-col min-h-0 flex-1 w-full lg:min-w-0 overflow-hidden ${selectedCliente ? 'lg:max-w-[50%]' : ''}`}>
         {/* Header */}
         <div className="shrink-0 module-header px-6 pt-6">
           <div>
@@ -286,24 +278,26 @@ export const ClientesModule: React.FC = () => {
           <button className="btn-ghost btn p-2" onClick={loadData}><RefreshCw size={16} /></button>
         </div>
 
-        {/* Tabla con barra de totales fija y scroll condicional */}
-        <div className="flex-1 flex flex-col px-6 pb-6">
-          <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden flex flex-col h-full">
-            <div className="flex-1 overflow-hidden" style={{ maxHeight: 'calc(100vh - 340px)' }}>
-              <table className="w-full">
-                <thead style={{ position: 'sticky', top: 0, zIndex: 10 }}>
+        {/* Tabla + barra de totales */}
+        <div className="flex-1 flex flex-col min-h-0 px-6 pb-6">
+          <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden flex flex-col flex-1 min-h-0">
+            <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
+              <table className="w-full border-collapse table-fixed">
+                <colgroup>
+                  <col />
+                  <col style={{ width: '26%' }} />
+                  <col style={{ width: '18%' }} />
+                  <col style={{ width: '14%' }} />
+                </colgroup>
+                <thead className="sticky top-0 z-10 bg-[var(--bg2)] shadow-[0_1px_0_var(--border)]">
                   <tr className="border-b border-slate-700">
-                    <th className="table-header">{t('clie.col.name')}</th>
-                    <th className="table-header">{t('clie.col.contact')}</th>
+                    <th className="table-header text-left">{t('clie.col.name')}</th>
+                    <th className="table-header text-left">{t('clie.col.contact')}</th>
                     <th className="table-header text-right">{t('clie.col.balance')}</th>
-                    <th className="table-header"></th>
+                    <th className="table-header text-center w-24"></th>
                   </tr>
                 </thead>
-                <tbody
-                  ref={tableBodyRef}
-                  style={{ display: 'block', overflowY: 'auto', maxHeight: 'calc(100vh - 410px)', width: '100%', tableLayout: 'fixed' }}
-                  className="block w-full"
-                >
+                <tbody>
                   {loading ? (
                     <tr><td colSpan={4} className="text-center py-8 text-slate-400">{t('common.loading')}</td></tr>
                   ) : filtered.length === 0 ? (
@@ -312,26 +306,25 @@ export const ClientesModule: React.FC = () => {
                     <tr
                       key={c.id}
                       className={`table-row cursor-pointer ${selectedCliente?.id === c.id ? 'bg-blue-900/20' : ''}`}
-                      style={{ display: 'table', width: '100%', tableLayout: 'fixed' }}
                       onClick={() => handleVerCuenta(c)}
                     >
-                      <td className="table-cell">
-                        <div className="font-semibold text-white">{c.nombre} {c.apellido}</div>
-                        {c.documento && <div className="text-xs text-slate-500">Doc: {c.documento}</div>}
+                      <td className="table-cell align-middle text-left">
+                        <div className="font-semibold text-white truncate" title={`${c.nombre} ${c.apellido}`.trim()}>{c.nombre} {c.apellido}</div>
+                        {c.documento && <div className="text-xs text-slate-500 truncate">Doc: {c.documento}</div>}
                       </td>
-                      <td className="table-cell text-sm text-slate-400">
-                        {c.telefono && <div>{c.telefono}</div>}
-                        {c.email && <div className="text-xs">{c.email}</div>}
+                      <td className="table-cell align-middle text-left text-sm text-slate-400">
+                        {c.telefono && <div className="truncate">{c.telefono}</div>}
+                        {c.email && <div className="text-xs truncate">{c.email}</div>}
                       </td>
-                      <td className="table-cell text-right">
+                      <td className="table-cell align-middle text-right whitespace-nowrap">
                         {c.saldo_pendiente > 0 ? (
                           <span className="font-mono font-bold text-red-400">{formatCurrency(c.saldo_pendiente)}</span>
                         ) : (
                           <span className="text-slate-500 text-sm">{t('clie.noDebt')}</span>
                         )}
                       </td>
-                      <td className="table-cell" onClick={(e) => e.stopPropagation()}>
-                        <div className="flex gap-1">
+                      <td className="table-cell align-middle text-center whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex gap-1 justify-center">
                           <button onClick={() => handleEdit(c)} className="btn-ghost btn p-1.5"><Edit size={13} /></button>
                           <button onClick={() => setConfirmDelete(c.id)} className="btn-ghost btn p-1.5 hover:text-red-400"><Trash2 size={13} /></button>
                         </div>
@@ -352,7 +345,7 @@ export const ClientesModule: React.FC = () => {
 
       {/* Panel de cuenta corriente */}
       {selectedCliente && (
-        <div className="w-1/2 flex flex-col bg-slate-800/50 rounded-2xl border border-slate-700 m-4 mr-6 overflow-hidden">
+        <div className="flex flex-col flex-1 min-h-0 min-w-0 w-full lg:w-1/2 lg:max-w-[50%] bg-slate-800/50 rounded-2xl border border-slate-700 my-4 mr-6 overflow-hidden">
           {/* Header cuenta */}
           <div className="p-5 border-b border-slate-700 flex items-start justify-between">
             <div>
@@ -391,7 +384,7 @@ export const ClientesModule: React.FC = () => {
           </div>
 
           {/* Historial */}
-          <div className="flex-1 overflow-auto p-4">
+          <div className="flex-1 min-h-0 overflow-y-auto p-4">
             <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-2">
               <FileText size={14} /> {t('clie.salesHistory')}
             </h3>
@@ -530,10 +523,10 @@ export const ClientesModule: React.FC = () => {
       </Modal>
 
       {/* Modal pago */}
-      <Modal isOpen={showPagarModal} onClose={() => { setShowPagarModal(false); setSaldoActual(null); setPagoMetodo('efectivo'); }} title="Registrar Pago de Fiado" size="sm"
+      <Modal isOpen={showPagarModal} onClose={() => { setShowPagarModal(false); setPagoMetodo('efectivo'); }} title="Registrar Pago de Fiado" size="sm"
         footer={
           <>
-            <button className="btn-secondary btn" onClick={() => { setShowPagarModal(false); setSaldoActual(null); setPagoMetodo('efectivo'); }}>Cancelar</button>
+            <button className="btn-secondary btn" onClick={() => { setShowPagarModal(false); setPagoMetodo('efectivo'); }}>Cancelar</button>
             <button className="btn-success btn" onClick={handlePagar}><DollarSign size={16} /> Confirmar Pago</button>
           </>
         }

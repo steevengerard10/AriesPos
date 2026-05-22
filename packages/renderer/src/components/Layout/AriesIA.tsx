@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { X, Send, Sparkles, Bot } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
+import { formatNowTimeShort } from '../../lib/utils';
 
 interface Message {
   id: string;
@@ -17,7 +18,7 @@ const WELCOME: Message = {
 };
 
 function now() {
-  return new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+  return formatNowTimeShort();
 }
 
 export default function AriesIA() {

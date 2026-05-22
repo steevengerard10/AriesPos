@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { FileText, Plus, Search, RefreshCw, Check, X, AlertCircle, Edit, Trash2, Zap, Shield } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -45,11 +45,24 @@ export const CuentasPagarModule: React.FC = () => {
   const [showPagar, setShowPagar] = useState<CuentaPagar | null>(null);
   const [montoAPagar, setMontoAPagar] = useState('');
 
-  // Estado de egresos rápidos
-  const [egresoProveedor, setEgresoProveedor] = useState('');
-  const [egresoMonto, setEgresoMonto] = useState('');
-  const [egresoMedioPago, setEgresoMedioPago] = useState<'efectivo' | 'transferencia'>('efectivo');
-  const [addingEgreso, setAddingEgreso] = useState(false);
+  // Egresos rápidos: contadores independientes efectivo / transferencia
+  const [egresoEfProveedor, setEgresoEfProveedor] = useState('');
+  const [egresoEfMonto, setEgresoEfMonto] = useState('');
+  const [egresoTrProveedor, setEgresoTrProveedor] = useState('');
+  const [egresoTrMonto, setEgresoTrMonto] = useState('');
+  const [addingEgresoEf, setAddingEgresoEf] = useState(false);
+  const [addingEgresoTr, setAddingEgresoTr] = useState(false);
+
+  const egresosEfectivo = useMemo(
+    () => egresos.filter((e) => e.tipo === 'egreso_efectivo' || (e.tipo === 'egreso_rapido' && e.medio_pago === 'efectivo')),
+    [egresos],
+  );
+  const egresosTransferencia = useMemo(
+    () => egresos.filter((e) => e.tipo === 'egreso_transferencia' || (e.tipo === 'egreso_rapido' && e.medio_pago === 'transferencia')),
+    [egresos],
+  );
+  const totalEgresoEfectivo = useMemo(() => egresosEfectivo.reduce((a, e) => a + e.monto, 0), [egresosEfectivo]);
+  const totalEgresoTransferencia = useMemo(() => egresosTransferencia.reduce((a, e) => a + e.monto, 0), [egresosTransferencia]);
 
   const loadData = async () => {
     setLoading(true);
@@ -67,29 +80,33 @@ export const CuentasPagarModule: React.FC = () => {
     cargarDia(); // cargar egresos del día actual
   }, []);
 
-  const handleAddEgreso = useCallback(async () => {
-    const monto = parseFloat(egresoMonto.replace(',', '.'));
-    if (!egresoProveedor.trim()) { toast.error('Ingresá el proveedor o concepto'); return; }
+  const handleAddEgreso = useCallback(async (
+    medio: 'efectivo' | 'transferencia',
+    proveedor: string,
+    montoStr: string,
+    setAdding: (v: boolean) => void,
+    clear: () => void,
+  ) => {
+    const monto = parseFloat(montoStr.replace(',', '.'));
+    if (!proveedor.trim()) { toast.error('Ingresá el proveedor o concepto'); return; }
     if (!monto || monto <= 0) { toast.error('Ingresá un monto válido'); return; }
-    setAddingEgreso(true);
+    setAdding(true);
     try {
-      // Agregar a Libro de Caja como "egreso_rapido" (no afecta caja diaria)
       const { invoke } = (window as unknown as { electron: { invoke: (c: string, ...a: unknown[]) => Promise<unknown> } }).electron;
+      const tipo = medio === 'transferencia' ? 'egreso_transferencia' : 'egreso_efectivo';
       await invoke('librocaja:addEgreso', fechaSeleccionada, {
-        proveedor: egresoProveedor.trim(),
+        proveedor: proveedor.trim(),
         monto,
-        medio_pago: egresoMedioPago,
-        tipo: 'egreso_rapido',
+        medio_pago: medio,
+        tipo,
       });
       await cargarDia(fechaSeleccionada);
-      
-      setEgresoProveedor('');
-      setEgresoMonto('');
-      toast.success('Egreso rápido registrado (solo Libro de Caja)');
+      clear();
+      toast.success(`Egreso ${medio === 'efectivo' ? 'efectivo' : 'transferencia'} registrado`);
     } finally {
-      setAddingEgreso(false);
+      setAdding(false);
     }
-  }, [egresoProveedor, egresoMonto, egresoMedioPago, fechaSeleccionada, cargarDia]);
+  }, [fechaSeleccionada, cargarDia]);
 
   const filtered = cuentas.filter((c) => {
     const matchSearch = !search.trim() ||
@@ -201,8 +218,8 @@ export const CuentasPagarModule: React.FC = () => {
       </div>
 
       {/* Tabla */}
-      <div className="flex-1 overflow-auto px-6 pb-6">
-        <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden" style={{ maxHeight: 'calc(100vh - 340px)', display: 'flex', flexDirection: 'column' }}>
+      <div className="flex-1 min-h-0 overflow-y-auto px-6 pb-6">
+        <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden flex flex-col max-h-[calc(100vh-340px)]">
           <table className="w-full">
             <thead style={{ position: 'sticky', top: 0, zIndex: 10 }}>
               <tr className="border-b border-slate-700">
@@ -232,7 +249,7 @@ export const CuentasPagarModule: React.FC = () => {
                     {c.fecha_vencimiento ? (
                       <div className="flex items-center justify-center gap-1">
                         {isVencida(c.fecha_vencimiento) && c.estado !== 'pagada' && <AlertCircle size={12} />}
-                        {new Date(c.fecha_vencimiento).toLocaleDateString('es-AR')}
+                        {formatDate(c.fecha_vencimiento)}
                       </div>
                     ) : '—'}
                   </td>
@@ -313,134 +330,117 @@ export const CuentasPagarModule: React.FC = () => {
 
       <ConfirmDialog isOpen={confirmDelete !== null} title={t('cp.deleteTitle')} message={t('cp.deleteMsg')} onConfirm={() => confirmDelete && handleDelete(confirmDelete)} onCancel={() => setConfirmDelete(null)} />
 
-      {/* ── Egresos rápidos del día ───────────────────────────────── */}
+      {/* ── Egresos rápidos del día (efectivo y transferencia por separado) ── */}
       <div className="shrink-0 px-6 pb-6">
         <div style={{ background: 'var(--bg2)', borderRadius: 12, border: '1px solid rgba(239,68,68,0.25)', padding: 16 }}>
-          {/* Header */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
             <Zap size={15} style={{ color: '#ef4444' }} />
             <span style={{ fontSize: 13, fontWeight: 700, color: '#ef4444', textTransform: 'uppercase', letterSpacing: '0.07em' }}>
-              Egresos Rápidos — Hoy ({fechaSeleccionada.split('-').reverse().slice(0,2).join('/')})
-            </span>
-            <span style={{ fontSize: 11, color: 'var(--text3)', marginLeft: 2 }}>
-              se descuenta de {egresoMedioPago === 'transferencia' ? 'Gastos Tarjeta/Transfer.' : 'Total en Caja'} en el libro
+              Egresos Rápidos — {fechaSeleccionada.split('-').reverse().slice(0, 2).join('/')}
             </span>
           </div>
-
-          {/* Formulario (solo admins) */}
-          {isAdmin ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 14 }}>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <input
-                  type="text"
-                  placeholder="Proveedor / concepto"
-                  value={egresoProveedor}
-                  onChange={e => setEgresoProveedor(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') handleAddEgreso(); }}
-                  className="input"
-                  style={{ flex: 2 }}
-                />
-                <input
-                  type="number"
-                  placeholder="Monto"
-                  value={egresoMonto}
-                  onChange={e => setEgresoMonto(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') handleAddEgreso(); }}
-                  className="input font-mono text-right"
-                  style={{ flex: 1 }}
-                />
-                <button
-                  onClick={handleAddEgreso}
-                  disabled={addingEgreso}
-                  className="btn-danger btn"
-                >
-                  <Plus size={14} /> Registrar
-                </button>
-              </div>
-              {/* Toggle efectivo / transferencia */}
-              <div style={{ display: 'flex', gap: 6 }}>
-                <button
-                  onClick={() => setEgresoMedioPago('efectivo')}
-                  style={{
-                    padding: '4px 14px', borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: 'pointer',
-                    border: egresoMedioPago === 'efectivo' ? 'none' : '1px solid var(--border)',
-                    background: egresoMedioPago === 'efectivo' ? '#22c55e' : 'var(--bg3)',
-                    color: egresoMedioPago === 'efectivo' ? 'white' : 'var(--text3)',
-                  }}
-                >
-                  💵 Efectivo
-                </button>
-                <button
-                  onClick={() => setEgresoMedioPago('transferencia')}
-                  style={{
-                    padding: '4px 14px', borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: 'pointer',
-                    border: egresoMedioPago === 'transferencia' ? 'none' : '1px solid var(--border)',
-                    background: egresoMedioPago === 'transferencia' ? '#3b82f6' : 'var(--bg3)',
-                    color: egresoMedioPago === 'transferencia' ? 'white' : 'var(--text3)',
-                  }}
-                >
-                  🏦 Transferencia
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2 text-sm text-slate-400 mb-4">
+          {!isAdmin ? (
+            <div className="flex items-center gap-2 text-sm text-slate-400">
               <Shield size={13} /> Solo administradores pueden registrar egresos
             </div>
-          )}
-
-          {/* Lista de egresos del día */}
-          {egresos.length === 0 ? (
-            <div style={{ fontSize: 12, color: 'var(--text3)', textAlign: 'center', padding: '10px 0' }}>
-              Sin egresos hoy
-            </div>
           ) : (
-            <div
-              ref={egresosListRef}
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 5,
-                maxHeight: egresos.length > 6 ? 260 : 'none',
-                overflowY: egresos.length > 6 ? 'auto' : 'visible',
-                marginBottom: 0
-              }}
-            >
-              {egresos.map(eg => (
-                <div key={eg.id} className="flex items-center gap-3" style={{
-                  padding: '7px 10px', background: 'var(--bg)',
-                  borderRadius: 8, border: '1px solid var(--border)',
-                }}>
-                  <span style={{ fontSize: 11, color: 'var(--text3)', minWidth: 35 }}>
-                    {eg.fecha ? eg.fecha.slice(11, 16) : ''}
-                  </span>
-                  <span style={{
-                    fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 12,
-                    background: eg.medio_pago === 'transferencia' ? 'rgba(59,130,246,0.15)' : 'rgba(34,197,94,0.12)',
-                    color: eg.medio_pago === 'transferencia' ? '#3b82f6' : '#22c55e',
-                  }}>
-                    {eg.medio_pago === 'transferencia' ? '🏦 Transfer.' : '💵 Efectivo'}
-                  </span>
-                  <span className="flex-1 text-sm" style={{ color: 'var(--text)' }}>{eg.proveedor}</span>
-                  <span className="font-mono font-bold" style={{ color: '#ef4444' }}>
-                    - {formatCurrency(eg.monto)}
-                  </span>
-                  {isAdmin && (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              {([
+                {
+                  key: 'ef' as const,
+                  label: 'Egreso Efectivo',
+                  color: '#22c55e',
+                  list: egresosEfectivo,
+                  total: totalEgresoEfectivo,
+                  proveedor: egresoEfProveedor,
+                  setProveedor: setEgresoEfProveedor,
+                  monto: egresoEfMonto,
+                  setMonto: setEgresoEfMonto,
+                  adding: addingEgresoEf,
+                  setAdding: setAddingEgresoEf,
+                  hint: 'Descuenta Total en Caja del libro',
+                },
+                {
+                  key: 'tr' as const,
+                  label: 'Egreso Transferencia',
+                  color: '#3b82f6',
+                  list: egresosTransferencia,
+                  total: totalEgresoTransferencia,
+                  proveedor: egresoTrProveedor,
+                  setProveedor: setEgresoTrProveedor,
+                  monto: egresoTrMonto,
+                  setMonto: setEgresoTrMonto,
+                  adding: addingEgresoTr,
+                  setAdding: setAddingEgresoTr,
+                  hint: 'Descuenta transferencias / gastos tarjeta',
+                },
+              ]).map((col) => (
+                <div key={col.key} className="rounded-lg p-3" style={{ background: 'var(--bg)', border: '1px solid var(--border)' }}>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-bold" style={{ color: col.color }}>{col.label}</span>
+                    <span className="font-mono text-sm font-bold" style={{ color: '#ef4444' }}>- {formatCurrency(col.total)}</span>
+                  </div>
+                  <p className="text-[11px] mb-2" style={{ color: 'var(--text3)' }}>{col.hint}</p>
+                  <div className="flex gap-2 mb-2">
+                    <input
+                      type="text"
+                      placeholder="Proveedor / concepto"
+                      value={col.proveedor}
+                      onChange={(e) => col.setProveedor(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          void handleAddEgreso(
+                            col.key === 'ef' ? 'efectivo' : 'transferencia',
+                            col.proveedor,
+                            col.monto,
+                            col.setAdding,
+                            () => { col.setProveedor(''); col.setMonto(''); },
+                          );
+                        }
+                      }}
+                      className="input text-sm"
+                      style={{ flex: 2 }}
+                    />
+                    <input
+                      type="number"
+                      placeholder="Monto"
+                      value={col.monto}
+                      onChange={(e) => col.setMonto(e.target.value)}
+                      className="input font-mono text-right text-sm"
+                      style={{ flex: 1 }}
+                    />
                     <button
-                      onClick={() => removeEgreso(eg.id)}
-                      className="btn-ghost btn p-1 hover:text-red-400"
-                      title="Eliminar egreso"
+                      disabled={col.adding}
+                      className="btn-danger btn btn-sm shrink-0"
+                      onClick={() => void handleAddEgreso(
+                        col.key === 'ef' ? 'efectivo' : 'transferencia',
+                        col.proveedor,
+                        col.monto,
+                        col.setAdding,
+                        () => { col.setProveedor(''); col.setMonto(''); },
+                      )}
                     >
-                      <Trash2 size={13} />
+                      <Plus size={13} />
                     </button>
-                  )}
+                  </div>
+                  <div
+                    ref={col.key === 'ef' ? egresosListRef : undefined}
+                    className="flex flex-col gap-1 max-h-40 overflow-y-auto"
+                  >
+                    {col.list.length === 0 ? (
+                      <div className="text-xs text-center py-2" style={{ color: 'var(--text3)' }}>Sin movimientos</div>
+                    ) : col.list.map((eg) => (
+                      <div key={eg.id} className="flex items-center gap-2 text-xs py-1 px-2 rounded" style={{ border: '1px solid var(--border)' }}>
+                        <span className="flex-1 truncate" style={{ color: 'var(--text)' }}>{eg.proveedor}</span>
+                        <span className="font-mono font-bold" style={{ color: '#ef4444' }}>-{formatCurrency(eg.monto)}</span>
+                        <button type="button" onClick={() => removeEgreso(eg.id)} className="btn-ghost btn p-0.5 hover:text-red-400" title="Eliminar">
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               ))}
-              <div className="flex justify-end pt-2" style={{ borderTop: '1px solid var(--border)', background: 'var(--bg2)' }}>
-                <span className="font-mono font-bold text-sm" style={{ color: '#ef4444' }}>
-                  Total: - {formatCurrency(egresos.reduce((a, e) => a + e.monto, 0))}
-                </span>
-              </div>
             </div>
           )}
         </div>

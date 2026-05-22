@@ -1,6 +1,8 @@
 import React, { useRef, useEffect } from 'react';
 import { Bell, Trash2, X, ShoppingCart, AlertTriangle, XCircle } from 'lucide-react';
 import { useAlertMonitorStore, AlertEvent, AlertEventType } from '../../store/useAlertMonitorStore';
+import { useAppStore } from '../../store/useAppStore';
+import { formatNowTime } from '../../lib/utils';
 
 const EVENT_ICONS: Record<AlertEventType, React.ReactNode> = {
   item_removed:    <Trash2 size={13} />,
@@ -23,17 +25,11 @@ const EVENT_LABELS: Record<AlertEventType, string> = {
   sale_cancelled: 'Venta cancelada',
 };
 
-function formatTime(date: Date): string {
-  return date.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-}
-
 interface AlertMonitorPanelProps {
   open: boolean;
   onClose: () => void;
 }
 
-
-import { useAppStore } from '../../store/useAppStore';
 
 export const AlertMonitorPanel: React.FC<AlertMonitorPanelProps> = ({ open, onClose }) => {
   const { events, unread, markAllRead, clearAll } = useAlertMonitorStore();
@@ -151,7 +147,7 @@ export const AlertMonitorPanel: React.FC<AlertMonitorPanelProps> = ({ open, onCl
                     {EVENT_LABELS[ev.type]}
                   </span>
                   <span style={{ fontSize: 10, color: 'var(--text3)', flexShrink: 0 }}>
-                    {formatTime(ev.timestamp)}
+                    {formatNowTime(ev.timestamp)}
                   </span>
                 </div>
                 <div style={{ fontSize: 12, color: 'var(--text)', marginTop: 1, wordBreak: 'break-word' }}>

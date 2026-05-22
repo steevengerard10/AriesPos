@@ -7,6 +7,7 @@ import toast from 'react-hot-toast';
 import { configAPI, backupAPI, appAPI, productosAPI, firmaAPI } from '../../lib/api';
 import { formatDate } from '../../lib/utils';
 import { ImportNixtarModal } from '../../components/modals/ImportNixtarModal';
+import { setAppTimeZoneConfig } from '../../lib/dateTz';
 import { useTranslation } from 'react-i18next';
 import i18n from '../../i18n';
 import { useAppStore, AppTheme, AppFont } from '../../store/useAppStore';
@@ -43,6 +44,23 @@ const METODOS_NUEVOS: MetodoPagoConfig[] = [
   { id: 'qr',              nombre: 'QR / MercadoPago', activo: true },
 ];
 
+const ZONA_HORARIA_AUTO = 'auto';
+const ZONAS_HORARIAS_COMUNES = [
+  'America/Argentina/Buenos_Aires',
+  'America/Argentina/Cordoba',
+  'America/Argentina/Mendoza',
+  'America/Montevideo',
+  'America/Santiago',
+  'America/Sao_Paulo',
+  'America/Lima',
+  'America/Bogota',
+  'America/Caracas',
+  'America/Mexico_City',
+  'America/New_York',
+  'Europe/Madrid',
+  'UTC',
+] as const;
+
 const TABS = [
   { id: 'negocio', label: 'Negocio' },
   { id: 'ticket', label: 'Ticket' },
@@ -67,7 +85,7 @@ const TEMAS: { id: AppTheme; nombre: string; bg: string; bg2: string; accent: st
 export const ConfiguracionModule: React.FC = () => {
   const [tab, setTab] = useState('negocio');
   const { t } = useTranslation();
-  const { theme, setTheme, currentUser, font, setFont } = useAppStore();
+  const { theme, setTheme, currentUser, font, setFont, setConfig: applyGlobalConfig } = useAppStore();
   const isAdmin = currentUser?.rol === 'admin';
   const [config, setConfig] = useState<Record<string, string>>({});
   const [backups, setBackups] = useState<BackupInfo[]>([]);
@@ -107,6 +125,7 @@ export const ConfiguracionModule: React.FC = () => {
         appAPI.getAppConfig().catch(() => null),
       ]);
       setConfig(cfg);
+      setAppTimeZoneConfig(cfg);
       setBackups(bkps);
       setServerInfo({ port: ip.port, localIP: ip.ip });
       setFirmaEstado(firma);
@@ -135,6 +154,8 @@ export const ConfiguracionModule: React.FC = () => {
     setSaving(true);
     try {
       await configAPI.setMultiple(config);
+      applyGlobalConfig(config);
+      setAppTimeZoneConfig(config);
       toast.success('Configuración guardada');
     } finally {
       setSaving(false);
@@ -311,7 +332,7 @@ export const ConfiguracionModule: React.FC = () => {
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-auto px-6 py-6">
+      <div className="flex-1 min-h-0 overflow-y-auto px-6 py-6">
         {tab === 'negocio' && (
           <div className="max-w-xl space-y-4">
             <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wider">Datos del negocio</h2>
@@ -747,6 +768,35 @@ export const ConfiguracionModule: React.FC = () => {
                 ))}
               </div>
             </div>
+
+            {/* Zona horaria (fechas/horas en la app) */}
+            <div className="space-y-2 pt-4 border-t" style={{ borderColor: 'var(--border)' }}>
+              <h3 className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--text3)' }}>Zona horaria</h3>
+              <p className="text-xs" style={{ color: 'var(--text3)' }}>
+                Automática coincide con esta PC:{' '}
+                <span className="font-mono text-slate-400">{Intl.DateTimeFormat().resolvedOptions().timeZone}</span>
+              </p>
+              <select
+                className="input max-w-md"
+                value={
+                  (!config.zona_horaria || config.zona_horaria === ZONA_HORARIA_AUTO)
+                    ? ZONA_HORARIA_AUTO
+                    : (config.zona_horaria)
+                }
+                onChange={(e) => setField('zona_horaria', e.target.value)}
+              >
+                <option value={ZONA_HORARIA_AUTO}>Automática (sistema)</option>
+                {ZONAS_HORARIAS_COMUNES.map((z) => (
+                  <option key={z} value={z}>{z}</option>
+                ))}
+                {config.zona_horaria &&
+                  config.zona_horaria !== ZONA_HORARIA_AUTO &&
+                  !(ZONAS_HORARIAS_COMUNES as readonly string[]).includes(config.zona_horaria) && (
+                  <option value={config.zona_horaria}>{config.zona_horaria}</option>
+                )}
+              </select>
+              <p className="text-[11px] text-slate-500">Guardá la configuración para aplicar. Persiste como <code className="text-slate-400">zona_horaria</code> en la base.</p>
+            </div>
           </div>
         )}
 
@@ -1016,7 +1066,7 @@ export const ConfiguracionModule: React.FC = () => {
       {/* Modal de confirmación para reiniciar datos operacionales */}
       {showResetModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70" onClick={() => setShowResetModal(false)}>
-          <div className="bg-slate-900 border border-red-700 rounded-2xl p-8 w-full max-w-md shadow-2xl" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-slate-900 border border-red-700 rounded-2xl p-8 w-full max-w-md max-h-[80vh] overflow-y-auto shadow-2xl" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center gap-3 mb-4">
               <AlertTriangle size={24} className="text-red-400 shrink-0" />
               <h2 className="text-lg font-bold text-white">¿Reiniciar datos operacionales?</h2>

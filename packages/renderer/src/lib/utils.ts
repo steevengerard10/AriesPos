@@ -1,5 +1,24 @@
+import { getResolvedIanaTimezone } from './dateTz';
+
 export function cn(...classes: (string | undefined | null | false)[]): string {
   return classes.filter(Boolean).join(' ');
+}
+
+function parseFlexibleLocalDate(dateStr: string): Date {
+  if (!dateStr) return new Date(NaN);
+  const s = String(dateStr).trim();
+  if (s.includes('T')) return new Date(s);
+  if (/^\d{4}-\d{2}-\d{2}\s+\d/.test(s)) {
+    return new Date(s.replace(' ', 'T'));
+  }
+  const dOnly = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+  if (dOnly) {
+    const y = parseInt(dOnly[1], 10);
+    const m = parseInt(dOnly[2], 10);
+    const d = parseInt(dOnly[3], 10);
+    return new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+  }
+  return new Date(s);
 }
 
 export function formatCurrency(amount: number, symbol = '$'): string {
@@ -12,13 +31,83 @@ export function formatCurrency(amount: number, symbol = '$'): string {
 
 export function formatDate(dateStr: string): string {
   if (!dateStr) return '';
-  const date = new Date(dateStr + (dateStr.includes('T') ? '' : 'T00:00:00'));
-  return date.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  const date = parseFlexibleLocalDate(dateStr);
+  if (Number.isNaN(date.getTime())) return '';
+  const tz = getResolvedIanaTimezone();
+  return date.toLocaleDateString('es-AR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    timeZone: tz,
+  });
 }
 
 export function formatDateTime(dateStr: string): string {
   if (!dateStr) return '';
-  return new Date(dateStr).toLocaleString('es-AR');
+  const date = parseFlexibleLocalDate(dateStr);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleString('es-AR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    timeZone: getResolvedIanaTimezone(),
+  });
+}
+
+/** Hora actual (relojes en cabeceras) según zona configurada */
+export function formatNowTime(dt: Date = new Date()): string {
+  return dt.toLocaleTimeString('es-AR', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    timeZone: getResolvedIanaTimezone(),
+  });
+}
+
+export function formatNowTimeShort(dt: Date = new Date()): string {
+  return dt.toLocaleTimeString('es-AR', {
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: getResolvedIanaTimezone(),
+  });
+}
+
+/** Fecha larga tipo “sábado, 9 de mayo de 2026” */
+export function formatLocaleDateFull(dt: Date = new Date()): string {
+  return dt.toLocaleDateString('es-AR', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    timeZone: getResolvedIanaTimezone(),
+  });
+}
+
+/** Solo día corto con mes abreviado (dashboard) */
+export function formatDayShort(dateStr: string): string {
+  if (!dateStr) return '';
+  const date = parseFlexibleLocalDate(dateStr.includes('T') ? dateStr : `${dateStr}T12:00:00`);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleDateString('es-AR', {
+    day: '2-digit',
+    month: 'short',
+    timeZone: getResolvedIanaTimezone(),
+  });
+}
+
+/** Hora HH:mm desde fecha ISO completa */
+export function formatTimeHm(isoOrDbDatetime: string): string {
+  if (!isoOrDbDatetime) return '';
+  const date = parseFlexibleLocalDate(isoOrDbDatetime);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleTimeString('es-AR', {
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: getResolvedIanaTimezone(),
+  });
 }
 
 export function today(): string {

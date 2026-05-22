@@ -1,5 +1,6 @@
 import React from 'react';
-import { X, AlertCircle, CheckCircle, Info, AlertTriangle } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { X, AlertCircle, Info, AlertTriangle } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
 interface ModalProps {
@@ -31,16 +32,16 @@ export const Modal: React.FC<ModalProps> = ({
 
   return (
     <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div className={cn('modal-content w-full overflow-hidden', sizeClasses[size])}>
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700">
+      <div className={cn('modal-content w-full max-h-[80vh] flex flex-col overflow-hidden', sizeClasses[size])}>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-700 shrink-0">
           <h2 className="text-lg font-semibold text-white">{title}</h2>
           <button onClick={onClose} className="btn-ghost btn p-1.5 rounded-lg">
             <X size={18} />
           </button>
         </div>
-        <div className="px-6 py-4 overflow-y-auto max-h-[calc(90vh-140px)]">{children}</div>
+        <div className="px-6 py-4 flex-1 min-h-0 overflow-y-auto">{children}</div>
         {footer && (
-          <div className="px-6 py-4 border-t border-slate-700 flex items-center justify-end gap-3">
+          <div className="px-6 py-4 border-t border-slate-700 flex items-center justify-end gap-3 shrink-0">
             {footer}
           </div>
         )}
@@ -80,9 +81,14 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
     info: 'btn-primary',
   };
 
-  return (
-    <div className="modal-overlay">
-      <div className="modal-content max-w-sm">
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-4"
+      role="dialog"
+      aria-modal="true"
+      onClick={(e) => e.target === e.currentTarget && onCancel()}
+    >
+      <div className="modal-content max-w-sm shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="p-6">
           <div className="flex items-start gap-4">
             {icons[type]}
@@ -101,6 +107,7 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 };

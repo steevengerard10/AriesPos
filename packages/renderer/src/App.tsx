@@ -21,6 +21,7 @@ import { TutorialesModule } from './modules/tutoriales/TutorialesModule';
 import { LoginScreen } from './components/auth/LoginScreen';
 import Dashboard from './modules/dashboard/Dashboard';
 import { configAPI, appAPI } from './lib/api';
+import { setAppTimeZoneConfig } from './lib/dateTz';
 import { onEvent } from './lib/api';
 import { useAlertMonitorStore } from './store/useAlertMonitorStore';
 import { SetupScreen } from './setup/SetupScreen';
@@ -51,7 +52,11 @@ class ModuleErrorBoundary extends React.Component<{ children: React.ReactNode; o
     this.props.onReset();
   }
   render() {
-    if (!this.state.hasError) return this.props.children;
+    if (!this.state.hasError) return (
+      <div className="flex-1 flex flex-col min-h-0 h-full overflow-hidden">
+        {this.props.children}
+      </div>
+    );
     return (
       <div className="flex flex-col items-center justify-center h-full gap-5" style={{ background: 'var(--bg)' }}>
         <div className="flex items-center gap-3 text-red-400">
@@ -98,6 +103,10 @@ const SplashScreen: React.FC = () => (
 const MainLayout: React.FC = () => {
   const { currentModule, setCurrentModule, iaOpen, currentUser, config } = useAppStore();
   const addAlert = useAlertMonitorStore((s) => s.addEvent);
+
+  useEffect(() => {
+    setAppTimeZoneConfig(config);
+  }, [config]);
 
   // Escuchar alertas del POS (ventana separada) via IPC
   useEffect(() => {
@@ -192,7 +201,7 @@ const MainLayout: React.FC = () => {
         <Sidebar />
         <div className="flex flex-col flex-1 overflow-hidden">
           <Topbar />
-          <main className="flex-1 overflow-hidden" style={{ background: 'var(--bg)' }}>
+          <main className="flex-1 flex flex-col min-h-0 overflow-hidden" style={{ background: 'var(--bg)' }}>
             <ModuleErrorBoundary onReset={() => setCurrentModule('dashboard')}>
               {renderModule()}
             </ModuleErrorBoundary>
@@ -260,6 +269,7 @@ const App: React.FC = () => {
           new Promise<void>((r) => setTimeout(r, 700)),
         ]);
         setConfig(cfg);
+        setAppTimeZoneConfig(cfg);
         setServerInfo(ipInfo.ip, ipInfo.port);
         // Aplicar el idioma guardado (solo es / en / pt)
         if (cfg.idioma) {

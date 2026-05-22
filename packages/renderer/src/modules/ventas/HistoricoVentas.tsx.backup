@@ -16,9 +16,7 @@ interface VentaItem {
   cantidad: number;
   precio_unitario: number;
   descuento: number;
-  /** Subtotal línea si el backend lo mapea; si no, `total` de SQLite. */
-  subtotal?: number;
-  total?: number;
+  subtotal: number;
 }
 
 interface Venta {
@@ -38,14 +36,6 @@ interface Venta {
   items?: VentaItem[];
 }
 
-interface VentaCancelada extends Omit<Venta, 'id' | 'estado'> {
-  id: number;
-  venta_id_original: number;
-  motivo: string;
-  cancelada_at: string;
-  estado?: string;
-}
-
 const ESTADO_COLORS: Record<string, string> = {
   completada: 'badge-green',
   anulada: 'badge-red',
@@ -55,8 +45,6 @@ const ESTADO_COLORS: Record<string, string> = {
 
 export const HistoricoVentas: React.FC = () => {
   const [ventas, setVentas] = useState<Venta[]>([]);
-  const [ventasCanceladas, setVentasCanceladas] = useState<VentaCancelada[]>([]);
-  const [listTab, setListTab] = useState<'activas' | 'canceladas'>('activas');
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
@@ -81,11 +69,12 @@ export const HistoricoVentas: React.FC = () => {
   const [desde, setDesde] = useState(() => hoyISO());
   const [hasta, setHasta] = useState(() => hoyISO());
   const [selectedVenta, setSelectedVenta] = useState<Venta | null>(null);
-  const [selectedCancelada, setSelectedCancelada] = useState<VentaCancelada | null>(null);
-  const [detailEditMode, setDetailEditMode] = useState(false);
-  const [detailEditMetodo, setDetailEditMetodo] = useState('');
-  const [detailEditObs, setDetailEditObs] = useState('');
-  const [detailSaving, setDetailSaving] = useState(false);
+  const [showDevolucion, setShowDevolucion] = useState(false);
+  // Estado para edición
+  const [editingVenta, setEditingVenta] = useState<Venta | null>(null);
+  const [editObs, setEditObs] = useState('');
+  const [editMetodo, setEditMetodo] = useState('');
+  const [editSaving, setEditSaving] = useState(false);
   const [itemsPerPage, setItemsPerPage] = useState(10);
   const [itemsPage, setItemsPage] = useState(1);
 
@@ -93,12 +82,8 @@ export const HistoricoVentas: React.FC = () => {
     setLoading(true);
     setLoadError(null);
     try {
-      const [list, canceladas] = await Promise.all([
-        ventasAPI.getHistorico({ desde, hasta }) as Promise<Venta[]>,
-        ventasAPI.getCanceladas({ desde, hasta }) as Promise<VentaCancelada[]>,
-      ]);
+      const list = await ventasAPI.getHistorico({ desde, hasta }) as Venta[];
       setVentas(list);
-      setVentasCanceladas(canceladas);
     } catch (err) {
       setLoadError('No se pudo cargar el historial. Intenta de nuevo.');
       console.error('Error al cargar historial:', err);
@@ -115,94 +100,78 @@ export const HistoricoVentas: React.FC = () => {
     return cleanup;
   }, [desde, hasta]);
 
-  const handleVerDetalle = async (v: Venta | VentaCancelada, opts?: { openEdit?: boolean }) => {
-    if ('venta_id_original' in v) {
-      setSelectedCancelada(v);
-      setSelectedVenta(null);
-      setDetailEditMode(false);
-      return;
-    }
+  const handleVerDetalle = async (v: Venta) => {
     const detalle = await ventasAPI.getById(v.id) as Venta;
-    setSelectedCancelada(null);
     setSelectedVenta(detalle);
-    setDetailEditMetodo(detalle.metodo_pago || 'efectivo');
-    setDetailEditObs(detalle.observaciones || '');
-    setDetailEditMode(Boolean(opts?.openEdit) && detalle.estado !== 'anulada');
     setItemsPage(1);
   };
 
-  const handleCancelarVenta = async () => {
+  const handleDevolucion = async () => {
     if (!selectedVenta) return;
-    if (!confirm(`¿Cancelar venta #${selectedVenta.numero}? Se archivará en canceladas y se revertirán stock y caja.`)) return;
+    if (!confirm(`¿Anular venta #${selectedVenta.numero}? Se revertirán los movimientos de stock y caja.`)) return;
     try {
-      const res = await ventasAPI.cancelar(selectedVenta.id, { motivo: 'Cancelación desde histórico' });
-      if (!res?.success) throw new Error(res?.error || 'Error al cancelar');
-      toast.success('Venta cancelada y archivada');
+      await ventasAPI.devolucion(selectedVenta.id, { motivo: 'Anulación manual desde histórico' });
+      toast.success('Venta anulada correctamente');
       setSelectedVenta(null);
-      setDetailEditMode(false);
-      setListTab('canceladas');
       loadData();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Error al cancelar la venta');
+    } catch {
+      toast.error('Error al anular la venta');
     }
   };
 
   const handleOpenEdit = (v: Venta, e: React.MouseEvent) => {
     e.stopPropagation();
-    void handleVerDetalle(v, { openEdit: true });
+    setEditObs(v.observaciones || '');
+    setEditMetodo(v.metodo_pago || 'efectivo');
+    setEditingVenta(v);
   };
 
-  const handleSaveDetail = async () => {
-    if (!selectedVenta || selectedVenta.estado === 'anulada') return;
-    setDetailSaving(true);
+  const handleSaveEdit = async () => {
+    if (!editingVenta) return;
+    setEditSaving(true);
     try {
-      const res = await ventasAPI.update(selectedVenta.id, {
-        observaciones: detailEditObs,
-        metodo_pago: detailEditMetodo,
+      await ventasAPI.editar(editingVenta.id, {
+        observaciones: editObs,
+        metodo_pago: editMetodo,
       });
-      if (!res?.success) throw new Error(res?.error || 'No se pudo guardar');
       toast.success('Venta actualizada');
-      const refresh = await ventasAPI.getById(selectedVenta.id) as Venta;
-      setSelectedVenta(refresh);
-      setDetailEditMode(false);
+      setEditingVenta(null);
       loadData();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Error al guardar cambios');
+    } catch {
+      toast.error('Error al guardar cambios');
     } finally {
-      setDetailSaving(false);
+      setEditSaving(false);
     }
   };
 
-  const lineTotal = (item: VentaItem) => Number(item.subtotal ?? item.total ?? 0);
-
   const filtered = useMemo(() => {
-    const source = listTab === 'canceladas' ? ventasCanceladas : ventas;
-    let list = source as (Venta | VentaCancelada)[];
+    let list = ventas;
     if (search.trim()) {
       const q = search.toLowerCase();
       list = list.filter((v) => v.numero.includes(q) || (v.cliente_nombre || '').toLowerCase().includes(q));
     }
-    if (listTab === 'activas') {
-      if (filterEstado) list = (list as Venta[]).filter((v) => v.estado === filterEstado);
-      if (filterMetodo) list = (list as Venta[]).filter((v) => v.metodo_pago === filterMetodo);
-    }
+    if (filterEstado) list = list.filter((v) => v.estado === filterEstado);
+    if (filterMetodo) list = list.filter((v) => v.metodo_pago === filterMetodo);
     return list;
-  }, [ventas, ventasCanceladas, listTab, search, filterEstado, filterMetodo]);
+  }, [ventas, search, filterEstado, filterMetodo]);
 
-  const totalFiltrado = useMemo(() => {
-    if (listTab === 'canceladas') return filtered.reduce((s, v) => s + v.total, 0);
-    return (filtered as Venta[]).reduce((s, v) => s + (v.estado !== 'anulada' ? v.total : 0), 0);
-  }, [filtered, listTab]);
+  const totalFiltrado = useMemo(() => filtered.reduce((s, v) => s + (v.estado !== 'anulada' ? v.total : 0), 0), [filtered]);
+
+  // Ref para scroll automático
+  const scrollRef = React.useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (scrollRef.current && filtered.length > 6) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [filtered.length, loading]);
 
   return (
-    <div className="flex flex-col h-full min-h-0 flex-1 w-full" style={{ background: 'var(--bg)' }}>
+    <div className="flex flex-col h-full" style={{ background: 'var(--bg)' }}>
       {/* Header */}
       <div className="shrink-0 module-header px-6 pt-6">
         <div>
           <h1 className="module-title flex items-center gap-3"><ShoppingBag size={28} className="text-blue-400" /> Historial de Ventas</h1>
-          <p className="text-sm text-slate-400 mt-1">
-            {filtered.length} {listTab === 'canceladas' ? 'canceladas' : 'ventas'} · {formatCurrency(totalFiltrado)}
-          </p>
+          <p className="text-sm text-slate-400 mt-1">{filtered.length} ventas · {formatCurrency(totalFiltrado)}</p>
         </div>
         <div className="flex items-center gap-2">
           <AlertMonitorButton />
@@ -212,22 +181,6 @@ export const HistoricoVentas: React.FC = () => {
 
       {/* Filtros */}
       <div className="shrink-0 px-6 pb-4 flex items-center gap-3 flex-wrap">
-        <div className="flex items-center gap-1 p-0.5 rounded-lg" style={{ background: 'var(--bg3)', border: '1px solid var(--border)' }}>
-          <button
-            type="button"
-            className={`btn btn-sm ${listTab === 'activas' ? 'btn-primary' : 'btn-ghost'}`}
-            onClick={() => setListTab('activas')}
-          >
-            Ventas
-          </button>
-          <button
-            type="button"
-            className={`btn btn-sm ${listTab === 'canceladas' ? 'btn-primary' : 'btn-ghost'}`}
-            onClick={() => setListTab('canceladas')}
-          >
-            Canceladas
-          </button>
-        </div>
         <div className="flex items-center gap-2">
           <button
             className="btn btn-secondary btn-sm"
@@ -280,16 +233,13 @@ export const HistoricoVentas: React.FC = () => {
           <span>{t('hist.to')}</span>
           <input type="date" value={hasta} onChange={(e) => setHasta(e.target.value)} className="input text-sm py-1.5" />
         </div>
-        {listTab === 'activas' && (
-          <select value={filterEstado} onChange={(e) => setFilterEstado(e.target.value)} className="input text-sm w-36">
-            <option value="">{t('hist.allStates')}</option>
-            <option value="completada">{t('hist.status.done')}</option>
-            <option value="fiado">{t('hist.status.credit')}</option>
-            <option value="anulada">{t('hist.status.void')}</option>
-            <option value="pedido">{t('hist.status.order')}</option>
-          </select>
-        )}
-        {listTab === 'activas' && (
+        <select value={filterEstado} onChange={(e) => setFilterEstado(e.target.value)} className="input text-sm w-36">
+          <option value="">{t('hist.allStates')}</option>
+          <option value="completada">{t('hist.status.done')}</option>
+          <option value="fiado">{t('hist.status.credit')}</option>
+          <option value="anulada">{t('hist.status.void')}</option>
+          <option value="pedido">{t('hist.status.order')}</option>
+        </select>
         <select value={filterMetodo} onChange={(e) => setFilterMetodo(e.target.value)} className="input text-sm w-36">
           <option value="">{t('hist.allMethods')}</option>
           <option value="efectivo">{t('hist.method.cash')}</option>
@@ -298,11 +248,10 @@ export const HistoricoVentas: React.FC = () => {
           <option value="fiado">{t('hist.method.credit')}</option>
           <option value="mixto">{t('hist.method.mixed')}</option>
         </select>
-        )}
       </div>
 
-      {/* Tabla con barra de totales fija y scroll en el área de filas */}
-      <div className="flex-1 flex flex-col min-h-0 px-6 pb-6">
+      {/* Tabla con barra de totales fija y scroll condicional */}
+      <div className="flex-1 flex flex-col px-6 pb-6 w-full">
         {loadError ? (
           <div className="flex flex-col items-center justify-center py-16 gap-3">
             <p className="text-red-400 text-sm">{loadError}</p>
@@ -310,10 +259,10 @@ export const HistoricoVentas: React.FC = () => {
           </div>
         ) : (
           <div
-            className="rounded-xl overflow-hidden flex flex-col flex-1 min-h-0"
+            className="rounded-xl overflow-hidden flex flex-col h-full"
             style={{ background: 'var(--bg2)', border: '1px solid var(--border)' }}
           >
-            <div className="flex-1 overflow-y-auto min-h-0">
+            <div ref={scrollRef} className="flex-1 overflow-y-auto">
               <table className="w-full" style={{ tableLayout: 'fixed' }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--border)' }}>
@@ -338,7 +287,7 @@ export const HistoricoVentas: React.FC = () => {
                   ) : filtered.length === 0 ? (
                     <tr><td colSpan={8} className="text-center py-8 text-slate-500">{t('hist.empty')}</td></tr>
                   ) : filtered.map((v) => (
-                    <tr key={v.id} className="table-row cursor-pointer" onClick={() => void handleVerDetalle(v)}>
+                    <tr key={v.id} className="table-row cursor-pointer" onClick={() => handleVerDetalle(v)}>
                       <td className="table-cell font-mono text-blue-400 text-sm">#{v.numero}</td>
                       <td className="table-cell text-xs" style={{ color: 'var(--text3)' }}>
                         {formatDate(v.fecha)}{v.hora ? ` ${String(v.hora).slice(0, 5)}` : ''}
@@ -356,23 +305,19 @@ export const HistoricoVentas: React.FC = () => {
                       <td className="table-cell text-xs text-slate-400">{v.vendedor_nombre}</td>
                       <td className="table-cell text-center text-xs text-slate-400 capitalize">{v.metodo_pago}</td>
                       <td
-                        className={`table-cell text-right font-mono font-bold ${listTab === 'canceladas' || (v as Venta).estado === 'anulada' ? 'line-through' : ''}`}
-                        style={{ color: listTab === 'canceladas' || (v as Venta).estado === 'anulada' ? 'var(--text3)' : 'var(--text)' }}
+                        className={`table-cell text-right font-mono font-bold ${v.estado === 'anulada' ? 'line-through' : ''}`}
+                        style={{ color: v.estado === 'anulada' ? 'var(--text3)' : 'var(--text)' }}
                       >
                         {formatCurrency(v.total)}
                       </td>
                       <td className="table-cell text-center">
-                        {listTab === 'canceladas' ? (
-                          <span className="badge badge-red text-[10px]">cancelada</span>
-                        ) : (
-                          <span className={`badge ${ESTADO_COLORS[(v as Venta).estado] || 'badge-gray'} text-[10px]`}>{(v as Venta).estado}</span>
-                        )}
+                        <span className={`badge ${ESTADO_COLORS[v.estado] || 'badge-gray'} text-[10px]`}>{v.estado}</span>
                       </td>
                       <td className="table-cell" onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center gap-1">
-                          <button title="Ver detalle" onClick={() => void handleVerDetalle(v)} className="btn-ghost btn p-1.5"><Eye size={13} /></button>
-                          {listTab === 'activas' && (v as Venta).estado !== 'anulada' && (
-                            <button title="Editar venta" onClick={(e) => handleOpenEdit(v as Venta, e)} className="btn-ghost btn p-1.5"><Edit2 size={13} /></button>
+                          <button title="Ver detalle" onClick={() => handleVerDetalle(v)} className="btn-ghost btn p-1.5"><Eye size={13} /></button>
+                          {v.estado !== 'anulada' && (
+                            <button title="Editar venta" onClick={(e) => handleOpenEdit(v, e)} className="btn-ghost btn p-1.5"><Edit2 size={13} /></button>
                           )}
                         </div>
                       </td>
@@ -386,9 +331,7 @@ export const HistoricoVentas: React.FC = () => {
               className="shrink-0 px-4 py-2 flex items-center justify-between"
               style={{ background: 'var(--bg3)', borderTop: '1px solid var(--border)' }}
             >
-              <span className="text-sm" style={{ color: 'var(--text3)' }}>
-                {filtered.length} {listTab === 'canceladas' ? 'canceladas' : 'ventas'}
-              </span>
+              <span className="text-sm" style={{ color: 'var(--text3)' }}>{filtered.length} ventas</span>
               <span className="font-mono font-bold text-lg" style={{ color: 'var(--text)' }}>{formatCurrency(totalFiltrado)}</span>
             </div>
           </div>
@@ -397,111 +340,26 @@ export const HistoricoVentas: React.FC = () => {
 
       {/* Modal detalle */}
       <Modal
-        isOpen={selectedVenta !== null || selectedCancelada !== null}
-        onClose={() => { setSelectedVenta(null); setSelectedCancelada(null); setDetailEditMode(false); }}
-        title={selectedCancelada ? `Venta cancelada #${selectedCancelada.numero}` : `Venta #${selectedVenta?.numero}`}
+        isOpen={selectedVenta !== null}
+        onClose={() => setSelectedVenta(null)}
+        title={`Venta #${selectedVenta?.numero}`}
         size="lg"
         footer={
-          <div className="flex items-center justify-between w-full gap-2 flex-wrap">
-            <div className="flex items-center gap-2">
-              {!selectedCancelada && !detailEditMode && selectedVenta?.estado !== 'anulada' && (
-                <>
-                  <button className="btn-danger btn btn-sm" onClick={handleCancelarVenta}>
-                    <RotateCcw size={14} /> {t('hist.cancel')}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn-secondary btn btn-sm"
-                    onClick={() => setDetailEditMode(true)}
-                  >
-                    <Edit2 size={13} /> Editar
-                  </button>
-                </>
-              )}
-            </div>
-            <div className="flex items-center gap-2 ml-auto">
-              {detailEditMode && selectedVenta?.estado !== 'anulada' ? (
-                <>
-                  <button
-                    type="button"
-                    className="btn-secondary btn btn-sm"
-                    disabled={detailSaving}
-                    onClick={() => {
-                      setDetailEditMode(false);
-                      if (selectedVenta) {
-                        setDetailEditMetodo(selectedVenta.metodo_pago || 'efectivo');
-                        setDetailEditObs(selectedVenta.observaciones || '');
-                      }
-                    }}
-                  >
-                    Cancelar
-                  </button>
-                  <button type="button" className="btn-primary btn btn-sm" disabled={detailSaving} onClick={handleSaveDetail}>
-                    <Check size={14} /> {detailSaving ? 'Guardando…' : 'Guardar'}
-                  </button>
-                </>
-              ) : (
-                <button type="button" className="btn-secondary btn" onClick={() => { setSelectedVenta(null); setSelectedCancelada(null); setDetailEditMode(false); }}>
-                  {t('hist.close')}
+          <div className="flex items-center justify-between w-full">
+            <div>
+              {selectedVenta?.estado !== 'anulada' && (
+                <button className="btn-danger btn btn-sm" onClick={handleDevolucion}>
+                  <RotateCcw size={14} /> {t('hist.cancel')}
                 </button>
               )}
             </div>
+            <button className="btn-secondary btn" onClick={() => setSelectedVenta(null)}>{t('hist.close')}</button>
           </div>
         }
       >
         {selectedVenta && (
           <div className="space-y-4">
-            {detailEditMode && selectedVenta.estado !== 'anulada' && (
-              <div className="rounded-lg p-4 border space-y-3" style={{ background: 'var(--bg3)', borderColor: 'var(--border)' }}>
-                <div>
-                  <label className="label">Método de pago</label>
-                  <select
-                    className="input"
-                    value={detailEditMetodo}
-                    onChange={(e) => setDetailEditMetodo(e.target.value)}
-                  >
-                    {metodosPago.map((m) => (
-                      <option key={m.id} value={m.id}>{m.nombre}</option>
-                    ))}
-                    <option value="fiado">Fiado</option>
-                    <option value="mixto">Mixto</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="label">Observaciones</label>
-                  <textarea
-                    className="input resize-none"
-                    rows={2}
-                    value={detailEditObs}
-                    onChange={(e) => setDetailEditObs(e.target.value)}
-                    placeholder="Notas adicionales..."
-                  />
-                </div>
-                <p className="text-xs" style={{ color: 'var(--text3)' }}>Los cambios se guardan en la base local (SQLite) vía servidor / IPC.</p>
-                <div className="flex justify-end gap-2 pt-1">
-                  <button
-                    type="button"
-                    className="btn-secondary btn btn-sm"
-                    disabled={detailSaving}
-                    onClick={() => {
-                      setDetailEditMode(false);
-                      setDetailEditMetodo(selectedVenta.metodo_pago || 'efectivo');
-                      setDetailEditObs(selectedVenta.observaciones || '');
-                    }}
-                  >
-                    Cancelar
-                  </button>
-                  <button type="button" className="btn-primary btn btn-sm" disabled={detailSaving} onClick={handleSaveDetail}>
-                    <Check size={14} /> {detailSaving ? 'Guardando…' : 'Guardar cambios'}
-                  </button>
-                </div>
-              </div>
-            )}
             <div className="grid grid-cols-3 gap-4 text-sm">
-              <div>
-                <div style={{ color: 'var(--text3)' }}>Venta</div>
-                <div style={{ color: 'var(--text)', fontVariantNumeric: 'tabular-nums' }} className="font-mono">#{selectedVenta.numero}</div>
-              </div>
               <div>
                 <div style={{ color: 'var(--text3)' }}>Fecha</div>
                 <div style={{ color: 'var(--text)' }}>
@@ -516,22 +374,20 @@ export const HistoricoVentas: React.FC = () => {
                 <div style={{ color: 'var(--text3)' }}>Vendedor</div>
                 <div style={{ color: 'var(--text)' }}>{selectedVenta.vendedor_nombre}</div>
               </div>
-              {!detailEditMode && (
-                <div>
-                  <div style={{ color: 'var(--text3)' }}>Método de pago</div>
-                  <div style={{ color: 'var(--text)' }} className="capitalize">{selectedVenta.metodo_pago}</div>
-                </div>
-              )}
+              <div>
+                <div style={{ color: 'var(--text3)' }}>Método de pago</div>
+                <div style={{ color: 'var(--text)' }} className="capitalize">{selectedVenta.metodo_pago}</div>
+              </div>
               <div>
                 <div style={{ color: 'var(--text3)' }}>Estado</div>
                 <span className={`badge ${ESTADO_COLORS[selectedVenta.estado]}`}>{selectedVenta.estado}</span>
               </div>
-              {!detailEditMode && selectedVenta.observaciones ? (
+              {selectedVenta.observaciones && (
                 <div className="col-span-3">
                   <div style={{ color: 'var(--text3)' }}>Observaciones</div>
                   <div style={{ color: 'var(--text)' }}>{selectedVenta.observaciones}</div>
                 </div>
-              ) : null}
+              )}
             </div>
 
             {selectedVenta.items && (
@@ -551,7 +407,7 @@ export const HistoricoVentas: React.FC = () => {
                     </select>
                   </div>
                 </div>
-                <div className="rounded-lg overflow-hidden max-h-48 overflow-y-auto" style={{ background: 'var(--bg3)', border: '1px solid var(--border)' }}>
+                <div className="rounded-lg overflow-hidden" style={{ background: 'var(--bg3)', border: '1px solid var(--border)' }}>
                   <table className="w-full text-sm">
                     <thead>
                       <tr style={{ borderBottom: '1px solid var(--border)' }}>
@@ -576,7 +432,7 @@ export const HistoricoVentas: React.FC = () => {
                                 <td className="px-3 py-2 text-right font-mono" style={{ color: 'var(--text2)' }}>{item.cantidad}</td>
                                 <td className="px-3 py-2 text-right font-mono" style={{ color: 'var(--text2)' }}>{formatCurrency(item.precio_unitario)}</td>
                                 <td className="px-3 py-2 text-right font-mono" style={{ color: 'var(--text3)' }}>{item.descuento > 0 ? `${item.descuento}%` : '—'}</td>
-                                <td className="px-3 py-2 text-right font-mono font-bold" style={{ color: 'var(--text)' }}>{formatCurrency(lineTotal(item))}</td>
+                                <td className="px-3 py-2 text-right font-mono font-bold" style={{ color: 'var(--text)' }}>{formatCurrency(item.subtotal)}</td>
                               </tr>
                             ))}
                             {items.length > itemsPerPage && (
@@ -623,40 +479,50 @@ export const HistoricoVentas: React.FC = () => {
             </div>
           </div>
         )}
-        {selectedCancelada && (
-          <div className="space-y-4 text-sm">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <div style={{ color: 'var(--text3)' }}>Cancelada el</div>
-                <div style={{ color: 'var(--text)' }}>{formatDate(selectedCancelada.cancelada_at?.slice(0, 10) || selectedCancelada.fecha)}</div>
-              </div>
-              <div>
-                <div style={{ color: 'var(--text3)' }}>Motivo</div>
-                <div style={{ color: 'var(--text)' }}>{selectedCancelada.motivo || '—'}</div>
-              </div>
-              <div>
-                <div style={{ color: 'var(--text3)' }}>Cliente</div>
-                <div style={{ color: 'var(--text)' }}>{selectedCancelada.cliente_nombre || 'Consumidor final'}</div>
-              </div>
-              <div>
-                <div style={{ color: 'var(--text3)' }}>Método de pago</div>
-                <div style={{ color: 'var(--text)' }} className="capitalize">{selectedCancelada.metodo_pago}</div>
-              </div>
-            </div>
-            {selectedCancelada.productos && (
-              <div>
-                <div className="text-xs font-semibold uppercase tracking-wider mb-1" style={{ color: 'var(--text3)' }}>Productos</div>
-                <div className="rounded-lg p-3 text-sm" style={{ background: 'var(--bg3)', border: '1px solid var(--border)', color: 'var(--text2)' }}>
-                  {selectedCancelada.productos}
-                </div>
-              </div>
-            )}
-            <div className="flex justify-end text-lg">
-              <span className="text-slate-400 mr-4">{t('hist.detail.total')}:</span>
-              <span className="font-mono font-bold line-through" style={{ color: 'var(--text3)' }}>{formatCurrency(selectedCancelada.total)}</span>
-            </div>
+      </Modal>
+
+      {/* Modal edición */}
+      <Modal
+        isOpen={editingVenta !== null}
+        onClose={() => setEditingVenta(null)}
+        title={`Editar venta #${editingVenta?.numero}`}
+        size="sm"
+        footer={
+          <div className="flex items-center justify-end gap-2 w-full">
+            <button className="btn-secondary btn" onClick={() => setEditingVenta(null)}>Cancelar</button>
+            <button className="btn-primary btn" onClick={handleSaveEdit} disabled={editSaving}>
+              <Check size={14} /> {editSaving ? 'Guardando…' : 'Guardar cambios'}
+            </button>
           </div>
-        )}
+        }
+      >
+        <div className="space-y-4">
+          <div>
+            <label className="label">Método de pago</label>
+            <select
+              className="input"
+              value={editMetodo}
+              onChange={(e) => setEditMetodo(e.target.value)}
+            >
+              {metodosPago.map((m) => (
+                <option key={m.id} value={m.id}>{m.nombre}</option>
+              ))}
+              <option value="fiado">Fiado</option>
+              <option value="mixto">Mixto</option>
+            </select>
+          </div>
+          <div>
+            <label className="label">Observaciones</label>
+            <textarea
+              className="input resize-none"
+              rows={3}
+              value={editObs}
+              onChange={(e) => setEditObs(e.target.value)}
+              placeholder="Notas adicionales..."
+            />
+          </div>
+          <p className="text-xs text-slate-500">Para modificar ítems o cantidades, anulá la venta y creá una nueva.</p>
+        </div>
       </Modal>
     </div>
   );

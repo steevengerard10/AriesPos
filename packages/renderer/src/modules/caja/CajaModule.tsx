@@ -6,7 +6,7 @@ import {
 import toast from 'react-hot-toast';
 import { cajaAPI } from '../../lib/api';
 import { Modal } from '../../components/shared/Modal';
-import { formatCurrency, formatDate } from '../../lib/utils';
+import { formatCurrency, formatDate, formatTimeHm } from '../../lib/utils';
 import { useTranslation } from 'react-i18next';
 import { useLibroCajaStore } from '../../store/useLibroCajaStore';
 import { useAppStore } from '../../store/useAppStore';
@@ -197,7 +197,7 @@ export const CajaModule: React.FC = () => {
     movimientos.filter((m) => m.tipo === 'egreso' && m.metodo_pago === 'efectivo').reduce((s, m) => s + m.monto, 0);
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full min-h-0 flex-1 w-full overflow-hidden">
       {/* Header */}
       <div className="shrink-0 module-header px-6 pt-6">
         <div>
@@ -247,7 +247,7 @@ export const CajaModule: React.FC = () => {
       </div>
 
       {tab === 'actual' && (
-        <div className="flex-1 overflow-auto px-6 py-4 pb-6">
+        <div className="flex-1 min-h-0 overflow-y-auto px-6 py-4 pb-6">
           {!sesionActiva ? (
             <div className="flex flex-col items-center justify-center h-48 text-slate-500 gap-3">
               <Vault size={48} />
@@ -333,9 +333,9 @@ export const CajaModule: React.FC = () => {
                 <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-2">
                   <FileText size={14} /> {t('caja.movements')}
                 </h3>
-                <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden" style={{ maxHeight: 'calc(100vh - 480px)', display: 'flex', flexDirection: 'column' }}>
+                <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
                   <table className="w-full">
-                    <thead style={{ position: 'sticky', top: 0, zIndex: 10, background: 'var(--bg2)' }}>
+                    <thead style={{ background: 'var(--bg2)' }}>
                       <tr className="border-b border-slate-700">
                         <th className="table-header">{t('caja.col.time')}</th>
                         <th className="table-header">{t('caja.col.type')}</th>
@@ -344,12 +344,12 @@ export const CajaModule: React.FC = () => {
                           <th className="table-header text-right">{t('caja.col.amount')}</th>
                       </tr>
                     </thead>
-                    <tbody style={{ overflowY: 'auto', display: 'block', maxHeight: 'calc(100vh - 540px)' }}>
+                    <tbody>
                       {movimientos.length === 0 ? (
                         <tr><td colSpan={6} className="text-center py-6 text-slate-500">{t('caja.noMovements')}</td></tr>
                       ) : movimientos.map((m) => (
                         <tr key={m.id} className="table-row">
-                          <td className="table-cell text-xs text-slate-400">{new Date(m.fecha).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}</td>
+                          <td className="table-cell text-xs text-slate-400">{formatTimeHm(m.fecha)}</td>
                           <td className="table-cell">
                             <span className={`text-xs font-semibold capitalize ${m.tipo === 'ingreso' ? 'text-green-400' : 'text-red-400'}`}>
                               {m.venta_numero ? `Venta #${m.venta_numero}` : m.tipo}
@@ -372,8 +372,8 @@ export const CajaModule: React.FC = () => {
       )}
 
       {tab === 'historico' && (
-        <div className="flex-1 overflow-auto px-6 py-4 pb-6">
-          <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden" style={{ maxHeight: 'calc(100vh - 280px)', display: 'flex', flexDirection: 'column' }}>
+        <div className="flex-1 min-h-0 overflow-y-auto px-6 py-4 pb-6">
+          <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
             <table className="w-full">
               <thead style={{ position: 'sticky', top: 0, zIndex: 10, background: 'var(--bg2)' }}>
                 <tr className="border-b border-slate-700">
@@ -405,7 +405,7 @@ export const CajaModule: React.FC = () => {
       )}
 
       {tab === 'egresos' && (
-        <div className="flex-1 overflow-auto px-6 py-4 pb-6">
+        <div className="flex-1 min-h-0 overflow-y-auto px-6 py-4 pb-6">
           {!sesionActiva ? (
             <div className="flex flex-col items-center justify-center h-48 text-slate-500 gap-3">
               <Vault size={48} />
@@ -437,9 +437,9 @@ export const CajaModule: React.FC = () => {
                     <Plus size={14} /> Agregar
                   </button>
                 </div>
-                <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden" style={{ maxHeight: 'calc(100vh - 340px)', display: 'flex', flexDirection: 'column' }}>
+                <div className="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
                   <table className="w-full text-sm">
-                    <thead style={{ position: 'sticky', top: 0, zIndex: 10, background: 'var(--bg3)' }}>
+                    <thead style={{ background: 'var(--bg3)' }}>
                       <tr className="border-b border-slate-700">
                         <th className="table-header">Fuente</th>
                         <th className="table-header">{t('caja.col.desc')}</th>
@@ -448,7 +448,7 @@ export const CajaModule: React.FC = () => {
                         <th className="table-header text-right">Fecha</th>
                       </tr>
                     </thead>
-                    <tbody style={{ overflowY: 'auto', display: 'block', maxHeight: 'calc(100vh - 410px)' }}>
+                    <tbody>
                       {/* Egresos de caja */}
                       {movimientos.filter((m) => m.tipo === 'egreso').length === 0 && egresosLibro.length === 0 ? (
                         <tr><td colSpan={5} className="text-center py-6 text-slate-500">No hay egresos registrados</td></tr>
@@ -460,7 +460,7 @@ export const CajaModule: React.FC = () => {
                               <td className="table-cell text-sm text-slate-300">{m.descripcion}</td>
                               <td className="table-cell text-sm text-slate-400 capitalize">{m.metodo_pago}</td>
                               <td className="table-cell text-right font-mono font-bold text-red-400">-${formatCurrency(m.monto)}</td>
-                              <td className="table-cell text-right text-xs text-slate-400">{new Date(m.fecha).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}</td>
+                              <td className="table-cell text-right text-xs text-slate-400">{formatTimeHm(m.fecha)}</td>
                             </tr>
                           ))}
                           {/* Egresos de libro de caja */}
