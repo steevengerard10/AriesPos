@@ -1,4 +1,7 @@
 
+## v2.5.0 — 18/8/2026
+mejora en el modulo clientes y fiados
+
 ## v2.3.0 — 18/8/2026
 mejora en el sistema de fiados
 
