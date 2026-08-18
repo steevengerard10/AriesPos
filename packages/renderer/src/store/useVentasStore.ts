@@ -28,6 +28,7 @@ export interface MetodoPagoMixto {
 interface VentasState {
   cart: CartItem[];
   descuentoGlobal: number;
+  recargoGlobal: number;
   clienteId: number | null;
   clienteNombre: string;
   vendedorId: number | null;
@@ -41,6 +42,7 @@ interface VentasState {
   // Computed
   subtotal: number;
   totalDescuento: number;
+  totalRecargo: number;
   total: number;
 
   // Actions
@@ -50,6 +52,7 @@ interface VentasState {
   getItemsDelProducto: (productoId: number) => CartItem[];
   clearCart: () => void;
   setDescuentoGlobal: (descuento: number) => void;
+  setRecargoGlobal: (recargo: number) => void;
   setCliente: (id: number | null, nombre: string) => void;
   setVendedor: (id: number | null, nombre: string) => void;
   setMetodoPago: (metodo: MetodoPago) => void;
@@ -60,17 +63,19 @@ interface VentasState {
   resetSale: () => void;
 }
 
-const computeTotals = (cart: CartItem[], descuentoGlobal: number) => {
+const computeTotals = (cart: CartItem[], descuentoGlobal: number, recargoGlobal: number = 0) => {
   const subtotal = cart.reduce((s, i) => s + i.precio_unitario * i.cantidad, 0);
   const itemsDiscount = cart.reduce((s, i) => s + i.descuento, 0);
   const totalDescuento = itemsDiscount + descuentoGlobal;
-  const total = Math.max(0, subtotal - totalDescuento);
-  return { subtotal, totalDescuento, total };
+  const totalRecargo = recargoGlobal;
+  const total = Math.max(0, subtotal - totalDescuento + totalRecargo);
+  return { subtotal, totalDescuento, totalRecargo, total };
 };
 
 const defaultState = {
   cart: [] as CartItem[],
   descuentoGlobal: 0,
+  recargoGlobal: 0,
   clienteId: null as number | null,
   clienteNombre: '',
   vendedorId: null as number | null,
@@ -82,6 +87,7 @@ const defaultState = {
   tipoOperacion: 'venta' as 'venta' | 'pedido' | 'cotizacion',
   subtotal: 0,
   totalDescuento: 0,
+  totalRecargo: 0,
   total: 0,
 };
 
@@ -89,7 +95,7 @@ export const useVentasStore = create<VentasState>((set, get) => ({
   ...defaultState,
 
   addItem: (item, modo = 'sumar') => {
-    const { cart, descuentoGlobal } = get();
+    const { cart, descuentoGlobal, recargoGlobal } = get();
     const existing = cart.find((c) => c.producto_id === item.producto_id);
 
     let newCart: CartItem[];
@@ -110,24 +116,24 @@ export const useVentasStore = create<VentasState>((set, get) => ({
       newCart = [...cart, { ...item, itemId: genItemId(), total }];
     }
 
-    set({ cart: newCart, ...computeTotals(newCart, descuentoGlobal) });
+    set({ cart: newCart, ...computeTotals(newCart, descuentoGlobal, recargoGlobal) });
   },
 
   updateItem: (itemId, updates) => {
-    const { cart, descuentoGlobal } = get();
+    const { cart, descuentoGlobal, recargoGlobal } = get();
     const newCart = cart.map((c) => {
       if (c.itemId !== itemId) return c;
       const updated = { ...c, ...updates };
       updated.total = updated.precio_unitario * updated.cantidad - updated.descuento;
       return updated;
     });
-    set({ cart: newCart, ...computeTotals(newCart, descuentoGlobal) });
+    set({ cart: newCart, ...computeTotals(newCart, descuentoGlobal, recargoGlobal) });
   },
 
   removeItem: (itemId) => {
-    const { cart, descuentoGlobal } = get();
+    const { cart, descuentoGlobal, recargoGlobal } = get();
     const newCart = cart.filter((c) => c.itemId !== itemId);
-    set({ cart: newCart, ...computeTotals(newCart, descuentoGlobal) });
+    set({ cart: newCart, ...computeTotals(newCart, descuentoGlobal, recargoGlobal) });
   },
 
   getItemsDelProducto: (productoId) => {
@@ -135,12 +141,17 @@ export const useVentasStore = create<VentasState>((set, get) => ({
   },
 
   clearCart: () => {
-    set({ cart: [], subtotal: 0, totalDescuento: 0, total: 0, descuentoGlobal: 0 });
+    set({ cart: [], subtotal: 0, totalDescuento: 0, totalRecargo: 0, total: 0, descuentoGlobal: 0, recargoGlobal: 0 });
   },
 
   setDescuentoGlobal: (descuento) => {
-    const { cart } = get();
-    set({ descuentoGlobal: descuento, ...computeTotals(cart, descuento) });
+    const { cart, recargoGlobal } = get();
+    set({ descuentoGlobal: descuento, ...computeTotals(cart, descuento, recargoGlobal) });
+  },
+
+  setRecargoGlobal: (recargo) => {
+    const { cart, descuentoGlobal } = get();
+    set({ recargoGlobal: recargo, ...computeTotals(cart, descuentoGlobal, recargo) });
   },
 
   setCliente: (id, nombre) => set({ clienteId: id, clienteNombre: nombre }),

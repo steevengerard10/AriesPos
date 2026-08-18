@@ -1,71 +1,168 @@
-import React, { useEffect, useState } from 'react';
-import { Alert } from 'react-native';
-import { io } from 'socket.io-client';
-import AppNavigator from './navigation/AppNavigator';
-import { serverStore } from './store/serverStore';
-import { useAppUpdates } from './hooks/useAppUpdates';
+import React, { useEffect, useMemo } from 'react';
+import { ActivityIndicator, View, Text, StyleSheet } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { NavigationContainer } from '@react-navigation/native';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import Toast from 'react-native-toast-message';
+import { AuthProvider, useAuth } from './context/AuthContext';
+import { CartProvider } from './context/CartContext';
+import { ServerProvider, useServer } from './context/ServerContext';
+import LoginScreen from './screens/LoginScreen';
+import POSScreen from './screens/POSScreen';
+import ProductsScreen from './screens/ProductsScreen';
+import ClientesScreen from './screens/ClientesScreen';
+import FiadosScreen from './screens/FiadosScreen';
+import CajaScreen from './screens/CajaScreen';
+import StockScreen from './screens/StockScreen';
+import VentasHoyScreen from './screens/VentasHoyScreen';
+import ReportesScreen from './screens/ReportesScreen';
+import SettingsScreen from './screens/SettingsScreen';
 
-export default function App() {
-  const [alerts, setAlerts] = useState([]);
-  const [scanning, setScanning] = useState(false);
-  const [hasPermission, setHasPermission] = useState(null);
-  const [serverUrl, setServerUrl] = useState(null); // null mientras carga
+const Stack = createNativeStackNavigator();
+const Tab = createBottomTabNavigator();
 
-  // Verificar actualizaciones OTA en producción
-  useAppUpdates();
+function MainTabs() {
+  const { role } = useAuth();
 
-  // Cargar URL guardada del almacenamiento al inicio
-  useEffect(() => {
-    serverStore.loadSaved().then((url) => {
-      setServerUrl(url);
-    });
-    const unsub = serverStore.subscribe((url) => setServerUrl(url));
-    return unsub;
-  }, []);
+  const tabs = useMemo(() => {
+    const commonTabs = [
+      { name: 'POS', component: POSScreen, icon: '🛒', title: 'POS' },
+      { name: 'Clientes', component: ClientesScreen, icon: '👥', title: 'Clientes' },
+      { name: 'Fiados', component: FiadosScreen, icon: '📜', title: 'Fiados' },
+      { name: 'Stock', component: StockScreen, icon: '📦', title: 'Stock' },
+    ];
 
-  useEffect(() => {
-    (async () => {
-      const { status } = await require('expo-barcode-scanner').BarCodeScanner.requestPermissionsAsync();
-      setHasPermission(status === 'granted');
-    })();
-  }, []);
+    if (role === 'admin') {
+      return [
+        ...commonTabs,
+        { name: 'Productos', component: ProductsScreen, icon: '🛍️', title: 'Productos' },
+        { name: 'Caja', component: CajaScreen, icon: '💼', title: 'Caja' },
+        { name: 'VentasHoy', component: VentasHoyScreen, icon: '📅', title: 'Ventas Hoy' },
+        { name: 'Reportes', component: ReportesScreen, icon: '📈', title: 'Reportes' },
+        { name: 'Settings', component: SettingsScreen, icon: '⚙️', title: 'Ajustes' },
+      ];
+    }
 
-  useEffect(() => {
-    if (!serverUrl) return;
-    const s = io(serverUrl, { reconnectionDelay: 2000, reconnectionAttempts: 10 });
-    s.on('pos:alert', (data) => {
-      setAlerts((prev) => [{...data, id: Date.now()}, ...prev]);
-      Alert.alert('Alerta POS', data.message + (data.detail ? ('\n' + data.detail) : ''));
-    });
-    s.on('pos:cart-abandoned', (data) => {
-      setAlerts((prev) => [{type: 'sale_cancelled', message: `Venta cancelada (${data.count} ítems)`, detail: data.items?.join(', '), id: Date.now()}, ...prev]);
-      Alert.alert('Venta cancelada', `Ítems: ${data.items?.join(', ')}`);
-    });
-    s.on('fiados:list-changed', () => {
-      // Futuro: refrescar lista de fiados si hay una pantalla de fiados activa
-    });
-    return () => s.disconnect();
-  }, [serverUrl]);
+    return commonTabs;
+  }, [role]);
 
-  const handleBarCodeScanned = ({ type, data }) => {
-    setScanning(false);
-    Alert.alert('Código escaneado', `Tipo: ${type}\nValor: ${data}`);
-    // Aquí puedes enviar el código al servidor o buscar el producto
-  };
+  return (
+    <Tab.Navigator
+      screenOptions={{
+        headerShown: false,
+        tabBarStyle: { backgroundColor: '#0f1117', borderTopColor: '#2e3247', borderTopWidth: 1, paddingBottom: 4, paddingTop: 4 },
+        tabBarActiveTintColor: '#6c63ff',
+        tabBarInactiveTintColor: '#6b6f80',
+        tabBarLabelStyle: { fontSize: 11, fontWeight: '700' },
+      }}
+    >
+      {tabs.map((tab) => (
+        <Tab.Screen
+          key={tab.name}
+          name={tab.name}
+          component={tab.component}
+          options={{
+            tabBarIcon: () => <Text style={{ fontSize: 18 }}>{tab.icon}</Text>,
+            tabBarLabel: tab.title,
+          }}
+        />
+      ))}
+    </Tab.Navigator>
+  );
+}
 
-  if (hasPermission === null || serverUrl === null) {
-    return null;
-  }
-  if (hasPermission === false) {
-    return null;
+function AppNavigator() {
+  const { isAuthenticated, isReady } = useAuth();
+  const { mode, lastError } = useServer();
+
+  if (!isReady) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#6c63ff" />
+        <Text style={styles.loadingText}>Inicializando AriesPOS Mobile...</Text>
+      </View>
+    );
   }
 
   return (
-    <AppNavigator
-      alerts={alerts}
-      onScan={() => setScanning(true)}
-      scanning={scanning}
-      handleBarCodeScanned={handleBarCodeScanned}
-    />
+    <NavigationContainer>
+      <Stack.Navigator screenOptions={{ headerShown: false }}>
+        {!isAuthenticated ? (
+          <Stack.Screen name="Login" component={LoginScreen} />
+        ) : (
+          <Stack.Screen name="Main" component={MainTabs} />
+        )}
+      </Stack.Navigator>
+      {mode === 'emergency' ? (
+        <View style={styles.emergencyBanner}>
+          <Text style={styles.emergencyText}>⚠️ MODO EMERGENCIA ACTIVO</Text>
+        </View>
+      ) : null}
+      {lastError ? (
+        <View style={styles.toastInline}>
+          <Text style={styles.toastInlineText}>{lastError}</Text>
+        </View>
+      ) : null}
+    </NavigationContainer>
   );
 }
+
+export default function App() {
+  return (
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <AuthProvider>
+        <ServerProvider>
+          <CartProvider>
+            <AppNavigator />
+            <Toast />
+          </CartProvider>
+        </ServerProvider>
+      </AuthProvider>
+    </GestureHandlerRootView>
+  );
+}
+
+const styles = StyleSheet.create({
+  loadingContainer: {
+    flex: 1,
+    backgroundColor: '#0f1117',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    color: '#e8eaf6',
+    marginTop: 12,
+    fontSize: 16,
+  },
+  emergencyBanner: {
+    position: 'absolute',
+    top: 20,
+    left: 16,
+    right: 16,
+    backgroundColor: '#ff9800',
+    paddingVertical: 10,
+    borderRadius: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 100,
+  },
+  emergencyText: {
+    color: '#1a1d27',
+    fontWeight: '800',
+  },
+  toastInline: {
+    position: 'absolute',
+    bottom: 90,
+    left: 16,
+    right: 16,
+    backgroundColor: '#e53935',
+    borderRadius: 10,
+    padding: 12,
+    zIndex: 100,
+  },
+  toastInlineText: {
+    color: '#fff',
+    fontWeight: '700',
+  },
+});

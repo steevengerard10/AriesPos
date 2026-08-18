@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { cajaAPI } from '../../lib/api';
-import { formatCurrency } from '../../lib/utils';
+import { formatCurrency, toLocalDateISO } from '../../lib/utils';
 import toast from 'react-hot-toast';
 
 interface CajaMovimiento {
@@ -114,7 +114,7 @@ export const ResumenDiarioExcel: React.FC = () => {
   const [movimientos, setMovimientos] = useState<CajaMovimiento[]>([]);
   const [loading, setLoading] = useState(true);
   const [resumen, setResumen] = useState<ResumenDiario>({
-    fecha: new Date().toISOString().split('T')[0],
+    fecha: toLocalDateISO(new Date()),
     libro: 0,
     caja: 0,
     egresos: 0,
@@ -132,7 +132,7 @@ export const ResumenDiarioExcel: React.FC = () => {
       let sesion = await cajaAPI.getSesionActiva() as { id: number } | null;
       if (!sesion) {
         const hist = await cajaAPI.getHistorico() as Array<{ id: number; fecha_apertura?: string }>;
-        const hoy = new Date().toISOString().split('T')[0];
+        const hoy = toLocalDateISO(new Date());
         sesion = (hist || []).find((x) => String(x.fecha_apertura || '').slice(0, 10) === hoy) || null;
       }
       setSesionActiva(sesion);

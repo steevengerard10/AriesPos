@@ -16,6 +16,11 @@ import { seedProductos } from '../services/seed-productos';
 type EmitFn = (event: string, data: unknown) => void;
 type ExportFiadosFn = (db: ReturnType<typeof getDb>) => string;
 
+function toLocalDateISO(date = new Date()): string {
+  const tzOffset = date.getTimezoneOffset() * 60000;
+  return new Date(date.getTime() - tzOffset).toISOString().slice(0, 10);
+}
+
 function boolToInt(v: unknown): number | unknown {
   return typeof v === 'boolean' ? (v ? 1 : 0) : v;
 }
@@ -901,7 +906,7 @@ export function createSyncRouter(io: SocketIOServer, exportFiadosToExcel: Export
 
     // Sincronizar libro de caja con montos manuales
     try {
-      const today = new Date().toISOString().split('T')[0];
+      const today = toLocalDateISO(new Date());
       const tots = db.prepare(`SELECT COALESCE(SUM(CASE WHEN tipo='egreso' THEN monto ELSE 0 END),0) as egresos FROM caja_movimientos WHERE sesion_id = ?`).get(sesion_id) as { egresos: number };
       let dia = db.prepare(`SELECT id FROM libro_caja_dias WHERE fecha = ?`).get(today) as { id: number } | undefined;
       if (!dia) {
@@ -911,6 +916,27 @@ export function createSyncRouter(io: SocketIOServer, exportFiadosToExcel: Export
       db.prepare(`UPDATE libro_caja_dias SET caja = ?, tarjetas = ?, transferencias = ?, egresos = ?, updated_at = datetime('now') WHERE id = ?`).run(efectivo, tarjetas, transferencias, tots.egresos, dia.id);
     } catch (e) { console.error('[syncRoutes caja/cerrar]', e); }
 
+    res.json({ success: true });
+  });
+
+  router.post('/caja/reabrir', (req: Request, res: Response) => {
+    const db = getDb();
+    const { sesion_id } = req.body as { sesion_id?: number };
+    if (!sesion_id) {
+      res.status(400).json({ success: false, error: 'sesion_id requerido' });
+      return;
+    }
+    const row = db.prepare(`SELECT id FROM caja_sesiones WHERE id = ?`).get(sesion_id) as { id: number } | undefined;
+    if (!row) {
+      res.status(404).json({ success: false, error: 'Sesión no encontrada' });
+      return;
+    }
+    if (db.prepare(`SELECT id FROM caja_sesiones WHERE fecha_cierre IS NULL AND id = ?`).get(sesion_id)) {
+      res.status(400).json({ success: false, error: 'La sesión ya está abierta' });
+      return;
+    }
+    db.prepare(`UPDATE caja_sesiones SET fecha_cierre = NULL, monto_final = NULL WHERE id = ?`).run(sesion_id);
+    emit('caja:movimiento', { tipo: 'reapertura', monto: 0, sesion_id });
     res.json({ success: true });
   });
 
@@ -950,11 +976,11 @@ export function createSyncRouter(io: SocketIOServer, exportFiadosToExcel: Export
 
   router.get('/stats/dashboard', (_req, res) => {
     const db = getDb();
-    const today = new Date().toISOString().split('T')[0];
-    const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0];
+    const today = toLocalDateISO(new Date());
+    const weekAgo = toLocalDateISO(new Date(Date.now() - 7 * 86400000));
     const monthStart = new Date(); monthStart.setDate(1);
-    const ms = monthStart.toISOString().split('T')[0];
-    const prevWeekStart = new Date(Date.now() - 14 * 86400000).toISOString().split('T')[0];
+    const ms = toLocalDateISO(monthStart);
+    const prevWeekStart = toLocalDateISO(new Date(Date.now() - 14 * 86400000));
 
     const rowHoy = db.prepare(`SELECT COUNT(*) as count, COALESCE(SUM(total),0) as total FROM ventas WHERE fecha = ? AND tipo='venta'`).get(today) as { count: number; total: number };
     const rowSemana = db.prepare(`SELECT COUNT(*) as count, COALESCE(SUM(total),0) as total FROM ventas WHERE fecha >= ? AND tipo='venta'`).get(weekAgo) as { count: number; total: number };

@@ -1344,6 +1344,19 @@ export function registerIpcHandlers(): void {
     return { success: true };
   });
 
+  ipcMain.handle('caja:reabrir', (_e, sessionId: number) => {
+    const db = getDb();
+    const abierta = db.prepare(`SELECT id FROM caja_sesiones WHERE fecha_cierre IS NULL AND id = ?`).get(sessionId) as { id: number } | undefined;
+    if (abierta) return { success: false, error: 'La sesión ya está abierta' };
+
+    const row = db.prepare(`SELECT id FROM caja_sesiones WHERE id = ?`).get(sessionId) as { id: number } | undefined;
+    if (!row) return { success: false, error: 'Sesión no encontrada' };
+
+    db.prepare(`UPDATE caja_sesiones SET fecha_cierre = NULL, monto_final = NULL WHERE id = ?`).run(sessionId);
+    emitToWeb('caja:movimiento', { tipo: 'reapertura', monto: 0, sessionId });
+    return { success: true };
+  });
+
   ipcMain.handle('caja:agregarMovimiento', (_e, data: { sesion_id: number; tipo: 'ingreso' | 'egreso'; monto: number; descripcion: string; metodo_pago: string }) => {
     const db = getDb();
     const result = db.prepare(`

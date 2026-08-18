@@ -10,7 +10,7 @@ import { CartTable } from '../POS/CartTable';
 import { PaymentModal } from '../POS/PaymentModal';
 import { Modal } from '../shared/Modal';
 
-import { useVentasStore } from '../../store/useVentasStore';
+import { useVentasStore, CartItem } from '../../store/useVentasStore';
 import { useAppStore } from '../../store/useAppStore';
 import { formatCurrency, generateTicketHTML } from '../../lib/utils';
 import { ventasAPI, clientesAPI, usuariosAPI, configAPI, appAPI, sendEvent, onEvent } from '../../lib/api';
@@ -49,11 +49,12 @@ export const POSWindow: React.FC = () => {
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [vendedores, setVendedores] = useState<Usuario[]>([]);
   const [descuentoInput, setDescuentoInput] = useState('0');
+  const [descuentoModo, setDescuentoModo] = useState<'$' | '%'>('$');
 
   // Ref para acceder al ProductSearch y refocusarlo tras cobrar
   const productSearchRef = useRef<ProductSearchHandle>(null);
   const [clienteSearch, setClienteSearch] = useState('');
-  const [procesando, setProcesando] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [selectedPrecio, setSelectedPrecio] = useState<1 | 2 | 3>(1);
   const [editVenta, setEditVenta] = useState<{ id: number; numero: string } | null>(null);
   const [editMetodo, setEditMetodo] = useState('efectivo');
@@ -101,6 +102,55 @@ export const POSWindow: React.FC = () => {
         toast.error('No se pudo cargar la venta para editar');
       }
     });
+    return cleanup;
+  }, []);
+
+  useEffect(() => {
+    const applyReabrirVenta = (data: unknown) => {
+      const payload = data as {
+        items: CartItem[];
+        descuentoGlobal?: number;
+        clienteId?: number | null;
+        clienteNombre?: string;
+        observaciones?: string;
+      };
+      if (!payload.items?.length) return;
+      const cart = payload.items;
+      const descuentoGlobal = payload.descuentoGlobal ?? 0;
+      const subtotal = cart.reduce((s, i) => s + i.precio_unitario * i.cantidad, 0);
+      const itemsDiscount = cart.reduce((s, i) => s + i.descuento, 0);
+      const totalDescuento = itemsDiscount + descuentoGlobal;
+      const total = Math.max(0, subtotal - totalDescuento);
+      useVentasStore.setState({
+        cart,
+        descuentoGlobal,
+        clienteId: payload.clienteId ?? null,
+        clienteNombre: payload.clienteNombre ?? '',
+        observaciones: payload.observaciones ?? '',
+        subtotal,
+        totalDescuento,
+        total,
+        metodoPago: 'efectivo',
+        metodoPagoMixto: [],
+        esFiado: false,
+        tipoOperacion: 'venta',
+        vendedorId: null,
+        vendedorNombre: '',
+      });
+      toast.success('Venta reabierta en caja');
+      setTimeout(() => productSearchRef.current?.focus(), 100);
+    };
+
+    const cleanup = onEvent('pos:reabrir-venta', applyReabrirVenta);
+
+    try {
+      const raw = sessionStorage.getItem('pos:reabrir-venta');
+      if (raw) {
+        sessionStorage.removeItem('pos:reabrir-venta');
+        applyReabrirVenta(JSON.parse(raw));
+      }
+    } catch { /* silencioso */ }
+
     return cleanup;
   }, []);
 
@@ -177,6 +227,7 @@ export const POSWindow: React.FC = () => {
   }, [cart]);
 
   const handleConfirmSale = async (cobrado: number) => {
+    if (submitting) return;
     if (cart.length === 0) { toast.error(t('pos.emptyCart')); return; }
 
     // Leer del store directamente para evitar closure stale:
@@ -186,7 +237,7 @@ export const POSWindow: React.FC = () => {
 
     if (currentFiado && !clienteId) { toast.error(t('pos.creditNeedsClient')); setShowClienteModal(true); return; }
 
-    setProcesando(true);
+    setSubmitting(true);
     try {
       // Si el cobro es parcial (solo aplica para ventas NO fiado), ajustar el total reduciendo el descuento global
       const rawSubtotal = cart.reduce((s, i) => s + i.precio_unitario * i.cantidad, 0);
@@ -248,7 +299,7 @@ export const POSWindow: React.FC = () => {
       console.error(err);
       sendEvent('broadcast-event', 'pos:alert', { type: 'sale_failed', message: 'Error al registrar la venta', detail: String(err) });
     } finally {
-      setProcesando(false);
+      setSubmitting(false);
     }
   };
 
@@ -367,8 +418,10 @@ export const POSWindow: React.FC = () => {
           title="Descuento global (F6)"
         >
           <Percent size={11} />
-          {descuentoGlobal > 0
-            ? <span style={{ color: 'var(--warn)', fontWeight: 700 }}>-{simbolo}{descuentoGlobal}</span>
+          {descuentoGlobal !== 0
+            ? <span style={{ color: descuentoGlobal > 0 ? 'var(--warn)' : 'var(--danger)', fontWeight: 700 }}>
+                {descuentoGlobal > 0 ? `-${formatCurrency(descuentoGlobal, simbolo)}` : `+${formatCurrency(Math.abs(descuentoGlobal), simbolo)}`}
+              </span>
             : <span style={{ color: 'var(--text3)' }}>{t('pos.discount')}</span>
           }
           <kbd>F6</kbd>
@@ -440,11 +493,15 @@ export const POSWindow: React.FC = () => {
         style={{ height: 60, background: 'var(--bg2)', borderTop: '1px solid var(--border)' }}
       >
         {/* Resumen de descuento si existe */}
-        {totalDescuento > 0 && (
+        {totalDescuento !== 0 && (
           <div style={{ fontSize: 12, color: 'var(--text3)' }}>
             <span>Sub: </span>
             <span className="num" style={{ color: 'var(--text2)' }}>{formatCurrency(subtotal, simbolo)}</span>
-            <span style={{ marginLeft: 8, color: 'var(--warn)' }}>−{formatCurrency(totalDescuento, simbolo)}</span>
+            <span style={{ marginLeft: 8, color: totalDescuento > 0 ? 'var(--warn)' : 'var(--danger)' }}>
+              {totalDescuento > 0
+                ? `Descuento −${formatCurrency(totalDescuento, simbolo)}`
+                : `Recargo +${formatCurrency(Math.abs(totalDescuento), simbolo)}`}
+            </span>
           </div>
         )}
 
@@ -469,7 +526,7 @@ export const POSWindow: React.FC = () => {
           className="btn btn-success btn-lg font-bold"
           style={{ fontSize: 15, height: 44, minWidth: 160, justifyContent: 'center' }}
           onClick={() => cart.length > 0 && setShowPayment(true)}
-          disabled={cart.length === 0 || procesando}
+          disabled={cart.length === 0 || submitting}
         >
           <Save size={17} />
           {t('pos.charge')}
@@ -557,22 +614,44 @@ export const POSWindow: React.FC = () => {
         footer={
           <>
             <button className="btn btn-secondary" onClick={() => setShowDescuentoModal(false)}>{t('common.cancel')}</button>
-            <button className="btn btn-primary" onClick={() => { setDescuentoGlobal(parseFloat(descuentoInput) || 0); setShowDescuentoModal(false); }}>{t('pos.apply')}</button>
+            <button className="btn btn-primary" onClick={() => {
+              const valor = parseFloat(descuentoInput) || 0;
+              const descuento = descuentoModo === '%' ? subtotal * (valor / 100) : valor;
+              setDescuentoGlobal(descuento);
+              setShowDescuentoModal(false);
+            }}>{t('pos.apply')}</button>
           </>
         }
       >
         <div className="space-y-3">
-          <label className="label">{t('pos.discountLabel')} ({simbolo})</label>
+          <div className="flex items-center justify-between">
+            <label className="label">{t('pos.discountLabel')}</label>
+            <div className="flex gap-1">
+              <button
+                type="button"
+                className={`btn btn-sm ${descuentoModo === '$' ? 'btn-primary' : 'btn-secondary'}`}
+                onClick={() => setDescuentoModo('$')}
+              >{simbolo}</button>
+              <button
+                type="button"
+                className={`btn btn-sm ${descuentoModo === '%' ? 'btn-primary' : 'btn-secondary'}`}
+                onClick={() => setDescuentoModo('%')}
+              >%</button>
+            </div>
+          </div>
           <input
             type="number"
             value={descuentoInput}
             onChange={(e) => setDescuentoInput(e.target.value)}
             className="input num text-right text-xl"
-            min="0"
             step="0.01"
             autoFocus
           />
-          <p style={{ fontSize: 11, color: 'var(--text3)' }}>Ingresa el monto en {simbolo} a descontar del total.</p>
+          <p style={{ fontSize: 11, color: 'var(--text3)' }}>
+            {descuentoModo === '%'
+              ? 'Porcentaje del subtotal. Valores negativos = recargo (ej: +3% tarjeta).'
+              : `Monto fijo en ${simbolo}. Valores negativos = recargo.`}
+          </p>
         </div>
       </Modal>
 

@@ -32,12 +32,12 @@ const METODOS_DEFAULT: MetodoPagoConfig[] = [
 interface PaymentModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onConfirm: (cobrado: number) => void;
+  onConfirm: (cobrado: number) => void | Promise<void>;
   simbolo?: string;
 }
 
 export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onConfirm, simbolo = '$' }) => {
-  const { total, setMetodoPago, setMetodoPagoMixto, setEsFiado, clienteId, clienteNombre } = useVentasStore();
+  const { total, setMetodoPago, setMetodoPagoMixto, setEsFiado, clienteId, clienteNombre, descuentoGlobal, recargoGlobal } = useVentasStore();
   const { config } = useAppStore();
   const { t } = useTranslation();
   const [step, setStep] = useState<'metodo' | 'efectivo' | 'mixto'>('metodo');
@@ -46,6 +46,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onC
   const [selectedIdx, setSelectedIdx] = useState(0);
   // Líneas del pago mixto: { metodo, monto }
   const [mixtoLineas, setMixtoLineas] = useState<{ metodo: string; monto: string }[]>([]);
+  const [submitting, setSubmitting] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const methods = useMemo<MetodoPagoConfig[]>(() => {
@@ -69,6 +70,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onC
       setCobrarMonto(total.toFixed(2));
       setSelectedIdx(0);
       setMixtoLineas([]);
+      setSubmitting(false);
     }
   }, [isOpen, total]);
 
@@ -79,6 +81,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onC
   useEffect(() => {
     if (!isOpen || step !== 'metodo') return;
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (submitting) return;
       if (e.key === 'ArrowDown') { e.preventDefault(); setSelectedIdx((i) => (i + 1) % (methods.length + 1)); }
       else if (e.key === 'ArrowUp') { e.preventDefault(); setSelectedIdx((i) => (i - 1 + methods.length + 1) % (methods.length + 1)); }
       else if (e.key === 'Enter') {
@@ -92,7 +95,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onC
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, step, selectedIdx, methods, clienteId]);
+  }, [isOpen, step, selectedIdx, methods, clienteId, submitting]);
 
   if (!isOpen) return null;
 
@@ -138,11 +141,21 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onC
     setMixtoLineas((prev) => prev.map((l) => ({ ...l, monto: porPartes.toFixed(2) })));
   };
 
+  const confirmarVenta = async (cobrado: number) => {
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      await onConfirm(cobrado);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const handleConfirmMixto = () => {
     setMetodoPago('mixto' as MetodoPago);
     setMetodoPagoMixto(mixtoLineas.map((l) => ({ metodo: l.metodo, monto: parseFloat(l.monto) || 0 })));
     setEsFiado(false);
-    onConfirm(mixtoSum);
+    void confirmarVenta(mixtoSum);
   };
 
   const handleSelectMetodo = (id: MetodoPago) => {
@@ -150,10 +163,10 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onC
     setMetodoPagoMixto([]);
     if (id === 'efectivo') { setStep('efectivo'); return; }
     if (id === 'fiado') { if (!clienteId) return; setEsFiado(true); } else { setEsFiado(false); }
-    onConfirm(cobradoNum);
+    void confirmarVenta(cobradoNum);
   };
 
-  const handleConfirmEfectivo = () => { setEsFiado(false); onConfirm(cobradoNum); };
+  const handleConfirmEfectivo = () => { setEsFiado(false); void confirmarVenta(cobradoNum); };
 
   const overlay: React.CSSProperties = {
     position: 'fixed', inset: 0, zIndex: 1000,
@@ -180,6 +193,11 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onC
             {clienteNombre && (
               <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 8 }}>
                 {t('pos.pay.clientLabel')}: <span style={{ color: 'var(--text2)', fontWeight: 600 }}>{clienteNombre}</span>
+              </div>
+            )}
+            {(descuentoGlobal > 0 || recargoGlobal > 0) && (
+              <div style={{ fontSize: 11, marginTop: 8, color: recargoGlobal > 0 ? '#fbbf24' : 'var(--warn)' }}>
+                {recargoGlobal > 0 ? `Recargo +${formatCurrency(recargoGlobal, simbolo)}` : `Descuento -${formatCurrency(descuentoGlobal, simbolo)}`}
               </div>
             )}
             {/* Monto a cobrar — solo en paso metodo */}
@@ -231,8 +249,8 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onC
                   return (
                     <button
                       key={id}
-                      disabled={disabled}
-                      onClick={() => !disabled && handleSelectMetodo(id as MetodoPago)}
+                      disabled={disabled || submitting}
+                      onClick={() => !disabled && !submitting && handleSelectMetodo(id as MetodoPago)}
                       style={{
                         background: isSelected ? colorBg : 'var(--bg3)',
                         border: `2px solid ${isSelected ? colorBorder : 'var(--border)'}`,
@@ -258,6 +276,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onC
                   return (
                     <button
                       onClick={handleOpenMixto}
+                      disabled={submitting}
                       style={{
                         background: isMixtoSel ? 'rgba(124,58,237,0.12)' : 'var(--bg3)',
                         border: `2px solid ${isMixtoSel ? 'rgba(124,58,237,0.4)' : 'var(--border)'}`,
@@ -298,7 +317,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onC
                   type="number"
                   value={received}
                   onChange={(e) => setReceived(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleConfirmEfectivo()}
+                  onKeyDown={(e) => { if (e.key === 'Enter' && !submitting) handleConfirmEfectivo(); }}
                   title="Monto recibido"
                   placeholder={cobradoNum.toFixed(2)}
                   style={{ width: '100%', boxSizing: 'border-box', background: 'var(--bg3)', border: '2px solid var(--accent3)', borderRadius: 12, padding: '14px 16px', fontSize: 30, fontWeight: 900, fontFamily: "'DM Mono', monospace", color: 'var(--text)', textAlign: 'right', outline: 'none' }}
@@ -325,7 +344,8 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onC
               )}
               <button
                 onClick={handleConfirmEfectivo}
-                style={{ background: 'var(--accent3)', color: '#fff', border: 'none', borderRadius: 14, padding: '16px', fontSize: 15, fontWeight: 800, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, fontFamily: "'Syne', sans-serif" }}
+                disabled={submitting}
+                style={{ background: 'var(--accent3)', color: '#fff', border: 'none', borderRadius: 14, padding: '16px', fontSize: 15, fontWeight: 800, cursor: submitting ? 'not-allowed' : 'pointer', opacity: submitting ? 0.6 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, fontFamily: "'Syne', sans-serif" }}
               >
                 <CheckCircle size={20} />
                 {t('pos.pay.confirm')} {esParcial ? `(${formatCurrency(cobradoNum, simbolo)})` : ''}
@@ -423,13 +443,13 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onC
                 </button>
                 <button
                   onClick={handleConfirmMixto}
-                  disabled={!mixtoOk}
+                  disabled={!mixtoOk || submitting}
                   style={{
-                    flex: 2, background: mixtoOk ? 'var(--accent3)' : 'var(--bg3)',
-                    border: `1px solid ${mixtoOk ? 'var(--accent3)' : 'var(--border)'}`,
-                    color: mixtoOk ? '#fff' : 'var(--text3)',
+                    flex: 2, background: mixtoOk && !submitting ? 'var(--accent3)' : 'var(--bg3)',
+                    border: `1px solid ${mixtoOk && !submitting ? 'var(--accent3)' : 'var(--border)'}`,
+                    color: mixtoOk && !submitting ? '#fff' : 'var(--text3)',
                     borderRadius: 10, padding: '10px 16px', fontSize: 14, fontWeight: 800,
-                    cursor: mixtoOk ? 'pointer' : 'not-allowed',
+                    cursor: mixtoOk && !submitting ? 'pointer' : 'not-allowed',
                     display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
                     fontFamily: "'Syne', sans-serif",
                     transition: 'all 0.15s',

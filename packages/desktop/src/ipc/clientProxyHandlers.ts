@@ -309,6 +309,9 @@ export function registerClientProxyHandlers(serverIP: string, port: number, serv
   ipcMain.handle('caja:cerrar', (_e, sessionId: number, montoFinal: number, efectivoManual = 0, tarjetasManual = 0, transferenciasManual = 0) =>
     post('/api/sync/caja/cerrar', { sesion_id: sessionId, monto_final: montoFinal, efectivo: efectivoManual, tarjetas: tarjetasManual, transferencias: transferenciasManual }));
 
+  ipcMain.handle('caja:reabrir', (_e, sessionId: number) =>
+    post('/api/sync/caja/reabrir', { sesion_id: sessionId }));
+
   ipcMain.handle('caja:agregarMovimiento', (_e, data: Record<string, unknown>) =>
     post('/api/sync/caja/movimiento', data));
 

@@ -1,17 +1,18 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
-  ShoppingBag, Search, RefreshCw, RotateCcw, Eye, Edit2, Check
+  ShoppingBag, Search, RefreshCw, RotateCcw, Eye, Edit2, Check, ShoppingCart
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { ventasAPI, onEvent } from '../../lib/api';
+import { ventasAPI, onEvent, appAPI, sendEvent, productosAPI } from '../../lib/api';
 import { Modal } from '../../components/shared/Modal';
-import { formatCurrency, formatDate } from '../../lib/utils';
+import { formatCurrency, formatDate, toLocalDateISO } from '../../lib/utils';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '../../store/useAppStore';
 import { AlertMonitorButton } from '../../components/POS/AlertMonitorPanel';
 
 interface VentaItem {
   id: number;
+  producto_id?: number;
   producto_nombre: string;
   cantidad: number;
   precio_unitario: number;
@@ -19,6 +20,8 @@ interface VentaItem {
   /** Subtotal línea si el backend lo mapea; si no, `total` de SQLite. */
   subtotal?: number;
   total?: number;
+  fraccionable?: boolean;
+  unidad_medida?: string;
 }
 
 interface Venta {
@@ -26,6 +29,7 @@ interface Venta {
   numero: string;
   fecha: string;
   hora: string;
+  cliente_id?: number | null;
   cliente_nombre: string | null;
   vendedor_nombre: string;
   subtotal: number;
@@ -77,7 +81,7 @@ export const HistoricoVentas: React.FC = () => {
       { id: 'transferencia', nombre: 'Transferencia' },
     ];
   }, [config.metodos_pago]);
-  const hoyISO = () => new Date().toISOString().slice(0, 10);
+  const hoyISO = () => toLocalDateISO(new Date());
   const [desde, setDesde] = useState(() => hoyISO());
   const [hasta, setHasta] = useState(() => hoyISO());
   const [selectedVenta, setSelectedVenta] = useState<Venta | null>(null);
@@ -175,6 +179,60 @@ export const HistoricoVentas: React.FC = () => {
 
   const lineTotal = (item: VentaItem) => Number(item.subtotal ?? item.total ?? 0);
 
+  const handleReabrirEnCaja = async () => {
+    if (!selectedVenta?.items?.length) {
+      toast.error('La venta no tiene ítems para reabrir');
+      return;
+    }
+
+    const cartItems = await Promise.all(selectedVenta.items.map(async (item) => {
+      const descuento = Number(item.descuento) || 0;
+      let precioUnitario = Number(item.precio_unitario) || 0;
+
+      if (item.producto_id) {
+        const producto = await productosAPI.getById(item.producto_id) as { precio_venta?: number; nombre?: string } | null;
+        if (producto && typeof producto.precio_venta === 'number' && producto.precio_venta > 0) {
+          precioUnitario = producto.precio_venta;
+        }
+      }
+
+      return {
+        itemId: crypto.randomUUID(),
+        producto_id: item.producto_id ?? 0,
+        nombre: item.producto_nombre || 'Producto',
+        cantidad: Number(item.cantidad) || 0,
+        precio_unitario: precioUnitario,
+        precio_original: precioUnitario,
+        descuento,
+        total: precioUnitario * (Number(item.cantidad) || 0) - descuento,
+        fraccionable: Boolean(item.fraccionable),
+        unidad_medida: item.unidad_medida || 'unidad',
+      };
+    }));
+
+    const payload = {
+      items: cartItems,
+      descuentoGlobal: selectedVenta.descuento_global || 0,
+      recargoGlobal: 0,
+      clienteId: selectedVenta.cliente_id ?? null,
+      clienteNombre: selectedVenta.cliente_nombre || '',
+      observaciones: selectedVenta.observaciones || '',
+      metodoPago: selectedVenta.metodo_pago || 'efectivo',
+      esFiado: selectedVenta.estado === 'fiado',
+      tipoOperacion: 'venta' as const,
+    };
+    try {
+      sessionStorage.setItem('pos:reabrir-venta', JSON.stringify(payload));
+    } catch { /* silencioso */ }
+    appAPI.openPosWindow();
+    const emitReabrir = () => sendEvent('broadcast-event', 'pos:reabrir-venta', payload);
+    setTimeout(emitReabrir, 400);
+    setTimeout(emitReabrir, 1200);
+    setSelectedVenta(null);
+    setDetailEditMode(false);
+    toast.success('Venta cargada en caja');
+  };
+
   const filtered = useMemo(() => {
     const source = listTab === 'canceladas' ? ventasCanceladas : ventas;
     let list = source as (Venta | VentaCancelada)[];
@@ -240,9 +298,9 @@ export const HistoricoVentas: React.FC = () => {
             className="btn btn-secondary btn-sm"
             onClick={() => {
               const d = new Date();
-              const hastaISO = d.toISOString().slice(0, 10);
+              const hastaISO = toLocalDateISO(d);
               d.setDate(d.getDate() - 6);
-              const desdeISO = d.toISOString().slice(0, 10);
+              const desdeISO = toLocalDateISO(d);
               setDesde(desdeISO); setHasta(hastaISO);
             }}
             title="Últimos 7 días"
@@ -253,9 +311,9 @@ export const HistoricoVentas: React.FC = () => {
             className="btn btn-secondary btn-sm"
             onClick={() => {
               const now = new Date();
-              const hastaISO = now.toISOString().slice(0, 10);
+              const hastaISO = toLocalDateISO(now);
               const start = new Date(now.getFullYear(), now.getMonth(), 1);
-              const desdeISO = start.toISOString().slice(0, 10);
+              const desdeISO = toLocalDateISO(start);
               setDesde(desdeISO); setHasta(hastaISO);
             }}
             title="Mes actual"
@@ -416,6 +474,15 @@ export const HistoricoVentas: React.FC = () => {
                   >
                     <Edit2 size={13} /> Editar
                   </button>
+                  {selectedVenta?.items && selectedVenta.items.length > 0 && (
+                    <button
+                      type="button"
+                      className="btn-success btn btn-sm"
+                      onClick={handleReabrirEnCaja}
+                    >
+                      <ShoppingCart size={14} /> Reabrir en caja
+                    </button>
+                  )}
                 </>
               )}
             </div>

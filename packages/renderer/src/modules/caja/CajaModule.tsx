@@ -4,9 +4,9 @@ import {
   TrendingUp, CreditCard, Smartphone, Bitcoin, QrCode, AlertCircle, Trash2
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { cajaAPI } from '../../lib/api';
+import { authAPI, cajaAPI } from '../../lib/api';
 import { Modal } from '../../components/shared/Modal';
-import { formatCurrency, formatDate, formatTimeHm } from '../../lib/utils';
+import { formatCurrency, formatDate, formatTimeHm, toLocalDateISO } from '../../lib/utils';
 import { useTranslation } from 'react-i18next';
 import { useLibroCajaStore } from '../../store/useLibroCajaStore';
 import { useAppStore } from '../../store/useAppStore';
@@ -79,6 +79,10 @@ export const CajaModule: React.FC = () => {
   const [showAbrirModal, setShowAbrirModal] = useState(false);
   const [showCerrarModal, setShowCerrarModal] = useState(false);
   const [showMovimientoModal, setShowMovimientoModal] = useState(false);
+  const [showReabrirModal, setShowReabrirModal] = useState(false);
+  const [reabrirSessionId, setReabrirSessionId] = useState<number | null>(null);
+  const [reabrirPin, setReabrirPin] = useState('');
+  const [reabrirChecking, setReabrirChecking] = useState(false);
   const [tipoMovimiento, setTipoMovimiento] = useState<'ingreso' | 'egreso'>('ingreso');
 
   const [saldoInicial, setSaldoInicial] = useState('');
@@ -144,14 +148,41 @@ export const CajaModule: React.FC = () => {
     setCerrarEfectivo('');
     setCerrarTarjeta('');
     setCerrarTransferencia('');
-    // Limpiar estado inmediatamente para evitar mostrar datos de la sesión cerrada
     setSesionActiva(null);
     setMovimientos([]);
     loadData();
-    // Actualizar libro de caja del día
-    const hoy = new Date().toISOString().split('T')[0];
+    const hoy = toLocalDateISO(new Date());
     cargarDia(hoy);
     cargarHistoricoLibro();
+  };
+
+  const handleReabrirSesion = async () => {
+    if (!reabrirSessionId) return;
+    if (!reabrirPin.trim()) {
+      toast.error('Ingresá el PIN de administrador');
+      return;
+    }
+    setReabrirChecking(true);
+    try {
+      const res = await authAPI.validateAdmin(reabrirPin.trim());
+      if (!res.ok) {
+        toast.error(res.error || 'PIN de administrador incorrecto');
+        return;
+      }
+      const result = await cajaAPI.reabrir(reabrirSessionId);
+      if (!result?.success) {
+        throw new Error(result?.error || 'No se pudo reabrir la caja');
+      }
+      toast.success('Caja reabierta');
+      setShowReabrirModal(false);
+      setReabrirPin('');
+      setReabrirSessionId(null);
+      await loadData();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al reabrir la caja');
+    } finally {
+      setReabrirChecking(false);
+    }
   };
 
   const handleMovimiento = async () => {
@@ -384,6 +415,7 @@ export const CajaModule: React.FC = () => {
                   <th className="table-header text-right">{t('caja.totalSales')}</th>
                   <th className="table-header text-right">{t('caja.expenses')}</th>
                   <th className="table-header text-right">{t('caja.col.finalBalance')}</th>
+                  <th className="table-header text-center">Acción</th>
                 </tr>
               </thead>
               <tbody>
@@ -396,6 +428,18 @@ export const CajaModule: React.FC = () => {
                     <td className="table-cell text-right font-mono text-green-400">{formatCurrency(s.total_ventas)}</td>
                     <td className="table-cell text-right font-mono text-red-400">{formatCurrency(s.total_egresos)}</td>
                     <td className="table-cell text-right font-mono font-bold text-white">{s.saldo_final !== null ? formatCurrency(s.saldo_final) : '—'}</td>
+                    <td className="table-cell text-center">
+                      {s.fecha_cierre ? (
+                        <button
+                          className="btn btn-secondary btn-xs"
+                          onClick={() => { setReabrirSessionId(s.id); setReabrirPin(''); setShowReabrirModal(true); }}
+                        >
+                          Reabrir
+                        </button>
+                      ) : (
+                        <span className="text-xs text-slate-500">Activa</span>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -557,6 +601,32 @@ export const CajaModule: React.FC = () => {
             </div>
           )}
         </div>
+      </Modal>
+
+      <Modal
+        isOpen={showReabrirModal}
+        onClose={() => { setShowReabrirModal(false); setReabrirPin(''); setReabrirSessionId(null); }}
+        title="Reabrir sesión cerrada"
+        size="sm"
+        footer={(
+          <>
+            <button type="button" className="btn-secondary btn" onClick={() => { setShowReabrirModal(false); setReabrirPin(''); setReabrirSessionId(null); }} disabled={reabrirChecking}>Cancelar</button>
+            <button type="button" className="btn-primary btn" onClick={() => void handleReabrirSesion()} disabled={reabrirChecking}> {reabrirChecking ? 'Verificando…' : 'Confirmar'} </button>
+          </>
+        )}
+      >
+        <p className="text-sm mb-4 text-slate-300">Ingresá el PIN del administrador para volver a abrir esta sesión de caja.</p>
+        <label className="label">PIN de administrador</label>
+        <input
+          type="password"
+          className="input font-mono"
+          value={reabrirPin}
+          onChange={(e) => setReabrirPin(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') void handleReabrirSesion(); }}
+          placeholder="••••"
+          autoFocus
+          disabled={reabrirChecking}
+        />
       </Modal>
 
       {/* Modal movimiento */}

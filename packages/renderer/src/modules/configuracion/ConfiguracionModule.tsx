@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { configAPI, backupAPI, appAPI, productosAPI, firmaAPI } from '../../lib/api';
-import { formatDate } from '../../lib/utils';
+import { formatDate, toLocalDateISO } from '../../lib/utils';
 import { ImportNixtarModal } from '../../components/modals/ImportNixtarModal';
 import { setAppTimeZoneConfig } from '../../lib/dateTz';
 import { useTranslation } from 'react-i18next';
@@ -246,7 +246,7 @@ export const ConfiguracionModule: React.FC = () => {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `ariespos_export_${new Date().toISOString().slice(0, 10)}.json`;
+      a.download = `ariespos_export_${toLocalDateISO(new Date())}.json`;
       a.click();
       URL.revokeObjectURL(url);
       toast.success('Datos exportados', { id: 'exp' });

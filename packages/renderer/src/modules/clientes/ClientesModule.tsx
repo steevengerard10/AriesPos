@@ -4,7 +4,7 @@ import {
   ChevronDown, ChevronRight, Package
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { clientesAPI, ventasAPI } from '../../lib/api';
+import { clientesAPI, ventasAPI, appAPI, sendEvent, productosAPI, authAPI } from '../../lib/api';
 import { Modal, ConfirmDialog } from '../../components/shared/Modal';
 import { formatCurrency, formatDate, downloadCSV } from '../../lib/utils';
 import { useTranslation } from 'react-i18next';
@@ -25,11 +25,25 @@ interface Cliente {
 
 interface VentaItem {
   id: number;
+  producto_id?: number;
   producto_nombre: string;
   cantidad: number;
   precio_unitario: number;
   precio_actual: number | null;  // precio actual del producto (puede diferir del precio en la venta)
   total: number;
+  fraccionable?: boolean;
+  unidad_medida?: string;
+}
+
+interface FiadoPendienteItem {
+  key: string;
+  ventaId: number;
+  ventaNumero: string;
+  itemId: number;
+  producto_nombre: string;
+  cantidad: number;
+  precioOriginal: number;
+  precioActual: number;
 }
 
 interface Venta {
@@ -63,11 +77,17 @@ export const ClientesModule: React.FC = () => {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [formData, setFormData] = useState<Omit<Cliente, 'id' | 'saldo_pendiente'>>(defaultCliente);
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
+  const [showDeleteAdminModal, setShowDeleteAdminModal] = useState(false);
+  const [deleteAdminPin, setDeleteAdminPin] = useState('');
+  const [deleteAdminChecking, setDeleteAdminChecking] = useState(false);
   const [selectedCliente, setSelectedCliente] = useState<Cliente | null>(null);
   const [clienteVentas, setClienteVentas] = useState<Venta[]>([]);
-  const [pagoAmount, setPagoAmount] = useState('');
   const [pagoMetodo, setPagoMetodo] = useState('efectivo');
   const [showPagarModal, setShowPagarModal] = useState(false);
+  const [fiadoPendientes, setFiadoPendientes] = useState<FiadoPendienteItem[]>([]);
+  const [pagoSeleccion, setPagoSeleccion] = useState<Record<string, { checked: boolean; cantidad: number }>>({});
+  const [loadingPagoItems, setLoadingPagoItems] = useState(false);
+  const [pagoSubmitting, setPagoSubmitting] = useState(false);
   const [saldoActual, setSaldoActual] = useState<number | null>(null);
   const [expandedVentaId, setExpandedVentaId] = useState<number | null>(null);
   const [ventaItemsCache, setVentaItemsCache] = useState<Record<number, VentaItem[]>>({});
@@ -174,10 +194,36 @@ export const ClientesModule: React.FC = () => {
   };
 
   const handleDelete = async (id: number) => {
-    await clientesAPI.delete(id);
-    toast.success(t('clie.deleted'));
     setConfirmDelete(null);
-    loadData();
+    setDeleteAdminPin('');
+    setShowDeleteAdminModal(true);
+    setPendingDeleteId(id);
+  };
+
+  const [pendingDeleteId, setPendingDeleteId] = useState<number | null>(null);
+
+  const confirmDeleteWithPin = async () => {
+    if (pendingDeleteId == null) return;
+    if (!deleteAdminPin.trim()) {
+      toast.error('Ingresá el PIN de administrador');
+      return;
+    }
+    setDeleteAdminChecking(true);
+    try {
+      const res = await authAPI.validateAdmin(deleteAdminPin.trim());
+      if (!res.ok) {
+        toast.error(res.error || 'PIN de administrador incorrecto');
+        return;
+      }
+      await clientesAPI.delete(pendingDeleteId);
+      toast.success(t('clie.deleted'));
+      setShowDeleteAdminModal(false);
+      setDeleteAdminPin('');
+      setPendingDeleteId(null);
+      loadData();
+    } finally {
+      setDeleteAdminChecking(false);
+    }
   };
 
   const handleVerCuenta = async (c: Cliente) => {
@@ -191,6 +237,63 @@ export const ClientesModule: React.FC = () => {
     ]);
     setClienteVentas(ventas);
     setSaldoActual(saldo);
+    const pendientes = ventas.filter((v) => v.estado === 'fiado' || v.estado === 'parcial');
+    if (pendientes.length > 0) {
+      const cacheUpdates: Record<number, VentaItem[]> = {};
+      await Promise.all(
+        pendientes.map(async (v) => {
+          const detail = await ventasAPI.getById(v.id) as { items: VentaItem[] };
+          cacheUpdates[v.id] = detail.items || [];
+        })
+      );
+      setVentaItemsCache((prev) => ({ ...prev, ...cacheUpdates }));
+    }
+  };
+
+  const loadFiadoPendientes = async (clienteId: number): Promise<FiadoPendienteItem[]> => {
+    const ventas = await clientesAPI.getVentas(clienteId) as Venta[];
+    const pendientes = ventas.filter((v) => v.estado === 'fiado' || v.estado === 'parcial');
+    const items: FiadoPendienteItem[] = [];
+    await Promise.all(
+      pendientes.map(async (v) => {
+        const detail = await ventasAPI.getById(v.id) as { items: VentaItem[] };
+        for (const item of detail.items || []) {
+          items.push({
+            key: `${v.id}-${item.id}`,
+            ventaId: v.id,
+            ventaNumero: v.numero,
+            itemId: item.id,
+            producto_nombre: item.producto_nombre,
+            cantidad: item.cantidad,
+            precioOriginal: item.precio_unitario,
+            precioActual: item.precio_actual ?? item.precio_unitario,
+          });
+        }
+      })
+    );
+    return items;
+  };
+
+  const initPagoSeleccion = (items: FiadoPendienteItem[]) => {
+    const sel: Record<string, { checked: boolean; cantidad: number }> = {};
+    items.forEach((item) => {
+      sel[item.key] = { checked: true, cantidad: item.cantidad };
+    });
+    return sel;
+  };
+
+  const handleOpenPagarModal = async () => {
+    if (!selectedCliente) return;
+    setShowPagarModal(true);
+    setPagoMetodo('efectivo');
+    setLoadingPagoItems(true);
+    try {
+      const items = await loadFiadoPendientes(selectedCliente.id);
+      setFiadoPendientes(items);
+      setPagoSeleccion(initPagoSeleccion(items));
+    } finally {
+      setLoadingPagoItems(false);
+    }
   };
 
   const handleToggleVenta = async (ventaId: number) => {
@@ -209,21 +312,133 @@ export const ClientesModule: React.FC = () => {
     }
   };
 
-  const handlePagar = async () => {
+  const totalSeleccionado = useMemo(() => {
+    return fiadoPendientes.reduce((sum, item) => {
+      const sel = pagoSeleccion[item.key];
+      if (!sel?.checked) return sum;
+      const qty = Math.min(Math.max(0, sel.cantidad), item.cantidad);
+      return sum + qty * item.precioActual;
+    }, 0);
+  }, [fiadoPendientes, pagoSeleccion]);
+
+  const cargarFiadoEnPos = async (ventaId?: number) => {
     if (!selectedCliente) return;
-    const monto = parseFloat(pagoAmount);
-    if (!monto || monto <= 0) { toast.error('Monto inválido'); return; }
-    await clientesAPI.pagarFiado(selectedCliente.id, monto, pagoMetodo);
-    toast.success(`Pago registrado: ${formatCurrency(monto)}`);
-    setShowPagarModal(false);
-    setPagoAmount('');
-    setPagoMetodo('efectivo');
-    setSaldoActual(null);
-    const freshList = await loadData();
-    const updated = freshList?.find((c) => c.id === selectedCliente.id);
-    if (updated) {
-      setSelectedCliente(updated);
-      await handleVerCuenta(updated);
+
+    try {
+      const ventasPendientes = ventaId != null
+        ? [await ventasAPI.getById(ventaId) as Venta & { items?: VentaItem[] }]
+        : (await clientesAPI.getVentas(selectedCliente.id) as Venta[]).filter((v) => v.estado === 'fiado' || v.estado === 'parcial');
+
+      const grouped = new Map<string, {
+        producto_id: number;
+        nombre: string;
+        cantidad: number;
+        precio_unitario: number;
+        precio_original: number;
+        fraccionable: boolean;
+        unidad_medida: string;
+      }>();
+
+      for (const venta of ventasPendientes) {
+        const detalle = await ventasAPI.getById(venta.id) as { items?: VentaItem[] };
+        const items = detalle.items ?? [];
+
+        for (const item of items) {
+          const qty = Number(item.cantidad) || 0;
+          if (!qty) continue;
+
+          const prod = item.producto_id != null ? await productosAPI.getById(item.producto_id) as { nombre?: string; precio_venta?: number } | null : null;
+          const nombre = (prod?.nombre || item.producto_nombre || 'Producto').trim() || 'Producto';
+          const precioActual = Number(prod?.precio_venta ?? item.precio_actual ?? item.precio_unitario ?? 0);
+          const precioOriginal = Number(item.precio_unitario ?? precioActual ?? 0);
+          const key = item.producto_id ? `pid:${item.producto_id}` : `name:${nombre.toLowerCase()}`;
+          const existing = grouped.get(key);
+
+          if (existing) {
+            existing.cantidad += qty;
+            existing.precio_unitario = precioActual || existing.precio_unitario || precioOriginal;
+            existing.precio_original = precioOriginal || existing.precio_original || precioActual || 0;
+            existing.nombre = nombre;
+          } else {
+            grouped.set(key, {
+              producto_id: item.producto_id ?? 0,
+              nombre,
+              cantidad: qty,
+              precio_unitario: precioActual || precioOriginal || 0,
+              precio_original: precioOriginal || precioActual || 0,
+              fraccionable: Boolean(item.fraccionable),
+              unidad_medida: item.unidad_medida || 'unidad',
+            });
+          }
+        }
+      }
+
+      const cartItems = Array.from(grouped.values()).map((item) => ({
+        itemId: typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `fiado_${Date.now()}_${Math.random().toString(16).slice(2)}`,
+        producto_id: item.producto_id,
+        nombre: item.nombre,
+        cantidad: item.cantidad,
+        precio_unitario: item.precio_unitario,
+        precio_original: item.precio_original,
+        descuento: 0,
+        total: item.precio_unitario * item.cantidad,
+        fraccionable: item.fraccionable,
+        unidad_medida: item.unidad_medida,
+      }));
+
+      if (!cartItems.length) {
+        toast.error('No hay productos pendientes para cargar en caja');
+        return;
+      }
+
+      const payload = {
+        items: cartItems,
+        descuentoGlobal: 0,
+        clienteId: selectedCliente.id,
+        clienteNombre: `${selectedCliente.nombre} ${selectedCliente.apellido}`.trim(),
+        observaciones: ventaId != null ? 'Fiado cargado desde cuenta corriente' : 'Cargar fiado total del cliente',
+        metodoPago: 'fiado',
+        esFiado: true,
+        tipoOperacion: 'venta' as const,
+      };
+
+      try {
+        sessionStorage.setItem('pos:reabrir-venta', JSON.stringify(payload));
+      } catch { /* silencioso */ }
+
+      appAPI.openPosWindow();
+      const emitReabrir = () => sendEvent('broadcast-event', 'pos:reabrir-venta', payload);
+      setTimeout(emitReabrir, 400);
+      setTimeout(emitReabrir, 1200);
+      toast.success(ventaId != null ? 'Fiado cargado en caja' : 'Fiado total cargado en caja');
+    } catch {
+      toast.error('No se pudo cargar el fiado en el POS');
+    }
+  };
+
+  const handlePagar = async () => {
+    if (!selectedCliente || pagoSubmitting) return;
+    const monto = totalSeleccionado;
+    if (!monto || monto <= 0) { toast.error('Seleccioná al menos un producto'); return; }
+    setPagoSubmitting(true);
+    try {
+      await clientesAPI.pagarFiado(selectedCliente.id, monto, pagoMetodo);
+      toast.success(`Pago registrado: ${formatCurrency(monto)}`);
+      setShowPagarModal(false);
+      setPagoMetodo('efectivo');
+      setFiadoPendientes([]);
+      setPagoSeleccion({});
+      setSaldoActual(null);
+      const freshList = await loadData();
+      const updated = freshList?.find((c) => c.id === selectedCliente.id);
+      if (updated) {
+        setSelectedCliente(updated);
+        await handleVerCuenta(updated);
+      }
+    } catch {
+      toast.error('Error al registrar el pago');
+    } finally {
+      setPagoSubmitting(false);
     }
   };
 
@@ -374,12 +589,14 @@ export const ClientesModule: React.FC = () => {
               )}
             </div>
             {(saldoActual ?? selectedCliente.saldo_pendiente) > 0 && (
-              <button className="btn-success btn" onClick={() => {
-                setPagoAmount((saldoActual ?? selectedCliente.saldo_pendiente).toFixed(2));
-                setShowPagarModal(true);
-              }}>
-                <DollarSign size={16} /> {t('clie.registerPayment')}
-              </button>
+              <div className="flex gap-2">
+                <button className="btn-secondary btn" onClick={() => void cargarFiadoEnPos()}>
+                  <FileText size={16} /> Registrar pago total
+                </button>
+                <button className="btn-success btn" onClick={() => void handleOpenPagarModal()}>
+                  <DollarSign size={16} /> {t('clie.registerPayment')}
+                </button>
+              </div>
             )}
           </div>
 
@@ -395,12 +612,17 @@ export const ClientesModule: React.FC = () => {
                 {clienteVentas.map((v) => {
                   const isExpanded = expandedVentaId === v.id;
                   const items = ventaItemsCache[v.id];
+                  const totalActual = items?.length
+                    ? items.reduce((s, it) => s + it.cantidad * (it.precio_actual ?? it.precio_unitario), 0)
+                    : v.total;
                   return (
                     <div key={v.id} className="bg-slate-700/50 rounded-lg overflow-hidden">
                       {/* Cabecera de la venta — click para expandir */}
                       <button
                         className="w-full flex items-center justify-between p-3 hover:bg-slate-600/40 transition-colors text-left"
                         onClick={() => handleToggleVenta(v.id)}
+                        onDoubleClick={() => void cargarFiadoEnPos(v.id)}
+                        title="Doble click para cargar esta venta en el POS"
                       >
                         <div className="flex items-center gap-2">
                           {isExpanded
@@ -414,7 +636,7 @@ export const ClientesModule: React.FC = () => {
                           </div>
                         </div>
                         <div className="text-right shrink-0">
-                          <div className="font-mono font-bold text-white">{formatCurrency(v.total)}</div>
+                          <div className="font-mono font-bold text-white">{formatCurrency(totalActual)}</div>
                           <div className={`text-xs capitalize ${v.estado === 'fiado' || v.estado === 'parcial' ? 'text-red-400' : 'text-green-400'}`}>
                             {v.estado === 'fiado' ? 'pendiente' : v.estado === 'parcial' ? 'parcial' : v.metodo_pago}
                           </div>
@@ -431,10 +653,10 @@ export const ClientesModule: React.FC = () => {
                           ) : (
                             <div className="space-y-1">
                               {items.map((item, idx) => {
-                                const precioViejoDistinto =
-                                  item.precio_actual !== null &&
-                                  item.precio_actual !== undefined &&
-                                  Math.abs(item.precio_actual - item.precio_unitario) >= 0.01;
+                                const precioOriginal = item.precio_unitario;
+                                const precioActual = item.precio_actual ?? item.precio_unitario;
+                                const precioDistinto = Math.abs(precioActual - precioOriginal) >= 0.01;
+                                const lineTotalActual = item.cantidad * precioActual;
                                 return (
                                   <div key={idx} className="flex items-center justify-between text-xs">
                                     <div className="flex items-center gap-1.5 text-slate-300 flex-1 min-w-0">
@@ -443,22 +665,30 @@ export const ClientesModule: React.FC = () => {
                                     </div>
                                     <div className="flex items-center gap-3 shrink-0 ml-2">
                                       <span className="text-slate-400">x{item.cantidad % 1 === 0 ? item.cantidad : item.cantidad.toFixed(2)}</span>
-                                      {/* Precio unitario — con tachado si cambió */}
                                       <span className="font-mono w-24 text-right">
-                                        {precioViejoDistinto ? (
+                                        {precioDistinto ? (
                                           <span className="flex flex-col items-end gap-0.5">
-                                            <span className="line-through text-slate-500 text-[10px]">{formatCurrency(item.precio_unitario)}</span>
-                                            <span className="text-amber-400 font-semibold">{formatCurrency(item.precio_actual!)}</span>
+                                            <span className="line-through text-slate-500 text-[10px]">{formatCurrency(precioOriginal)}</span>
+                                            <span className="text-white font-semibold">{formatCurrency(precioActual)}</span>
                                           </span>
                                         ) : (
-                                          <span className="text-slate-300">{formatCurrency(item.precio_unitario)}</span>
+                                          <span className="text-white">{formatCurrency(precioActual)}</span>
                                         )}
                                       </span>
-                                      <span className="font-mono text-slate-300 w-20 text-right">{formatCurrency(item.total)}</span>
+                                      <span className="font-mono text-white w-20 text-right">{formatCurrency(lineTotalActual)}</span>
                                     </div>
                                   </div>
                                 );
                               })}
+                              {(() => {
+                                const subtotalActual = items.reduce((s, it) => s + it.cantidad * (it.precio_actual ?? it.precio_unitario), 0);
+                                return (
+                                  <div className="flex items-center justify-between text-xs pt-2 mt-1 border-t border-slate-600/40">
+                                    <span className="text-slate-400 font-semibold">Subtotal (precio actual)</span>
+                                    <span className="font-mono font-bold text-white">{formatCurrency(subtotalActual)}</span>
+                                  </div>
+                                );
+                              })()}
                               {v.observaciones && (
                                 <div className="text-xs text-slate-500 italic pt-1 border-t border-slate-600/40 mt-1">
                                   {v.observaciones}
@@ -522,28 +752,42 @@ export const ClientesModule: React.FC = () => {
         </div>
       </Modal>
 
-      {/* Modal pago */}
-      <Modal isOpen={showPagarModal} onClose={() => { setShowPagarModal(false); setPagoMetodo('efectivo'); }} title="Registrar Pago de Fiado" size="sm"
+      {/* Modal pago por productos */}
+      <Modal
+        isOpen={showPagarModal}
+        onClose={() => { setShowPagarModal(false); setPagoMetodo('efectivo'); setFiadoPendientes([]); setPagoSeleccion({}); }}
+        title="Cobrar Fiado — Seleccionar productos"
+        size="lg"
         footer={
           <>
-            <button className="btn-secondary btn" onClick={() => { setShowPagarModal(false); setPagoMetodo('efectivo'); }}>Cancelar</button>
-            <button className="btn-success btn" onClick={handlePagar}><DollarSign size={16} /> Confirmar Pago</button>
+            <button className="btn-secondary btn" onClick={() => { setShowPagarModal(false); setPagoMetodo('efectivo'); setFiadoPendientes([]); setPagoSeleccion({}); }}>Cancelar</button>
+            <button className="btn-success btn" disabled={pagoSubmitting || totalSeleccionado <= 0} onClick={handlePagar}>
+              <DollarSign size={16} /> {pagoSubmitting ? 'Procesando…' : 'Confirmar cobro'}
+            </button>
           </>
         }
       >
         <div className="space-y-4">
-          <div>
-            <div className="text-sm text-slate-400">Saldo a cobrar (precio actual)</div>
-            <div className={`text-2xl font-mono font-bold mt-1 ${(saldoActual ?? 0) > 0 ? 'text-red-400' : 'text-green-400'}`}>
-              {formatCurrency(saldoActual ?? 0)}
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-sm text-slate-400">Saldo pendiente (precio actual)</div>
+              <div className={`text-xl font-mono font-bold mt-0.5 ${(saldoActual ?? 0) > 0 ? 'text-red-400' : 'text-green-400'}`}>
+                {formatCurrency(saldoActual ?? 0)}
+              </div>
+            </div>
+            <div className="text-right">
+              <div className="text-sm text-slate-400">Total seleccionado</div>
+              <div className="text-2xl font-mono font-bold text-white">{formatCurrency(totalSeleccionado)}</div>
             </div>
           </div>
+
           <div>
             <label className="label">Método de pago</label>
             <div className="flex flex-wrap gap-2">
               {metodosPagoFiado.map((m) => (
                 <button
                   key={m.id}
+                  type="button"
                   onClick={() => setPagoMetodo(m.id)}
                   className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition-all ${
                     pagoMetodo === m.id
@@ -556,24 +800,100 @@ export const ClientesModule: React.FC = () => {
               ))}
             </div>
           </div>
+
           <div>
-            <label className="label">{t('clie.payAmount')}</label>
-            <input
-              className="input text-right font-mono text-xl"
-              type="number" step="0.01" min="0"
-              value={pagoAmount}
-              onChange={(e) => setPagoAmount(e.target.value)}
-              autoFocus
-            />
-          </div>
-          {parseFloat(pagoAmount) > 0 && selectedCliente && (
-            <div className="bg-slate-700/50 rounded-lg p-3 text-sm">
-              <div className="flex justify-between">
-                <span className="text-slate-400">{t('clie.remaining')}:</span>
-                <span className={`font-mono font-bold ${(saldoActual ?? selectedCliente.saldo_pendiente) - parseFloat(pagoAmount) > 0 ? 'text-red-400' : 'text-green-400'}`}>
-                  {formatCurrency(Math.max(0, (saldoActual ?? selectedCliente.saldo_pendiente) - parseFloat(pagoAmount)))}
-                </span>
+            <label className="label">Productos pendientes</label>
+            {loadingPagoItems ? (
+              <p className="text-sm text-slate-400 text-center py-6">Cargando productos…</p>
+            ) : fiadoPendientes.length === 0 ? (
+              <p className="text-sm text-slate-500 text-center py-6">No hay productos pendientes</p>
+            ) : (
+              <div className="rounded-lg border border-slate-700 overflow-hidden max-h-72 overflow-y-auto">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-slate-800 z-10">
+                    <tr className="border-b border-slate-700 text-xs text-slate-400">
+                      <th className="text-left px-3 py-2 w-8"></th>
+                      <th className="text-left px-3 py-2">Producto</th>
+                      <th className="text-right px-3 py-2">Cant.</th>
+                      <th className="text-right px-3 py-2">P. actual</th>
+                      <th className="text-right px-3 py-2">Subtotal</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {fiadoPendientes.map((item) => {
+                      const sel = pagoSeleccion[item.key] || { checked: false, cantidad: item.cantidad };
+                      const qty = Math.min(Math.max(0, sel.cantidad), item.cantidad);
+                      const precioDistinto = Math.abs(item.precioActual - item.precioOriginal) >= 0.01;
+                      const subtotalLinea = qty * item.precioActual;
+                      return (
+                        <tr key={item.key} className="border-b border-slate-700/50">
+                          <td className="px-3 py-2 align-middle">
+                            <input
+                              type="checkbox"
+                              checked={sel.checked}
+                              onChange={(e) => setPagoSeleccion((prev) => ({
+                                ...prev,
+                                [item.key]: { ...sel, checked: e.target.checked },
+                              }))}
+                              className="rounded"
+                            />
+                          </td>
+                          <td className="px-3 py-2 align-middle">
+                            <div className="font-medium text-white truncate max-w-[180px]" title={item.producto_nombre}>
+                              {item.producto_nombre || 'Producto eliminado'}
+                            </div>
+                            <div className="text-[10px] text-slate-500">Venta #{item.ventaNumero}</div>
+                          </td>
+                          <td className="px-3 py-2 align-middle text-right">
+                            <input
+                              type="number"
+                              min={0}
+                              max={item.cantidad}
+                              step={item.cantidad % 1 === 0 ? 1 : 0.01}
+                              value={qty}
+                              disabled={!sel.checked}
+                              onChange={(e) => {
+                                const val = parseFloat(e.target.value) || 0;
+                                setPagoSeleccion((prev) => ({
+                                  ...prev,
+                                  [item.key]: {
+                                    ...sel,
+                                    cantidad: Math.min(Math.max(0, val), item.cantidad),
+                                    checked: val > 0 ? true : sel.checked,
+                                  },
+                                }));
+                              }}
+                              className="input text-right font-mono w-16 py-1 text-xs"
+                            />
+                          </td>
+                          <td className="px-3 py-2 align-middle text-right font-mono text-xs">
+                            {precioDistinto ? (
+                              <span className="flex flex-col items-end gap-0.5">
+                                <span className="line-through text-slate-500">{formatCurrency(item.precioOriginal)}</span>
+                                <span className="text-white font-semibold">{formatCurrency(item.precioActual)}</span>
+                              </span>
+                            ) : (
+                              <span className="text-white">{formatCurrency(item.precioActual)}</span>
+                            )}
+                          </td>
+                          <td className="px-3 py-2 align-middle text-right font-mono font-bold text-white">
+                            {formatCurrency(subtotalLinea)}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
+            )}
+          </div>
+
+          {totalSeleccionado > 0 && saldoActual !== null && (
+            <div className="bg-slate-700/50 rounded-lg p-3 text-sm flex justify-between">
+              <span className="text-slate-400">{t('clie.remaining')}:</span>
+              <span className={`font-mono font-bold ${saldoActual - totalSeleccionado > 0.01 ? 'text-red-400' : 'text-green-400'}`}>
+                {formatCurrency(Math.max(0, saldoActual - totalSeleccionado))}
+              </span>
             </div>
           )}
         </div>
@@ -586,6 +906,32 @@ export const ClientesModule: React.FC = () => {
         onConfirm={() => confirmDelete && handleDelete(confirmDelete)}
         onCancel={() => setConfirmDelete(null)}
       />
+
+      <Modal
+        isOpen={showDeleteAdminModal}
+        onClose={() => { setShowDeleteAdminModal(false); setDeleteAdminPin(''); setPendingDeleteId(null); }}
+        title="Confirmación de administrador"
+        size="sm"
+        footer={(
+          <>
+            <button type="button" className="btn-secondary btn" onClick={() => { setShowDeleteAdminModal(false); setDeleteAdminPin(''); setPendingDeleteId(null); }} disabled={deleteAdminChecking}>Cancelar</button>
+            <button type="button" className="btn-danger btn" onClick={() => void confirmDeleteWithPin()} disabled={deleteAdminChecking}> {deleteAdminChecking ? 'Verificando…' : 'Eliminar'} </button>
+          </>
+        )}
+      >
+        <p className="text-sm mb-4 text-slate-300">Ingresá el PIN del administrador para confirmar la eliminación del cliente y su deuda asociada.</p>
+        <label className="label">PIN de administrador</label>
+        <input
+          type="password"
+          className="input font-mono"
+          value={deleteAdminPin}
+          onChange={(e) => setDeleteAdminPin(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') void confirmDeleteWithPin(); }}
+          placeholder="••••"
+          autoFocus
+          disabled={deleteAdminChecking}
+        />
+      </Modal>
     </div>
   );
 };

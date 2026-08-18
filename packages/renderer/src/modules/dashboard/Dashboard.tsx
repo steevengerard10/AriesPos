@@ -6,7 +6,7 @@ import {
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from 'recharts';
-import { statsAPI, ventasAPI } from '../../lib/api';
+import { statsAPI, ventasAPI, cajaAPI } from '../../lib/api';
 import { formatDayShort, formatLocaleDateFull } from '../../lib/utils';
 import { useAppStore } from '../../store/useAppStore';
 import { useTranslation } from 'react-i18next';
@@ -27,6 +27,13 @@ interface DashStats {
   top_productos: { nombre: string; cantidad: number; total: number }[];
   ventas_por_metodo: { metodo: string; total: number; cantidad: number }[];
   alertas_stock: { nombre: string; stock_actual: number; stock_minimo: number }[];
+}
+
+interface CajaSesion {
+  id: number;
+  fecha_apertura: string;
+  fecha_cierre: string | null;
+  estado: 'abierta' | 'cerrada';
 }
 
 interface Venta {
@@ -99,6 +106,7 @@ function ChartTooltip({ active, payload, label }: Record<string, unknown>) {
 export default function Dashboard() {
   const [stats, setStats] = useState<DashStats | null>(null);
   const [ventas, setVentas] = useState<Venta[]>([]);
+  const [sesionActiva, setSesionActiva] = useState<CajaSesion | null>(null);
   const [loading, setLoading] = useState(true);
   const { setCurrentModule } = useAppStore();
   const { t } = useTranslation();
@@ -106,12 +114,14 @@ export default function Dashboard() {
   async function load() {
     setLoading(true);
     try {
-      const [s, v] = await Promise.all([
+      const [s, v, sesion] = await Promise.all([
         statsAPI.dashboard() as Promise<DashStats>,
         ventasAPI.getHistorico({} as Record<string, unknown>) as Promise<Venta[]>,
+        cajaAPI.getSesionActiva() as Promise<CajaSesion | null>,
       ]);
       setStats(s);
       setVentas(Array.isArray(v) ? v : []);
+      setSesionActiva(sesion);
     } catch (e) {
       console.error('[Dashboard] Error cargando datos:', e);
     } finally {
@@ -120,6 +130,11 @@ export default function Dashboard() {
   }
 
   useEffect(() => { load(); }, []);
+
+  const ventasTurno = sesionActiva
+    ? ventas.filter((v) => v.fecha >= sesionActiva.fecha_apertura)
+    : [];
+  const totalTurno = ventasTurno.reduce((s, v) => s + v.total, 0);
 
   const trend =
     stats && stats.total_semana_anterior > 0
@@ -152,8 +167,8 @@ export default function Dashboard() {
       <div className="grid grid-cols-4 gap-4 mb-6">
         <KPICard
           title={t('dash.kpi.ventasHoy')}
-          value={loading ? '—' : fmt(stats?.total_hoy ?? 0)}
-          sub={t('dash.kpi.ventasHoySub')}
+          value={loading ? '—' : !sesionActiva ? 'No hay caja abierta' : fmt(totalTurno)}
+          sub={!sesionActiva ? undefined : t('dash.kpi.ventasHoySub')}
           icon={TrendingUp}
           color="var(--accent)"
         />
@@ -225,12 +240,14 @@ export default function Dashboard() {
           <div className="overflow-y-auto" style={{ maxHeight: 230 }}>
             {loading ? (
               <div className="flex items-center justify-center py-8" style={{ color: 'var(--text3)', fontSize: 13 }}>{t('common.loading')}</div>
-            ) : ventas.length === 0 ? (
-              <div className="flex items-center justify-center py-8" style={{ color: 'var(--text3)', fontSize: 13 }}>{t('dash.noSales')}</div>
+            ) : ventasTurno.length === 0 ? (
+              <div className="flex items-center justify-center py-8" style={{ color: 'var(--text3)', fontSize: 13 }}>
+                {!sesionActiva ? 'No hay caja abierta' : t('dash.noSales')}
+              </div>
             ) : (
               <table className="w-full">
                 <tbody>
-                  {ventas.map((v) => (
+                  {ventasTurno.map((v) => (
                     <tr key={v.id} className="table-row">
                       <td className="table-cell pl-4" style={{ width: 70 }}>
                         <span className="num" style={{ fontSize: 11, color: 'var(--text3)' }}>#{v.numero}</span>

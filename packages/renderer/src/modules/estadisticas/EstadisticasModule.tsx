@@ -9,8 +9,8 @@ import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, PieChart, Pie, Cell,
 } from 'recharts';
-import { statsAPI } from '../../lib/api';
-import { formatCurrency, weekAgo, today, monthStart, formatNowTime } from '../../lib/utils';
+import { statsAPI, productosAPI, libroCajaAPI } from '../../lib/api';
+import { formatCurrency, weekAgo, today, monthStart, formatNowTime, formatDateTime } from '../../lib/utils';
 
 interface DashboardStats {
   ventas_hoy: number;
@@ -29,6 +29,17 @@ interface DashboardStats {
   ventas_por_hora: { hora: string; cantidad: number; total: number }[];
   ventas_por_metodo: { metodo: string; total: number; cantidad: number }[];
   alertas_stock: { nombre: string; stock_actual: number; stock_minimo: number }[];
+}
+
+interface TurnoStats {
+  turnoId: number | null;
+  estaAbierto: boolean;
+  fechaApertura: string | null;
+  horaApertura: string | null;
+  totalFacturado: number;
+  cantidadVentas: number;
+  ticketPromedio: number;
+  medioPagoMasUsado: string | null;
 }
 
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4'];
@@ -99,6 +110,26 @@ export const EstadisticasModule: React.FC = () => {
   const [margenVista, setMargenVista] = useState<'dia' | 'semana' | 'mes'>('dia');
   const [margenes, setMargenes] = useState<{ total_ganancia: number; total_perdida: number; balance_neto: number } | null>(null);
   const [margenLoading, setMargenLoading] = useState(false);
+  const [stockPotencial, setStockPotencial] = useState<Array<{
+    producto: string;
+    stock: number;
+    precio_costo: number;
+    precio_venta: number;
+    ganancia_unitaria: number;
+    ganancia_total: number;
+  }>>([]);
+  const [stockPotencialLoading, setStockPotencialLoading] = useState(false);
+  const [turnoStats, setTurnoStats] = useState<TurnoStats>({
+    turnoId: null,
+    estaAbierto: false,
+    fechaApertura: null,
+    horaApertura: null,
+    totalFacturado: 0,
+    cantidadVentas: 0,
+    ticketPromedio: 0,
+    medioPagoMasUsado: null,
+  });
+  const [turnoLoading, setTurnoLoading] = useState(false);
 
   const margenDesdeHasta = useMemo(() => {
     const fin = today();
@@ -150,15 +181,109 @@ export const EstadisticasModule: React.FC = () => {
     }
   }, [margenDesdeHasta]);
 
+  const loadTurnoStats = useCallback(async () => {
+    setTurnoLoading(true);
+    try {
+      const turno = await libroCajaAPI.getTurnoActivo(today()) as { id?: number; fecha_apertura?: string; fecha_cierre?: string | null } | null;
+
+      if (!turno || turno.fecha_cierre) {
+        setTurnoStats({
+          turnoId: null,
+          estaAbierto: false,
+          fechaApertura: null,
+          horaApertura: null,
+          totalFacturado: 0,
+          cantidadVentas: 0,
+          ticketPromedio: 0,
+          medioPagoMasUsado: null,
+        });
+      } else {
+        const horaApertura = turno.fecha_apertura ? formatDateTime(turno.fecha_apertura).split(' ')[1] : null;
+        const ventasDelTurno = await statsAPI.ventasPorPeriodo(turno.fecha_apertura || today(), today()) as Array<{ total: number; cantidad: number; metodo?: string }> | undefined;
+
+        const totalFacturado = ventasDelTurno?.reduce((s, v: any) => s + (v.total || 0), 0) || 0;
+        const cantidadVentas = ventasDelTurno?.reduce((s, v: any) => s + (v.cantidad || v.cantidad_operaciones || 0), 0) || 0;
+        const ticketPromedio = cantidadVentas > 0 ? totalFacturado / cantidadVentas : 0;
+
+        let medioPagoMasUsado: string | null = null;
+        if (stats?.ventas_por_metodo?.length) {
+          const metodos = stats.ventas_por_metodo.reduce((max, m) => !max || m.cantidad > max.cantidad ? m : max);
+          medioPagoMasUsado = metodos ? metodos.metodo : null;
+        }
+
+        setTurnoStats({
+          turnoId: turno.id || null,
+          estaAbierto: true,
+          fechaApertura: today(),
+          horaApertura: horaApertura,
+          totalFacturado,
+          cantidadVentas,
+          ticketPromedio,
+          medioPagoMasUsado,
+        });
+      }
+    } catch (e) {
+      console.error('Error al cargar turno de caja:', e);
+      setTurnoStats({
+        turnoId: null,
+        estaAbierto: false,
+        fechaApertura: null,
+        horaApertura: null,
+        totalFacturado: 0,
+        cantidadVentas: 0,
+        ticketPromedio: 0,
+        medioPagoMasUsado: null,
+      });
+    } finally {
+      setTurnoLoading(false);
+    }
+  }, [stats?.ventas_por_metodo]);
+
+  const loadStockPotencial = useCallback(async () => {
+    setStockPotencialLoading(true);
+    try {
+      const res = await productosAPI.getAll({ activo: true, limit: 99999 }) as { rows?: Array<{ nombre: string; stock_actual?: number | string; precio_costo?: number | string; precio_venta?: number | string; activo?: boolean }> };
+      const rows = Array.isArray(res?.rows) ? res.rows : [];
+
+      const datos = rows
+        .filter((p) => p && p.activo !== false)
+        .map((p) => {
+          const stock = Number(p.stock_actual) || 0;
+          const costo = Number(p.precio_costo) || 0;
+          const venta = Number(p.precio_venta) || 0;
+          const gananciaUnitaria = venta - costo;
+          return {
+            producto: p.nombre || 'Sin nombre',
+            stock,
+            precio_costo: costo,
+            precio_venta: venta,
+            ganancia_unitaria: gananciaUnitaria,
+            ganancia_total: gananciaUnitaria * stock,
+          };
+        })
+        .filter((p) => p.stock > 0 && p.precio_costo > 0)
+        .sort((a, b) => b.ganancia_total - a.ganancia_total);
+
+      setStockPotencial(datos);
+    } catch (e) {
+      console.error('Error al cargar ganancia potencial del stock:', e);
+      setStockPotencial([]);
+    } finally {
+      setStockPotencialLoading(false);
+    }
+  }, []);
+
   useEffect(() => { loadDashboard(); }, [loadDashboard]);
   useEffect(() => { loadVentasPeriodo(); }, [loadVentasPeriodo]);
   useEffect(() => { loadMargenes(); }, [loadMargenes]);
+  useEffect(() => { loadStockPotencial(); }, [loadStockPotencial]);
+  useEffect(() => { loadTurnoStats(); }, [loadTurnoStats]);
 
-  // Auto-refresh cada 90 segundos
+  // Auto-refresh cada 60 segundos
   useEffect(() => {
-    const t = setInterval(() => { loadDashboard(); loadVentasPeriodo(); loadMargenes(); }, 90_000);
+    const t = setInterval(() => { loadDashboard(); loadVentasPeriodo(); loadMargenes(); loadTurnoStats(); }, 60_000);
     return () => clearInterval(t);
-  }, [loadDashboard, loadVentasPeriodo, loadMargenes]);
+  }, [loadDashboard, loadVentasPeriodo, loadMargenes, loadTurnoStats]);
 
   if (loading && !stats) {
     return (
@@ -191,6 +316,10 @@ export const EstadisticasModule: React.FC = () => {
 
   const maxProductoTotal = Math.max(...(stats.top_productos?.map((p) => p.total) ?? [1]));
 
+  const totalInvertidoStock = stockPotencial.reduce((s, p) => s + p.precio_costo * p.stock, 0);
+  const gananciaPotencialTotal = stockPotencial.reduce((s, p) => s + p.ganancia_total, 0);
+  const margenPromedio = totalInvertidoStock > 0 ? (gananciaPotencialTotal / totalInvertidoStock) * 100 : 0;
+
   const pieData = (stats.ventas_por_metodo ?? []).map((m, i) => ({
     name: m.metodo.charAt(0).toUpperCase() + m.metodo.slice(1),
     value: m.total,
@@ -201,62 +330,102 @@ export const EstadisticasModule: React.FC = () => {
   return (
     <div className="flex flex-col h-full min-h-0 flex-1 w-full overflow-hidden">
       {/* ── Header ───────────────────────────────────────────────── */}
-      <div className="shrink-0 px-6 pt-5 pb-4 flex items-center justify-between border-b border-slate-800">
-        <div>
-          <h1 className="text-xl font-bold text-white flex items-center gap-2">
-            <BarChart2 size={22} className="text-blue-400" /> {t('stats.title')}
-          </h1>
-          <p className="text-xs text-slate-500 mt-0.5 flex items-center gap-2">
-            <Clock size={11} />
-            {formatNowTime(reloj)} · Actualizado {formatNowTime(lastRefresh)}
-          </p>
+      <div className="shrink-0 px-6 pt-5 pb-4 flex flex-col gap-3 border-b border-slate-800">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-xl font-bold text-white flex items-center gap-2">
+              <BarChart2 size={22} className="text-blue-400" /> {t('stats.title')}
+            </h1>
+            <p className="text-xs text-slate-500 mt-0.5 flex items-center gap-2">
+              <Clock size={11} />
+              {formatNowTime(reloj)} · Actualizado {formatNowTime(lastRefresh)}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            {loading && <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />}
+            <span className="flex items-center gap-1 text-xs text-emerald-400 bg-emerald-400/10 px-2 py-1 rounded-full">
+              <Zap size={10} /> {t('stats.live')}
+            </span>
+            <button className="btn-ghost btn p-2" title="Actualizar" onClick={() => { loadDashboard(); loadVentasPeriodo(); loadMargenes(); loadTurnoStats(); }}>
+              <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
+            </button>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          {loading && <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />}
-          <span className="flex items-center gap-1 text-xs text-emerald-400 bg-emerald-400/10 px-2 py-1 rounded-full">
-            <Zap size={10} /> {t('stats.live')}
-          </span>
-          <button className="btn-ghost btn p-2" title="Actualizar" onClick={() => { loadDashboard(); loadVentasPeriodo(); loadMargenes(); }}>
-            <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
-          </button>
-        </div>
+
+        {/* ── Estado de Caja ─────────────────────────────────────── */}
+        {!turnoStats.estaAbierto ? (
+          <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3">
+            <p className="text-xs text-red-400 font-medium">No hay caja abierta</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+            <div className="bg-slate-900/50 rounded-lg p-2.5 border border-slate-700">
+              <div className="text-[10px] text-slate-400 uppercase tracking-wider">Estado</div>
+              <div className="text-sm font-bold text-emerald-400">Abierta desde {turnoStats.horaApertura}</div>
+            </div>
+            <div className="bg-slate-900/50 rounded-lg p-2.5 border border-slate-700">
+              <div className="text-[10px] text-slate-400 uppercase tracking-wider">Facturado</div>
+              <div className="text-sm font-bold text-white font-mono">{formatCurrency(turnoStats.totalFacturado)}</div>
+            </div>
+            <div className="bg-slate-900/50 rounded-lg p-2.5 border border-slate-700">
+              <div className="text-[10px] text-slate-400 uppercase tracking-wider">Ventas</div>
+              <div className="text-sm font-bold text-white font-mono">{turnoStats.cantidadVentas}</div>
+            </div>
+            <div className="bg-slate-900/50 rounded-lg p-2.5 border border-slate-700">
+              <div className="text-[10px] text-slate-400 uppercase tracking-wider">Ticket promedio</div>
+              <div className="text-sm font-bold text-white font-mono">{formatCurrency(turnoStats.ticketPromedio)}</div>
+            </div>
+            <div className="bg-slate-900/50 rounded-lg p-2.5 border border-slate-700">
+              <div className="text-[10px] text-slate-400 uppercase tracking-wider">M. Pago principal</div>
+              <div className="text-sm font-bold text-white capitalize">{turnoStats.medioPagoMasUsado || 'N/A'}</div>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto px-6 py-5 space-y-5">
 
-        {/* ── KPIs principales ─────────────────────────────────────── */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          <KpiCard
-            label={t('stats.kpi.today')}
-            value={formatCurrency(stats.total_hoy)}
-            sub={`${stats.ventas_hoy} ${t('stats.kpi.todaySub')}`}
-            icon={<DollarSign size={16} />}
-            color="bg-blue-500/20 text-blue-400"
-          />
-          <KpiCard
-            label={t('stats.kpi.ticket')}
-            value={formatCurrency(stats.ticket_promedio_hoy)}
-            sub={t('stats.kpi.ticketSub')}
-            icon={<ShoppingCart size={16} />}
-            color="bg-emerald-500/20 text-emerald-400"
-          />
-          <KpiCard
-            label={t('stats.kpi.week')}
-            value={formatCurrency(stats.total_semana)}
-            sub={`${stats.ventas_semana} ${t('stats.kpi.weekSub')}`}
-            icon={<TrendingUp size={16} />}
-            color="bg-violet-500/20 text-violet-400"
-            trend={trendSemana}
-            trendLabel={t('stats.vsWeek')}
-          />
-          <KpiCard
-            label={t('stats.kpi.month')}
-            value={formatCurrency(stats.total_mes)}
-            sub={`${stats.ventas_mes} ${t('stats.kpi.monthSub')}`}
-            icon={<BarChart2 size={16} />}
-            color="bg-amber-500/20 text-amber-400"
-          />
-        </div>
+        {/* ── KPIs principales (solo si hay caja abierta) ─────────────────────────────────────── */}
+        {!turnoStats.estaAbierto ? (
+          <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-6 text-center">
+            <AlertTriangle size={32} className="mx-auto text-red-400 mb-2" />
+            <p className="text-sm text-red-400 font-medium">No hay caja abierta en este momento</p>
+            <p className="text-xs text-red-300 mt-1">Abre una caja para ver las estadísticas del turno</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <KpiCard
+              label="Facturado"
+              value={formatCurrency(turnoStats.totalFacturado)}
+              sub={`${turnoStats.cantidadVentas} ventas`}
+              icon={<DollarSign size={16} />}
+              color="bg-blue-500/20 text-blue-400"
+            />
+            <KpiCard
+              label="Ticket promedio"
+              value={formatCurrency(turnoStats.ticketPromedio)}
+              sub="Promedio del turno"
+              icon={<ShoppingCart size={16} />}
+              color="bg-emerald-500/20 text-emerald-400"
+            />
+            <KpiCard
+              label={t('stats.kpi.week')}
+              value={formatCurrency(stats.total_semana)}
+              sub={`${stats.ventas_semana} ${t('stats.kpi.weekSub')}`}
+              icon={<TrendingUp size={16} />}
+              color="bg-violet-500/20 text-violet-400"
+              trend={trendSemana}
+              trendLabel={t('stats.vsWeek')}
+            />
+            <KpiCard
+              label={t('stats.kpi.month')}
+              value={formatCurrency(stats.total_mes)}
+              sub={`${stats.ventas_mes} ${t('stats.kpi.monthSub')}`}
+              icon={<BarChart2 size={16} />}
+              color="bg-amber-500/20 text-amber-400"
+            />
+          </div>
+        )}
 
         {/* ── KPIs secundarios ─────────────────────────────────────── */}
         <div className="grid grid-cols-3 gap-3">
@@ -501,6 +670,72 @@ export const EstadisticasModule: React.FC = () => {
             </div>
           </div>
         )}
+
+        <div className="bg-slate-800 border border-slate-700 rounded-xl p-5">
+          <h3 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">
+            <Package size={15} className="text-emerald-400" /> Ganancia potencial del stock
+          </h3>
+
+          {stockPotencialLoading ? (
+            <div className="flex justify-center py-10">
+              <div className="w-8 h-8 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+            </div>
+          ) : stockPotencial.length === 0 ? (
+            <div className="text-sm text-slate-500 py-6 text-center">No hay productos con stock y costo válidos para calcular ganancia potencial.</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm border-separate border-spacing-y-2">
+                <thead>
+                  <tr className="text-slate-400 text-xs uppercase tracking-wider">
+                    <th className="pb-2 font-medium">Producto</th>
+                    <th className="pb-2 font-medium text-right">Stock</th>
+                    <th className="pb-2 font-medium text-right">Precio costo</th>
+                    <th className="pb-2 font-medium text-right">Precio venta</th>
+                    <th className="pb-2 font-medium text-right">Ganancia unitaria</th>
+                    <th className="pb-2 font-medium text-right">Ganancia total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {stockPotencial.map((p) => (
+                    <tr key={p.producto} className="bg-slate-900/60 rounded-lg">
+                      <td className="py-2 px-3 rounded-l-lg text-slate-200">{p.producto}</td>
+                      <td className="py-2 px-3 text-right font-mono text-slate-300">{p.stock}</td>
+                      <td className="py-2 px-3 text-right font-mono text-slate-300">{formatCurrency(p.precio_costo)}</td>
+                      <td className="py-2 px-3 text-right font-mono text-slate-300">{formatCurrency(p.precio_venta)}</td>
+                      <td className="py-2 px-3 text-right font-mono text-emerald-400">{formatCurrency(p.ganancia_unitaria)}</td>
+                      <td className="py-2 px-3 text-right font-mono text-emerald-300 rounded-r-lg">{formatCurrency(p.ganancia_total)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr className="text-xs text-slate-300">
+                    <td className="pt-3 font-semibold">Totales</td>
+                    <td className="pt-3" />
+                    <td className="pt-3 text-right font-mono">{formatCurrency(totalInvertidoStock)}</td>
+                    <td className="pt-3 text-right font-mono">{formatCurrency(gananciaPotencialTotal)}</td>
+                    <td className="pt-3" />
+                    <td className="pt-3 text-right font-mono text-emerald-300">{(margenPromedio).toFixed(2)}%</td>
+                  </tr>
+                </tfoot>
+              </table>
+
+              <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3 text-sm text-slate-300">
+                <div className="rounded-lg border border-slate-700 bg-slate-900/50 p-3">
+                  <div className="text-xs uppercase tracking-wider text-slate-500">Total invertido en stock</div>
+                  <div className="mt-2 font-mono font-semibold text-white">{formatCurrency(totalInvertidoStock)}</div>
+                </div>
+                <div className="rounded-lg border border-slate-700 bg-slate-900/50 p-3">
+                  <div className="text-xs uppercase tracking-wider text-slate-500">Ganancia potencial total</div>
+                  <div className="mt-2 font-mono font-semibold text-emerald-300">{formatCurrency(gananciaPotencialTotal)}</div>
+                </div>
+                <div className="rounded-lg border border-slate-700 bg-slate-900/50 p-3">
+                  <div className="text-xs uppercase tracking-wider text-slate-500">Margen promedio</div>
+                  <div className="mt-2 font-mono font-semibold text-amber-300">{margenPromedio.toFixed(2)}%</div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
 
       </div>
     </div>

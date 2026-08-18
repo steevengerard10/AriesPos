@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { libroCajaAPI, LibroCajaDia, LibroCajaTurno, LibroCajaBillete, LibroCajaEgreso } from '../lib/api';
+import { toLocalDateISO } from '../lib/utils';
 
 export interface LibroCajaPeriodo {
   periodo: string;
@@ -47,7 +48,7 @@ interface LibroCajaState {
 }
 
 function hoyISO(): string {
-  return new Date().toISOString().split('T')[0];
+  return toLocalDateISO(new Date());
 }
 
 function mesActualISO(): string {

@@ -158,6 +158,7 @@ export const cajaAPI = {
   },
   getMovimientos: (sesionId: number) => invoke('caja:getMovimientos', sesionId),
   getHistorico: () => invoke('caja:getHistorico'),
+  reabrir: (sessionId: number) => invoke<{ success: boolean; error?: string }>('caja:reabrir', sessionId),
 };
 
 // ── ESTADÍSTICAS ──────────────────────────────────────────────────

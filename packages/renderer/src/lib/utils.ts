@@ -110,20 +110,35 @@ export function formatTimeHm(isoOrDbDatetime: string): string {
   });
 }
 
+export function toLocalDateISO(date: Date = new Date()): string {
+  const tz = getResolvedIanaTimezone();
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const map = Object.fromEntries(parts.filter((p) => p.type !== 'literal').map((p) => [p.type, p.value]));
+  const year = map.year ?? date.getFullYear();
+  const month = map.month ?? String(date.getMonth() + 1).padStart(2, '0');
+  const day = map.day ?? String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 export function today(): string {
-  return new Date().toISOString().split('T')[0];
+  return toLocalDateISO(new Date());
 }
 
 export function weekAgo(): string {
   const d = new Date();
   d.setDate(d.getDate() - 7);
-  return d.toISOString().split('T')[0];
+  return toLocalDateISO(d);
 }
 
 export function monthStart(): string {
   const d = new Date();
   d.setDate(1);
-  return d.toISOString().split('T')[0];
+  return toLocalDateISO(d);
 }
 
 export function downloadCSV(content: string, filename: string): void {

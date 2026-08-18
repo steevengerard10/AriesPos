@@ -28,6 +28,7 @@ export const CartTable: React.FC<CartTableProps> = ({ simbolo = '$' }) => {
     itemId: string;
     field: 'cantidad' | 'precio_unitario' | 'descuento';
   } | null>(null);
+  const [descuentoModo, setDescuentoModo] = useState<'$' | '%'>('$');
   const inputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const { t } = useTranslation();
@@ -53,12 +54,21 @@ export const CartTable: React.FC<CartTableProps> = ({ simbolo = '$' }) => {
 
   const startEdit = (itemId: string, field: 'cantidad' | 'precio_unitario' | 'descuento') => {
     setEditingCell({ itemId, field });
+    if (field === 'descuento') setDescuentoModo('$');
     setTimeout(() => inputRef.current?.select(), 10);
   };
 
   const commitEdit = (item: CartItem, field: string, value: string) => {
     const num = parseFloat(value);
-    if (isNaN(num) || num < 0) {
+    if (isNaN(num)) {
+      setEditingCell(null);
+      return;
+    }
+    if (field === 'cantidad' && num < 0) {
+      setEditingCell(null);
+      return;
+    }
+    if (field === 'precio_unitario' && num < 0) {
       setEditingCell(null);
       return;
     }
@@ -66,7 +76,13 @@ export const CartTable: React.FC<CartTableProps> = ({ simbolo = '$' }) => {
       setEditingCell(null);
       return;
     }
-    updateItem(item.itemId, { [field]: num });
+    if (field === 'descuento') {
+      const itemSubtotal = item.precio_unitario * item.cantidad;
+      const descuento = descuentoModo === '%' ? itemSubtotal * (num / 100) : num;
+      updateItem(item.itemId, { descuento });
+    } else {
+      updateItem(item.itemId, { [field]: num });
+    }
     setEditingCell(null);
   };
 
@@ -208,27 +224,48 @@ export const CartTable: React.FC<CartTableProps> = ({ simbolo = '$' }) => {
               {/* Descuento */}
               <td className="table-cell text-right">
                 {editingCell?.itemId === item.itemId && editingCell.field === 'descuento' ? (
-                  <input
-                    ref={inputRef}
-                    type="number"
-                    defaultValue={item.descuento}
-                    step="0.01"
-                    min="0"
-                    className="input text-right w-full py-1 px-2 text-sm font-mono"
-                    onBlur={(e) => commitEdit(item, 'descuento', e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') commitEdit(item, 'descuento', e.currentTarget.value);
-                      if (e.key === 'Escape') setEditingCell(null);
-                    }}
-                    autoFocus
-                  />
+                  <div className="flex flex-col items-end gap-1">
+                    <div className="flex gap-0.5">
+                      <button
+                        type="button"
+                        className={`text-[10px] px-1.5 py-0.5 rounded ${descuentoModo === '$' ? 'bg-amber-500/30 text-amber-400' : 'bg-slate-700 text-slate-400'}`}
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => setDescuentoModo('$')}
+                      >{simbolo}</button>
+                      <button
+                        type="button"
+                        className={`text-[10px] px-1.5 py-0.5 rounded ${descuentoModo === '%' ? 'bg-amber-500/30 text-amber-400' : 'bg-slate-700 text-slate-400'}`}
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => setDescuentoModo('%')}
+                      >%</button>
+                    </div>
+                    <input
+                      ref={inputRef}
+                      type="number"
+                      defaultValue={descuentoModo === '$' ? item.descuento : 0}
+                      step="0.01"
+                      className="input text-right w-full py-1 px-2 text-sm font-mono"
+                      onBlur={(e) => commitEdit(item, 'descuento', e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') commitEdit(item, 'descuento', e.currentTarget.value);
+                        if (e.key === 'Escape') setEditingCell(null);
+                      }}
+                      autoFocus
+                    />
+                  </div>
                 ) : (
                   <button
-                    className={`font-mono hover:text-amber-400 transition-colors ${item.descuento > 0 ? 'text-amber-400' : 'text-slate-500'}`}
+                    className={`font-mono hover:text-amber-400 transition-colors ${
+                      item.descuento > 0 ? 'text-amber-400' : item.descuento < 0 ? 'text-red-400' : 'text-slate-500'
+                    }`}
                     onClick={() => startEdit(item.itemId, 'descuento')}
-                    title="Click para editar descuento"
+                    title="Click para editar descuento/recargo"
                   >
-                    {item.descuento > 0 ? `-${formatCurrency(item.descuento, simbolo)}` : '—'}
+                    {item.descuento > 0
+                      ? `-${formatCurrency(item.descuento, simbolo)}`
+                      : item.descuento < 0
+                        ? `+${formatCurrency(Math.abs(item.descuento), simbolo)}`
+                        : '—'}
                   </button>
                 )}
               </td>
