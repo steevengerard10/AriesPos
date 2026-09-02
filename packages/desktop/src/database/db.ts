@@ -179,6 +179,14 @@ function runMigrations(db: Database.Database): void {
       `,
     },
     {
+      name: '025_fiado_precio_cobrado',
+      run: (db) => {
+        const columns = db.prepare(`PRAGMA table_info(venta_items)`).all() as { name: string }[];
+        if (!columns.some((column) => column.name === 'precio_cobrado')) db.exec(`ALTER TABLE venta_items ADD COLUMN precio_cobrado REAL`);
+        if (!columns.some((column) => column.name === 'precio_sistema')) db.exec(`ALTER TABLE venta_items ADD COLUMN precio_sistema REAL`);
+      },
+    },
+    {
       name: '002_clientes_apellido',
       sql: `ALTER TABLE clientes ADD COLUMN apellido TEXT DEFAULT '';`,
     },

@@ -66,6 +66,9 @@ export interface VentaItem {
   producto_nombre?: string;
   cantidad: number;
   precio_unitario: number;
+  precio_cobrado?: number;
+  precio_modificado?: number;
+  precio_sistema?: number;
   descuento: number;
   total: number;
 }
@@ -75,6 +78,9 @@ export interface CartItem {
   nombre: string;
   cantidad: number;
   precio_unitario: number;
+  precio_cobrado?: number;
+  precio_modificado?: number;
+  precio_sistema?: number;
   descuento: number;
   total: number;
   fraccionable: boolean;

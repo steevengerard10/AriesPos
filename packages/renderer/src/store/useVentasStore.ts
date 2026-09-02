@@ -15,6 +15,8 @@ export interface CartItem {
   total:          number;
   fraccionable:   boolean;
   unidad_medida:  string;
+  precio_modificado?: number;  // Precio que el usuario escribió manualmente (si lo cambió)
+  precio_sistema?: number;     // Precio original del producto al momento de guardar
 }
 
 // MetodoPago acepta los built-ins y cualquier método personalizado configurado

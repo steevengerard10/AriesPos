@@ -10,10 +10,10 @@ import { CartTable } from '../POS/CartTable';
 import { PaymentModal } from '../POS/PaymentModal';
 import { Modal } from '../shared/Modal';
 
-import { useVentasStore, CartItem } from '../../store/useVentasStore';
+import { useVentasStore, type MetodoPago } from '../../store/useVentasStore';
 import { useAppStore } from '../../store/useAppStore';
 import { formatCurrency, generateTicketHTML } from '../../lib/utils';
-import { ventasAPI, clientesAPI, usuariosAPI, configAPI, appAPI, sendEvent, onEvent } from '../../lib/api';
+import { ventasAPI, clientesAPI, usuariosAPI, configAPI, appAPI, sendEvent, onEvent, productosAPI } from '../../lib/api';
 import { useTranslation } from 'react-i18next';
 
 interface Cliente {
@@ -31,10 +31,10 @@ interface Usuario {
 
 export const POSWindow: React.FC = () => {
   const {
-    cart, subtotal, totalDescuento, total, descuentoGlobal,
+    cart, subtotal, totalDescuento, total, descuentoGlobal, recargoGlobal,
     clienteId, clienteNombre, vendedorId, vendedorNombre,
     esFiado, observaciones, tipoOperacion,
-    setDescuentoGlobal, setCliente, setVendedor,
+    addItem, setDescuentoGlobal, setRecargoGlobal, setCliente, setVendedor,
     setEsFiado, setObservaciones, setTipoOperacion, resetSale,
     metodoPago, metodoPagoMixto,
   } = useVentasStore();
@@ -49,12 +49,13 @@ export const POSWindow: React.FC = () => {
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [vendedores, setVendedores] = useState<Usuario[]>([]);
   const [descuentoInput, setDescuentoInput] = useState('0');
-  const [descuentoModo, setDescuentoModo] = useState<'$' | '%'>('$');
+  const [ajusteTipo, setAjusteTipo] = useState<'descuento' | 'recargo'>('descuento');
+  const [ajusteUnidad, setAjusteUnidad] = useState<'$' | '%'>('$');
 
   // Ref para acceder al ProductSearch y refocusarlo tras cobrar
   const productSearchRef = useRef<ProductSearchHandle>(null);
   const [clienteSearch, setClienteSearch] = useState('');
-  const [submitting, setSubmitting] = useState(false);
+  const [procesando, setProcesando] = useState(false);
   const [selectedPrecio, setSelectedPrecio] = useState<1 | 2 | 3>(1);
   const [editVenta, setEditVenta] = useState<{ id: number; numero: string } | null>(null);
   const [editMetodo, setEditMetodo] = useState('efectivo');
@@ -102,55 +103,6 @@ export const POSWindow: React.FC = () => {
         toast.error('No se pudo cargar la venta para editar');
       }
     });
-    return cleanup;
-  }, []);
-
-  useEffect(() => {
-    const applyReabrirVenta = (data: unknown) => {
-      const payload = data as {
-        items: CartItem[];
-        descuentoGlobal?: number;
-        clienteId?: number | null;
-        clienteNombre?: string;
-        observaciones?: string;
-      };
-      if (!payload.items?.length) return;
-      const cart = payload.items;
-      const descuentoGlobal = payload.descuentoGlobal ?? 0;
-      const subtotal = cart.reduce((s, i) => s + i.precio_unitario * i.cantidad, 0);
-      const itemsDiscount = cart.reduce((s, i) => s + i.descuento, 0);
-      const totalDescuento = itemsDiscount + descuentoGlobal;
-      const total = Math.max(0, subtotal - totalDescuento);
-      useVentasStore.setState({
-        cart,
-        descuentoGlobal,
-        clienteId: payload.clienteId ?? null,
-        clienteNombre: payload.clienteNombre ?? '',
-        observaciones: payload.observaciones ?? '',
-        subtotal,
-        totalDescuento,
-        total,
-        metodoPago: 'efectivo',
-        metodoPagoMixto: [],
-        esFiado: false,
-        tipoOperacion: 'venta',
-        vendedorId: null,
-        vendedorNombre: '',
-      });
-      toast.success('Venta reabierta en caja');
-      setTimeout(() => productSearchRef.current?.focus(), 100);
-    };
-
-    const cleanup = onEvent('pos:reabrir-venta', applyReabrirVenta);
-
-    try {
-      const raw = sessionStorage.getItem('pos:reabrir-venta');
-      if (raw) {
-        sessionStorage.removeItem('pos:reabrir-venta');
-        applyReabrirVenta(JSON.parse(raw));
-      }
-    } catch { /* silencioso */ }
-
     return cleanup;
   }, []);
 
@@ -215,6 +167,91 @@ export const POSWindow: React.FC = () => {
     }
   }, [resetSale]);
 
+  useEffect(() => {
+    const loadReabrirVenta = async (payload?: {
+      items?: Array<{
+        itemId?: string;
+        producto_id?: number;
+        nombre: string;
+        cantidad: number;
+        precio_unitario: number;
+        precio_original?: number;
+        descuento?: number;
+        total?: number;
+        precio_cobrado?: number;
+        precio_sistema?: number;
+        fraccionable?: boolean;
+        unidad_medida?: string;
+      }>;
+      descuentoGlobal?: number;
+      recargoGlobal?: number;
+      clienteId?: number | null;
+      clienteNombre?: string;
+      observaciones?: string;
+      metodoPago?: string;
+      esFiado?: boolean;
+      tipoOperacion?: 'venta' | 'pedido' | 'cotizacion';
+    }) => {
+      if (!payload?.items?.length) return;
+
+      resetSale();
+      if (payload.clienteId != null) setCliente(payload.clienteId, payload.clienteNombre || '');
+      if (payload.descuentoGlobal) setDescuentoGlobal(payload.descuentoGlobal);
+      if (payload.recargoGlobal) setRecargoGlobal(payload.recargoGlobal);
+      if (payload.observaciones) setObservaciones(payload.observaciones);
+      if (payload.tipoOperacion) setTipoOperacion(payload.tipoOperacion);
+      if (payload.metodoPago) {
+        useVentasStore.getState().setMetodoPago(payload.metodoPago as MetodoPago);
+      }
+      if (payload.esFiado !== undefined) {
+        setEsFiado(Boolean(payload.esFiado));
+      }
+
+      const itemsWithCurrentPrice = await Promise.all(payload.items.map(async (item) => {
+        let precioUnitario = Number(item.precio_cobrado ?? item.precio_unitario) || 0;
+        if (item.producto_id && item.precio_cobrado == null) {
+          const prod = await productosAPI.getById(item.producto_id) as { precio_venta?: number; nombre?: string } | null;
+          if (prod && typeof prod.precio_venta === 'number' && prod.precio_venta > 0) {
+            precioUnitario = prod.precio_venta;
+          }
+        }
+        return {
+          ...item,
+          precio_unitario: precioUnitario,
+          precio_original: Number(item.precio_original ?? precioUnitario) || precioUnitario,
+          nombre: item.nombre || 'Producto',
+        };
+      }));
+
+      itemsWithCurrentPrice.forEach((item) => {
+        addItem({
+          producto_id: item.producto_id ?? 0,
+          nombre: item.nombre,
+          cantidad: Number(item.cantidad) || 0,
+          precio_unitario: Number(item.precio_unitario) || 0,
+          precio_original: Number(item.precio_original ?? item.precio_unitario) || 0,
+          descuento: Number(item.descuento) || 0,
+          fraccionable: Boolean(item.fraccionable),
+          unidad_medida: item.unidad_medida || 'unidad',
+        }, 'nuevo');
+      });
+    };
+
+    try {
+      const raw = sessionStorage.getItem('pos:reabrir-venta');
+      if (raw) {
+        const payload = JSON.parse(raw) as Parameters<typeof loadReabrirVenta>[0];
+        loadReabrirVenta(payload);
+        sessionStorage.removeItem('pos:reabrir-venta');
+      }
+    } catch { /* silencioso */ }
+
+    const cleanup = onEvent('pos:reabrir-venta', (data) => {
+      loadReabrirVenta(data as Parameters<typeof loadReabrirVenta>[0]);
+    });
+    return cleanup;
+  }, [addItem, resetSale, setCliente, setDescuentoGlobal, setObservaciones]);
+
   // Alertar si se cierra la ventana con ítems en el carrito (botón X del OS)
   useEffect(() => {
     const handleBeforeUnload = () => {
@@ -227,7 +264,6 @@ export const POSWindow: React.FC = () => {
   }, [cart]);
 
   const handleConfirmSale = async (cobrado: number) => {
-    if (submitting) return;
     if (cart.length === 0) { toast.error(t('pos.emptyCart')); return; }
 
     // Leer del store directamente para evitar closure stale:
@@ -237,7 +273,7 @@ export const POSWindow: React.FC = () => {
 
     if (currentFiado && !clienteId) { toast.error(t('pos.creditNeedsClient')); setShowClienteModal(true); return; }
 
-    setSubmitting(true);
+    setProcesando(true);
     try {
       // Si el cobro es parcial (solo aplica para ventas NO fiado), ajustar el total reduciendo el descuento global
       const rawSubtotal = cart.reduce((s, i) => s + i.precio_unitario * i.cantidad, 0);
@@ -248,16 +284,30 @@ export const POSWindow: React.FC = () => {
         tipo: tipoOperacion,
         cliente_id: clienteId,
         vendedor_id: vendedorId,
-        items: cart.map((i) => ({
-          producto_id: i.producto_id,
-          nombre: i.nombre,
-          cantidad: i.cantidad,
-          precio_unitario: i.precio_unitario,
-          descuento: i.descuento,
-          total: i.total,
-          fraccionable: i.fraccionable,
-          unidad_medida: i.unidad_medida,
-        })),
+        items: cart.map((i) => {
+          const item: Record<string, unknown> = {
+            producto_id: i.producto_id,
+            nombre: i.nombre,
+            cantidad: i.cantidad,
+            precio_unitario: i.precio_unitario,
+            descuento: i.descuento,
+            total: i.total,
+            fraccionable: i.fraccionable,
+            unidad_medida: i.unidad_medida,
+          };
+          
+          // Si es venta fiado, guardar precio_sistema y precio_modificado
+          if (currentFiado) {
+            item.precio_sistema = i.precio_sistema ?? i.precio_original;
+            // precio_modificado solo si el usuario cambió el precio
+            if (Math.abs(i.precio_unitario - i.precio_original) >= 0.01) {
+              item.precio_cobrado = i.precio_unitario;
+              item.precio_modificado = i.precio_unitario;
+            }
+          }
+          
+          return item;
+        }),
         descuento: descuentoFinal,
         metodo_pago: currentMetodo,
         es_fiado: currentFiado,
@@ -299,13 +349,33 @@ export const POSWindow: React.FC = () => {
       console.error(err);
       sendEvent('broadcast-event', 'pos:alert', { type: 'sale_failed', message: 'Error al registrar la venta', detail: String(err) });
     } finally {
-      setSubmitting(false);
+      setProcesando(false);
     }
   };
 
   const filteredClientes = clientes.filter(
     (c) => c.nombre.toLowerCase().includes(clienteSearch.toLowerCase())
   );
+
+  const handleApplyAjuste = () => {
+    const value = Number(descuentoInput) || 0;
+    const monto = ajusteUnidad === '%' ? Math.max(0, subtotal * (value / 100)) : Math.max(0, value);
+
+    if (ajusteTipo === 'descuento') {
+      setDescuentoGlobal(monto);
+      setRecargoGlobal(0);
+    } else {
+      setRecargoGlobal(monto);
+      setDescuentoGlobal(0);
+    }
+    setShowDescuentoModal(false);
+  };
+
+  const ajusteResumen = recargoGlobal > 0
+    ? `Recargo ${ajusteUnidad === '%' ? `+${recargoGlobal}%` : `+${simbolo}${recargoGlobal}`}`
+    : descuentoGlobal > 0
+      ? `Descuento -${simbolo}${descuentoGlobal}`
+      : null;
 
   const tipoLabel = tipoOperacion === 'venta' ? 'VENTA' : tipoOperacion === 'pedido' ? 'PEDIDO' : 'COTIZACIÓN';
   const tipoAccent =
@@ -414,15 +484,21 @@ export const POSWindow: React.FC = () => {
         <button
           className="btn btn-ghost btn-sm flex items-center gap-1.5"
           style={{ fontSize: 11 }}
-          onClick={() => { setDescuentoInput(String(descuentoGlobal)); setShowDescuentoModal(true); }}
-          title="Descuento global (F6)"
+          onClick={() => {
+            const current = recargoGlobal > 0 ? recargoGlobal : descuentoGlobal;
+            setAjusteTipo(recargoGlobal > 0 ? 'recargo' : 'descuento');
+            setAjusteUnidad('$');
+            setDescuentoInput(String(current));
+            setShowDescuentoModal(true);
+          }}
+          title="Descuento global / recargo (F6)"
         >
           <Percent size={11} />
-          {descuentoGlobal !== 0
-            ? <span style={{ color: descuentoGlobal > 0 ? 'var(--warn)' : 'var(--danger)', fontWeight: 700 }}>
-                {descuentoGlobal > 0 ? `-${formatCurrency(descuentoGlobal, simbolo)}` : `+${formatCurrency(Math.abs(descuentoGlobal), simbolo)}`}
-              </span>
-            : <span style={{ color: 'var(--text3)' }}>{t('pos.discount')}</span>
+          {recargoGlobal > 0
+            ? <span style={{ color: '#fbbf24', fontWeight: 700 }}>+{simbolo}{recargoGlobal}</span>
+            : descuentoGlobal > 0
+              ? <span style={{ color: 'var(--warn)', fontWeight: 700 }}>-{simbolo}{descuentoGlobal}</span>
+              : <span style={{ color: 'var(--text3)' }}>{t('pos.discount')}</span>
           }
           <kbd>F6</kbd>
         </button>
@@ -493,15 +569,12 @@ export const POSWindow: React.FC = () => {
         style={{ height: 60, background: 'var(--bg2)', borderTop: '1px solid var(--border)' }}
       >
         {/* Resumen de descuento si existe */}
-        {totalDescuento !== 0 && (
+        {(totalDescuento > 0 || recargoGlobal > 0) && (
           <div style={{ fontSize: 12, color: 'var(--text3)' }}>
             <span>Sub: </span>
             <span className="num" style={{ color: 'var(--text2)' }}>{formatCurrency(subtotal, simbolo)}</span>
-            <span style={{ marginLeft: 8, color: totalDescuento > 0 ? 'var(--warn)' : 'var(--danger)' }}>
-              {totalDescuento > 0
-                ? `Descuento −${formatCurrency(totalDescuento, simbolo)}`
-                : `Recargo +${formatCurrency(Math.abs(totalDescuento), simbolo)}`}
-            </span>
+            {descuentoGlobal > 0 && <span style={{ marginLeft: 8, color: 'var(--warn)' }}>−{formatCurrency(totalDescuento, simbolo)}</span>}
+            {recargoGlobal > 0 && <span style={{ marginLeft: 8, color: '#fbbf24' }}>+{formatCurrency(recargoGlobal, simbolo)}</span>}
           </div>
         )}
 
@@ -526,7 +599,7 @@ export const POSWindow: React.FC = () => {
           className="btn btn-success btn-lg font-bold"
           style={{ fontSize: 15, height: 44, minWidth: 160, justifyContent: 'center' }}
           onClick={() => cart.length > 0 && setShowPayment(true)}
-          disabled={cart.length === 0 || submitting}
+          disabled={cart.length === 0 || procesando}
         >
           <Save size={17} />
           {t('pos.charge')}
@@ -609,49 +682,46 @@ export const POSWindow: React.FC = () => {
       <Modal
         isOpen={showDescuentoModal}
         onClose={() => setShowDescuentoModal(false)}
-        title={t('pos.discountModal')}
+        title="Descuento / Recargo global"
         size="sm"
         footer={
           <>
             <button className="btn btn-secondary" onClick={() => setShowDescuentoModal(false)}>{t('common.cancel')}</button>
-            <button className="btn btn-primary" onClick={() => {
-              const valor = parseFloat(descuentoInput) || 0;
-              const descuento = descuentoModo === '%' ? subtotal * (valor / 100) : valor;
-              setDescuentoGlobal(descuento);
-              setShowDescuentoModal(false);
-            }}>{t('pos.apply')}</button>
+            <button className="btn btn-primary" onClick={handleApplyAjuste}>{t('pos.apply')}</button>
           </>
         }
       >
         <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <label className="label">{t('pos.discountLabel')}</label>
-            <div className="flex gap-1">
-              <button
-                type="button"
-                className={`btn btn-sm ${descuentoModo === '$' ? 'btn-primary' : 'btn-secondary'}`}
-                onClick={() => setDescuentoModo('$')}
-              >{simbolo}</button>
-              <button
-                type="button"
-                className={`btn btn-sm ${descuentoModo === '%' ? 'btn-primary' : 'btn-secondary'}`}
-                onClick={() => setDescuentoModo('%')}
-              >%</button>
-            </div>
+          <div className="inline-flex rounded-lg p-1 bg-slate-800 border border-slate-700">
+            <button type="button" className={`px-3 py-1.5 rounded-md text-sm ${ajusteTipo === 'descuento' ? 'bg-amber-500/20 text-amber-400' : 'text-slate-400'}`} onClick={() => setAjusteTipo('descuento')}>Descuento</button>
+            <button type="button" className={`px-3 py-1.5 rounded-md text-sm ${ajusteTipo === 'recargo' ? 'bg-amber-500/20 text-amber-400' : 'text-slate-400'}`} onClick={() => setAjusteTipo('recargo')}>Recargo</button>
           </div>
+
+          <div className="inline-flex rounded-lg p-1 bg-slate-800 border border-slate-700">
+            <button type="button" className={`px-2 py-1 rounded-md text-xs ${ajusteUnidad === '$' ? 'bg-blue-500/20 text-blue-300' : 'text-slate-400'}`} onClick={() => setAjusteUnidad('$')}>$</button>
+            <button type="button" className={`px-2 py-1 rounded-md text-xs ${ajusteUnidad === '%' ? 'bg-blue-500/20 text-blue-300' : 'text-slate-400'}`} onClick={() => setAjusteUnidad('%')}>%</button>
+          </div>
+
+          <label className="label">{ajusteTipo === 'descuento' ? `${t('pos.discountLabel')} (${simbolo})` : `Recargo ${simbolo}`}</label>
           <input
             type="number"
             value={descuentoInput}
             onChange={(e) => setDescuentoInput(e.target.value)}
             className="input num text-right text-xl"
+            min="0"
             step="0.01"
             autoFocus
           />
           <p style={{ fontSize: 11, color: 'var(--text3)' }}>
-            {descuentoModo === '%'
-              ? 'Porcentaje del subtotal. Valores negativos = recargo (ej: +3% tarjeta).'
-              : `Monto fijo en ${simbolo}. Valores negativos = recargo.`}
+            {ajusteTipo === 'descuento'
+              ? `Se descuenta ${ajusteUnidad === '%' ? 'un porcentaje del subtotal' : `el monto en ${simbolo}`} del total.`
+              : `Se suma ${ajusteUnidad === '%' ? 'un porcentaje del subtotal' : `el monto en ${simbolo}`} al total.`}
           </p>
+          {ajusteResumen && (
+            <div className="text-xs font-medium" style={{ color: ajusteTipo === 'recargo' ? '#fbbf24' : 'var(--warn)' }}>
+              {ajusteResumen}
+            </div>
+          )}
         </div>
       </Modal>
 

@@ -40,14 +40,18 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onC
   const { total, setMetodoPago, setMetodoPagoMixto, setEsFiado, clienteId, clienteNombre, descuentoGlobal, recargoGlobal } = useVentasStore();
   const { config } = useAppStore();
   const { t } = useTranslation();
-  const [step, setStep] = useState<'metodo' | 'efectivo' | 'mixto'>('metodo');
+  const [step, setStep] = useState<'metodo' | 'efectivo' | 'mixto' | 'tarjeta'>('metodo');
   const [received, setReceived] = useState('');
   const [cobrarMonto, setCobrarMonto] = useState('');
   const [selectedIdx, setSelectedIdx] = useState(0);
   // Líneas del pago mixto: { metodo, monto }
   const [mixtoLineas, setMixtoLineas] = useState<{ metodo: string; monto: string }[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  const [metodoSeleccionado, setMetodoSeleccionado] = useState<MetodoPago | null>(null);
+  const [recargoTarjetaEnabled, setRecargoTarjetaEnabled] = useState(false);
+  const [recargoTarjetaPorcentaje, setRecargoTarjetaPorcentaje] = useState('0');
   const inputRef = useRef<HTMLInputElement>(null);
+  const recargoInputRef = useRef<HTMLInputElement>(null);
 
   const methods = useMemo<MetodoPagoConfig[]>(() => {
     try {
@@ -71,11 +75,15 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onC
       setSelectedIdx(0);
       setMixtoLineas([]);
       setSubmitting(false);
+      setMetodoSeleccionado(null);
+      setRecargoTarjetaEnabled(false);
+      setRecargoTarjetaPorcentaje('0');
     }
   }, [isOpen, total]);
 
   useEffect(() => {
     if (step === 'efectivo') setTimeout(() => { inputRef.current?.focus(); inputRef.current?.select(); }, 60);
+    if (step === 'tarjeta') setTimeout(() => { recargoInputRef.current?.focus(); }, 60);
   }, [step]);
 
   useEffect(() => {
@@ -100,6 +108,8 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onC
   if (!isOpen) return null;
 
   const cobradoNum = parseFloat(cobrarMonto) || total;
+  const recargoTarjetaMonto = recargoTarjetaEnabled ? total * (parseFloat(recargoTarjetaPorcentaje) || 0) / 100 : 0;
+  const totalConRecargoTarjeta = total + recargoTarjetaMonto;
   const esParcial = cobradoNum < total - 0.01;
   const change = Math.max(0, parseFloat(received || '0') - cobradoNum);
   const quickAmounts = [...new Set([
@@ -163,7 +173,32 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onC
     setMetodoPagoMixto([]);
     if (id === 'efectivo') { setStep('efectivo'); return; }
     if (id === 'fiado') { if (!clienteId) return; setEsFiado(true); } else { setEsFiado(false); }
+    // Mostrar step tarjeta para métodos tarjeta
+    if (id === 'tarjeta' || id === 'tarjeta_credito' || id === 'tarjeta_debito') {
+      setMetodoSeleccionado(id);
+      setStep('tarjeta');
+      setRecargoTarjetaEnabled(false);
+      setRecargoTarjetaPorcentaje('0');
+      return;
+    }
     void confirmarVenta(cobradoNum);
+  };
+
+  const handleConfirmTarjeta = () => {
+    if (!metodoSeleccionado) return;
+    setMetodoPago(metodoSeleccionado);
+    setMetodoPagoMixto([]);
+    setEsFiado(false);
+    
+    // Calcular monto con recargo
+    let montoFinal = cobradoNum;
+    if (recargoTarjetaEnabled) {
+      const porcentajeRecargo = parseFloat(recargoTarjetaPorcentaje) || 0;
+      const montoRecargo = total * (porcentajeRecargo / 100);
+      montoFinal = total + montoRecargo;
+    }
+    
+    void confirmarVenta(montoFinal);
   };
 
   const handleConfirmEfectivo = () => { setEsFiado(false); void confirmarVenta(cobradoNum); };
@@ -195,9 +230,9 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onC
                 {t('pos.pay.clientLabel')}: <span style={{ color: 'var(--text2)', fontWeight: 600 }}>{clienteNombre}</span>
               </div>
             )}
-            {(descuentoGlobal > 0 || recargoGlobal > 0) && (
-              <div style={{ fontSize: 11, marginTop: 8, color: recargoGlobal > 0 ? '#fbbf24' : 'var(--warn)' }}>
-                {recargoGlobal > 0 ? `Recargo +${formatCurrency(recargoGlobal, simbolo)}` : `Descuento -${formatCurrency(descuentoGlobal, simbolo)}`}
+            {(descuentoGlobal > 0 || recargoGlobal > 0 || recargoTarjetaMonto > 0) && (
+              <div style={{ fontSize: 11, marginTop: 8, color: (recargoGlobal > 0 || recargoTarjetaMonto > 0) ? '#fbbf24' : 'var(--warn)' }}>
+                {recargoGlobal > 0 ? `Recargo +${formatCurrency(recargoGlobal, simbolo)}` : recargoTarjetaMonto > 0 ? `Recargo tarjeta ${recargoTarjetaPorcentaje}% +${formatCurrency(recargoTarjetaMonto, simbolo)}` : `Descuento -${formatCurrency(descuentoGlobal, simbolo)}`}
               </div>
             )}
             {/* Monto a cobrar — solo en paso metodo */}
@@ -465,6 +500,79 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onC
                   Agregá al menos 2 métodos para usar pago mixto
                 </p>
               )}
+            </div>
+          )}
+
+          {/* Paso 4: Configurar recargo de tarjeta */}
+          {step === 'tarjeta' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <button onClick={() => setStep('metodo')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text3)', fontSize: 12, display: 'flex', alignItems: 'center', gap: 6, alignSelf: 'flex-start' }}>
+                <ChevronLeft size={14} /> {t('pos.pay.changeMethod')}
+              </button>
+              
+              <div style={{ background: 'rgba(59, 130, 246, 0.08)', border: '1px solid rgba(59, 130, 246, 0.3)', borderRadius: 12, padding: '14px 16px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text2)', marginBottom: 4 }}>Aplicar recargo por tarjeta</div>
+                    <div style={{ fontSize: 11, color: 'var(--text3)' }}>El cliente pagará el recargo además del total</div>
+                  </div>
+                  <label style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <input
+                      type="checkbox"
+                      checked={recargoTarjetaEnabled}
+                      onChange={(e) => setRecargoTarjetaEnabled(e.target.checked)}
+                      style={{ width: 20, height: 20, cursor: 'pointer' }}
+                    />
+                  </label>
+                </div>
+              </div>
+
+              {recargoTarjetaEnabled && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  <div>
+                    <div style={{ fontSize: 11, color: 'var(--text3)', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 8 }}>Porcentaje de recargo (%)</div>
+                    <input
+                      ref={recargoInputRef}
+                      type="number"
+                      value={recargoTarjetaPorcentaje}
+                      onChange={(e) => setRecargoTarjetaPorcentaje(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter' && !submitting) handleConfirmTarjeta(); }}
+                      title="Porcentaje de recargo"
+                      placeholder="0"
+                      min="0"
+                      step="0.1"
+                      style={{ width: '100%', boxSizing: 'border-box', background: 'var(--bg3)', border: '2px solid var(--accent3)', borderRadius: 12, padding: '12px 14px', fontSize: 24, fontWeight: 900, fontFamily: "'DM Mono', monospace", color: 'var(--accent3)', textAlign: 'right', outline: 'none' }}
+                    />
+                  </div>
+
+                  <div style={{ background: 'var(--bg3)', border: '1px solid var(--border)', borderRadius: 12, padding: '12px 14px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                      <span style={{ fontSize: 12, color: 'var(--text3)' }}>Total original</span>
+                      <span style={{ fontSize: 14, fontWeight: 700, fontFamily: "'DM Mono', monospace", color: 'var(--text)' }}>{formatCurrency(total, simbolo)}</span>
+                    </div>
+                    {recargoTarjetaMonto > 0 && (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6, color: '#fbbf24' }}>
+                        <span style={{ fontSize: 12 }}>Recargo {recargoTarjetaPorcentaje}%</span>
+                        <span style={{ fontSize: 14, fontWeight: 700, fontFamily: "'DM Mono', monospace" }}>+{formatCurrency(recargoTarjetaMonto, simbolo)}</span>
+                      </div>
+                    )}
+                    <div style={{ borderTop: '1px solid var(--border)', paddingTop: 8, display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text2)' }}>Total a cobrar</span>
+                      <span style={{ fontSize: 18, fontWeight: 900, fontFamily: "'DM Mono', monospace", color: '#fbbf24' }}>{formatCurrency(totalConRecargoTarjeta, simbolo)}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <button
+                onClick={handleConfirmTarjeta}
+                disabled={submitting}
+                style={{ background: 'var(--accent3)', color: '#fff', border: 'none', borderRadius: 14, padding: '16px', fontSize: 15, fontWeight: 800, cursor: submitting ? 'not-allowed' : 'pointer', opacity: submitting ? 0.6 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, fontFamily: "'Syne', sans-serif" }}
+              >
+                <CheckCircle size={20} />
+                {t('pos.pay.confirm')}
+                <kbd style={{ background: 'rgba(255,255,255,0.2)', borderRadius: 6, padding: '2px 8px', fontSize: 12 }}>Enter</kbd>
+              </button>
             </div>
           )}
 

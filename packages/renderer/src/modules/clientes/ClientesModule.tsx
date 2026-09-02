@@ -30,6 +30,9 @@ interface VentaItem {
   cantidad: number;
   precio_unitario: number;
   precio_actual: number | null;  // precio actual del producto (puede diferir del precio en la venta)
+  precio_cobrado?: number;        // precio escrito manualmente en el carrito
+  precio_modificado?: number;     // precio que el usuario escribió manualmente en el carrito (si lo cambió)
+  precio_sistema?: number;        // precio original del producto
   total: number;
   fraccionable?: boolean;
   unidad_medida?: string;
@@ -42,8 +45,10 @@ interface FiadoPendienteItem {
   itemId: number;
   producto_nombre: string;
   cantidad: number;
-  precioOriginal: number;
-  precioActual: number;
+  precioOriginal: number;        // precio en la venta (precio_unitario)
+  precioActual: number;          // precio a usar para el cálculo
+  precioModificado?: number;     // precio que el usuario escribió manualmente (si existe)
+  precioSistema?: number;        // precio original del producto
 }
 
 interface Venta {
@@ -88,10 +93,20 @@ export const ClientesModule: React.FC = () => {
   const [pagoSeleccion, setPagoSeleccion] = useState<Record<string, { checked: boolean; cantidad: number }>>({});
   const [loadingPagoItems, setLoadingPagoItems] = useState(false);
   const [pagoSubmitting, setPagoSubmitting] = useState(false);
+  const [descuentoCobroActivo, setDescuentoCobroActivo] = useState(false);
+  const [descuentoCobroUnidad, setDescuentoCobroUnidad] = useState<'%' | '$'>('%');
+  const [descuentoCobroValor, setDescuentoCobroValor] = useState('0');
+  const [recargoCobroActivo, setRecargoCobroActivo] = useState(false);
+  const [recargoCobroUnidad, setRecargoCobroUnidad] = useState<'%' | '$'>('%');
+  const [recargoCobroValor, setRecargoCobroValor] = useState('0');
   const [saldoActual, setSaldoActual] = useState<number | null>(null);
   const [expandedVentaId, setExpandedVentaId] = useState<number | null>(null);
   const [ventaItemsCache, setVentaItemsCache] = useState<Record<number, VentaItem[]>>({});
   const [loadingItems, setLoadingItems] = useState<number | null>(null);
+  const [showDeleteFiadosByDayModal, setShowDeleteFiadosByDayModal] = useState(false);
+  const [deleteByDayPin, setDeleteByDayPin] = useState('');
+  const [deleteByDayChecking, setDeleteByDayChecking] = useState(false);
+  const [deleteFiadosByDayDate, setDeleteFiadosByDayDate] = useState<string | null>(null);
   const { t } = useTranslation();
   const { config } = useAppStore();
 
@@ -258,6 +273,12 @@ export const ClientesModule: React.FC = () => {
       pendientes.map(async (v) => {
         const detail = await ventasAPI.getById(v.id) as { items: VentaItem[] };
         for (const item of detail.items || []) {
+          // Aplicar la lógica de precios:
+          // Si existe precio_modificado: usar ese precio
+          // Si no: usar precio_actual (precio vigente)
+          // Si no existe precio_actual: usar precio_unitario (precio en la venta)
+          const precioParaUsar = item.precio_cobrado ?? item.precio_modificado ?? (item.precio_actual ?? item.precio_unitario);
+          
           items.push({
             key: `${v.id}-${item.id}`,
             ventaId: v.id,
@@ -266,7 +287,9 @@ export const ClientesModule: React.FC = () => {
             producto_nombre: item.producto_nombre,
             cantidad: item.cantidad,
             precioOriginal: item.precio_unitario,
-            precioActual: item.precio_actual ?? item.precio_unitario,
+            precioActual: precioParaUsar,
+            precioModificado: item.precio_cobrado ?? item.precio_modificado,
+            precioSistema: item.precio_sistema,
           });
         }
       })
@@ -282,10 +305,71 @@ export const ClientesModule: React.FC = () => {
     return sel;
   };
 
+  // Agrupar fiados por día
+  const fiadosPorDia = useMemo(() => {
+    const grouped = new Map<string, { ventas: Venta[]; total: number }>();
+    clienteVentas
+      .filter((v) => v.estado === 'fiado' || v.estado === 'parcial')
+      .forEach((v) => {
+        const key = v.fecha;
+        if (!grouped.has(key)) grouped.set(key, { ventas: [], total: 0 });
+        const item = grouped.get(key)!;
+        item.ventas.push(v);
+        item.total += v.total;
+      });
+    return Array.from(grouped.entries())
+      .sort((a, b) => b[0].localeCompare(a[0])) // Orden descendente (más recientes primero)
+      .map(([fecha, data]) => ({ fecha, ...data }));
+  }, [clienteVentas]);
+
+  const handleDeleteFiadosByDay = async () => {
+    if (!selectedCliente || !deleteFiadosByDayDate) return;
+    if (!deleteByDayPin.trim()) {
+      toast.error('Ingresá el PIN de administrador');
+      return;
+    }
+    setDeleteByDayChecking(true);
+    try {
+      const res = await authAPI.validateAdmin(deleteByDayPin.trim());
+      if (!res.ok) {
+        toast.error(res.error || 'PIN de administrador incorrecto');
+        return;
+      }
+      const result = await clientesAPI.deleteFiadosByDay(selectedCliente.id, deleteFiadosByDayDate);
+      if (!result.success) {
+        toast.error(result.error || 'No se pudieron eliminar los fiados');
+        return;
+      }
+      toast.success(`Eliminados ${result.deleted ?? 0} fiados del día ${deleteFiadosByDayDate}`);
+      setShowDeleteFiadosByDayModal(false);
+      setDeleteByDayPin('');
+      setDeleteFiadosByDayDate(null);
+      loadData();
+      if (selectedCliente) {
+        const ventas = await clientesAPI.getVentas(selectedCliente.id) as Venta[];
+        setClienteVentas(ventas);
+      }
+    } finally {
+      setDeleteByDayChecking(false);
+    }
+  };
+
+  const handleOpenDeleteFiadosByDayModal = (fecha: string) => {
+    setDeleteFiadosByDayDate(fecha);
+    setDeleteByDayPin('');
+    setShowDeleteFiadosByDayModal(true);
+  };
+
   const handleOpenPagarModal = async () => {
     if (!selectedCliente) return;
     setShowPagarModal(true);
     setPagoMetodo('efectivo');
+    setDescuentoCobroActivo(false);
+    setDescuentoCobroUnidad('%');
+    setDescuentoCobroValor('0');
+    setRecargoCobroActivo(false);
+    setRecargoCobroUnidad('%');
+    setRecargoCobroValor('0');
     setLoadingPagoItems(true);
     try {
       const items = await loadFiadoPendientes(selectedCliente.id);
@@ -321,6 +405,14 @@ export const ClientesModule: React.FC = () => {
     }, 0);
   }, [fiadoPendientes, pagoSeleccion]);
 
+  const descuentoCobro = descuentoCobroActivo
+    ? (descuentoCobroUnidad === '%' ? totalSeleccionado * ((parseFloat(descuentoCobroValor) || 0) / 100) : Math.max(0, parseFloat(descuentoCobroValor) || 0))
+    : 0;
+  const recargoCobro = recargoCobroActivo
+    ? (recargoCobroUnidad === '%' ? totalSeleccionado * ((parseFloat(recargoCobroValor) || 0) / 100) : Math.max(0, parseFloat(recargoCobroValor) || 0))
+    : 0;
+  const totalCobro = Math.max(0, totalSeleccionado - descuentoCobro + recargoCobro);
+
   const cargarFiadoEnPos = async (ventaId?: number) => {
     if (!selectedCliente) return;
 
@@ -335,6 +427,8 @@ export const ClientesModule: React.FC = () => {
         cantidad: number;
         precio_unitario: number;
         precio_original: number;
+        precio_modificado?: number;
+        precio_sistema?: number;
         fraccionable: boolean;
         unidad_medida: string;
       }>();
@@ -349,23 +443,31 @@ export const ClientesModule: React.FC = () => {
 
           const prod = item.producto_id != null ? await productosAPI.getById(item.producto_id) as { nombre?: string; precio_venta?: number } | null : null;
           const nombre = (prod?.nombre || item.producto_nombre || 'Producto').trim() || 'Producto';
-          const precioActual = Number(prod?.precio_venta ?? item.precio_actual ?? item.precio_unitario ?? 0);
-          const precioOriginal = Number(item.precio_unitario ?? precioActual ?? 0);
+          
+          // Aplicar la lógica de precios:
+          // Si existe precio_modificado: usar ese precio
+          // Si no: usar precio_actual (precio vigente del producto)
+          // Si no existe precio_actual: usar precio_unitario (precio en la venta)
+          const precioParaUsar = item.precio_cobrado ?? item.precio_modificado ?? (Number(prod?.precio_venta ?? item.precio_actual ?? item.precio_unitario ?? 0));
+          const precioOriginal = Number(item.precio_unitario ?? precioParaUsar ?? 0);
+          
           const key = item.producto_id ? `pid:${item.producto_id}` : `name:${nombre.toLowerCase()}`;
           const existing = grouped.get(key);
 
           if (existing) {
             existing.cantidad += qty;
-            existing.precio_unitario = precioActual || existing.precio_unitario || precioOriginal;
-            existing.precio_original = precioOriginal || existing.precio_original || precioActual || 0;
+            existing.precio_unitario = precioParaUsar || existing.precio_unitario || precioOriginal;
+            existing.precio_original = precioOriginal || existing.precio_original || precioParaUsar || 0;
             existing.nombre = nombre;
           } else {
             grouped.set(key, {
               producto_id: item.producto_id ?? 0,
               nombre,
               cantidad: qty,
-              precio_unitario: precioActual || precioOriginal || 0,
-              precio_original: precioOriginal || precioActual || 0,
+              precio_unitario: precioParaUsar || precioOriginal || 0,
+              precio_original: precioOriginal || precioParaUsar || 0,
+              precio_modificado: item.precio_cobrado ?? item.precio_modificado,
+              precio_sistema: item.precio_sistema,
               fraccionable: Boolean(item.fraccionable),
               unidad_medida: item.unidad_medida || 'unidad',
             });
@@ -380,6 +482,8 @@ export const ClientesModule: React.FC = () => {
         cantidad: item.cantidad,
         precio_unitario: item.precio_unitario,
         precio_original: item.precio_original,
+          precio_modificado: item.precio_modificado,
+        precio_sistema: item.precio_sistema,
         descuento: 0,
         total: item.precio_unitario * item.cantidad,
         fraccionable: item.fraccionable,
@@ -418,7 +522,7 @@ export const ClientesModule: React.FC = () => {
 
   const handlePagar = async () => {
     if (!selectedCliente || pagoSubmitting) return;
-    const monto = totalSeleccionado;
+    const monto = totalCobro;
     if (!monto || monto <= 0) { toast.error('Seleccioná al menos un producto'); return; }
     setPagoSubmitting(true);
     try {
@@ -590,7 +694,7 @@ export const ClientesModule: React.FC = () => {
             </div>
             {(saldoActual ?? selectedCliente.saldo_pendiente) > 0 && (
               <div className="flex gap-2">
-                <button className="btn-secondary btn" onClick={() => void cargarFiadoEnPos()}>
+                <button className="btn-secondary btn" onClick={() => void handleOpenPagarModal()}>
                   <FileText size={16} /> Registrar pago total
                 </button>
                 <button className="btn-success btn" onClick={() => void handleOpenPagarModal()}>
@@ -613,7 +717,13 @@ export const ClientesModule: React.FC = () => {
                   const isExpanded = expandedVentaId === v.id;
                   const items = ventaItemsCache[v.id];
                   const totalActual = items?.length
-                    ? items.reduce((s, it) => s + it.cantidad * (it.precio_actual ?? it.precio_unitario), 0)
+                    ? items.reduce((s, it) => {
+                        // Aplicar lógica de precios: si existe precio_modificado usarlo, si no usar precio_actual
+                        const precioModificado = it.precio_cobrado ?? it.precio_modificado;
+                        const precioActual = it.precio_actual ?? it.precio_unitario;
+                        const precioParaUsar = precioModificado != null ? precioModificado : precioActual;
+                        return s + it.cantidad * precioParaUsar;
+                      }, 0)
                     : v.total;
                   return (
                     <div key={v.id} className="bg-slate-700/50 rounded-lg overflow-hidden">
@@ -653,10 +763,34 @@ export const ClientesModule: React.FC = () => {
                           ) : (
                             <div className="space-y-1">
                               {items.map((item, idx) => {
-                                const precioOriginal = item.precio_unitario;
+                                // Lógica de precios según lo especificado:
+                                // Si existe precio_modificado: usar ese precio siempre
+                                // Si no existe precio_modificado: usar precio_actual (precio vigente)
+                                // Si precio vigente difiere del precio_sistema original: mostrar precio_sistema tachado + precio vigente
+                                
+                                const precioModificado = item.precio_cobrado ?? item.precio_modificado;
+                                const precioSistema = item.precio_sistema;
                                 const precioActual = item.precio_actual ?? item.precio_unitario;
-                                const precioDistinto = Math.abs(precioActual - precioOriginal) >= 0.01;
-                                const lineTotalActual = item.cantidad * precioActual;
+                                const precioUnitario = item.precio_unitario;
+                                
+                                // Determinar qué precio usar
+                                let precioParaMostrar: number;
+                                let precioTachado: number | null = null;
+                                
+                                if (precioModificado != null) {
+                                  // Existe precio_modificado: usar ese siempre
+                                  precioParaMostrar = precioModificado;
+                                  // No mostrar tachado si está modificado
+                                } else {
+                                  // No existe precio_modificado
+                                  precioParaMostrar = precioActual;
+                                  // Si precio_sistema existe y difiere del precio_actual: mostrar precio_sistema tachado
+                                  if (precioSistema != null && Math.abs(precioActual - precioSistema) >= 0.01) {
+                                    precioTachado = precioSistema;
+                                  }
+                                }
+                                
+                                const lineTotalActual = item.cantidad * precioParaMostrar;
                                 return (
                                   <div key={idx} className="flex items-center justify-between text-xs">
                                     <div className="flex items-center gap-1.5 text-slate-300 flex-1 min-w-0">
@@ -666,13 +800,13 @@ export const ClientesModule: React.FC = () => {
                                     <div className="flex items-center gap-3 shrink-0 ml-2">
                                       <span className="text-slate-400">x{item.cantidad % 1 === 0 ? item.cantidad : item.cantidad.toFixed(2)}</span>
                                       <span className="font-mono w-24 text-right">
-                                        {precioDistinto ? (
+                                        {precioTachado != null ? (
                                           <span className="flex flex-col items-end gap-0.5">
-                                            <span className="line-through text-slate-500 text-[10px]">{formatCurrency(precioOriginal)}</span>
-                                            <span className="text-white font-semibold">{formatCurrency(precioActual)}</span>
+                                            <span className="line-through text-slate-500 text-[10px]">{formatCurrency(precioTachado)}</span>
+                                            <span className="text-white font-semibold">{formatCurrency(precioParaMostrar)}</span>
                                           </span>
                                         ) : (
-                                          <span className="text-white">{formatCurrency(precioActual)}</span>
+                                          <span className="text-white">{formatCurrency(precioParaMostrar)}</span>
                                         )}
                                       </span>
                                       <span className="font-mono text-white w-20 text-right">{formatCurrency(lineTotalActual)}</span>
@@ -681,7 +815,16 @@ export const ClientesModule: React.FC = () => {
                                 );
                               })}
                               {(() => {
-                                const subtotalActual = items.reduce((s, it) => s + it.cantidad * (it.precio_actual ?? it.precio_unitario), 0);
+                                // Calcular subtotal con la lógica correcta de precios
+                                const subtotalActual = items.reduce((s, item) => {
+                                  // Aplicar la lógica de precios a cada item
+                                  const precioModificado = item.precio_cobrado ?? item.precio_modificado;
+                                  const precioSistema = item.precio_sistema;
+                                  const precioActual = item.precio_actual ?? item.precio_unitario;
+                                  
+                                  const precioParaUsar = precioModificado != null ? precioModificado : precioActual;
+                                  return s + item.cantidad * precioParaUsar;
+                                }, 0);
                                 return (
                                   <div className="flex items-center justify-between text-xs pt-2 mt-1 border-t border-slate-600/40">
                                     <span className="text-slate-400 font-semibold">Subtotal (precio actual)</span>
@@ -704,6 +847,37 @@ export const ClientesModule: React.FC = () => {
               </div>
             )}
           </div>
+
+          {/* Fiados pendientes por día */}
+          {fiadosPorDia.length > 0 && (
+            <div className="flex-1 min-h-0 overflow-y-auto p-4 border-t border-slate-700">
+              <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-2">
+                <FileText size={14} /> Fiados pendientes por día
+              </h3>
+              <div className="space-y-2">
+                {fiadosPorDia.map(({ fecha, ventas, total }) => (
+                  <div key={fecha} className="bg-slate-700/50 rounded-lg p-3 flex items-center justify-between hover:bg-slate-700/70 transition-colors">
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-semibold text-white">{formatDate(fecha)}</div>
+                      <div className="text-xs text-slate-400">
+                        {ventas.length} venta{ventas.length !== 1 ? 's' : ''}
+                      </div>
+                    </div>
+                    <div className="text-right shrink-0 mr-3">
+                      <div className="font-mono font-bold text-red-400">{formatCurrency(total)}</div>
+                    </div>
+                    <button
+                      onClick={() => handleOpenDeleteFiadosByDayModal(fecha)}
+                      className="btn-ghost btn btn-sm p-1.5 hover:text-red-400 shrink-0"
+                      title="Eliminar fiados de este día"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -761,7 +935,7 @@ export const ClientesModule: React.FC = () => {
         footer={
           <>
             <button className="btn-secondary btn" onClick={() => { setShowPagarModal(false); setPagoMetodo('efectivo'); setFiadoPendientes([]); setPagoSeleccion({}); }}>Cancelar</button>
-            <button className="btn-success btn" disabled={pagoSubmitting || totalSeleccionado <= 0} onClick={handlePagar}>
+            <button className="btn-success btn" disabled={pagoSubmitting || totalCobro <= 0} onClick={handlePagar}>
               <DollarSign size={16} /> {pagoSubmitting ? 'Procesando…' : 'Confirmar cobro'}
             </button>
           </>
@@ -798,6 +972,39 @@ export const ClientesModule: React.FC = () => {
                   {m.nombre}
                 </button>
               ))}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="rounded-lg border border-slate-700 bg-slate-700/30 p-3">
+              <label className="flex items-center gap-2 text-sm text-slate-300">
+                <input type="checkbox" checked={descuentoCobroActivo} onChange={(e) => setDescuentoCobroActivo(e.target.checked)} className="rounded" />
+                Aplicar descuento
+              </label>
+              {descuentoCobroActivo && (
+                <div className="flex gap-2 mt-2">
+                  <input type="number" min="0" step="0.01" value={descuentoCobroValor} onChange={(e) => setDescuentoCobroValor(e.target.value)} className="input font-mono text-right py-1" />
+                  <div className="flex rounded-lg border border-slate-600 overflow-hidden shrink-0">
+                    <button type="button" onClick={() => setDescuentoCobroUnidad('%')} className={`px-2 text-xs ${descuentoCobroUnidad === '%' ? 'bg-blue-500/20 text-blue-300' : 'text-slate-400'}`}>%</button>
+                    <button type="button" onClick={() => setDescuentoCobroUnidad('$')} className={`px-2 text-xs ${descuentoCobroUnidad === '$' ? 'bg-blue-500/20 text-blue-300' : 'text-slate-400'}`}>$</button>
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="rounded-lg border border-slate-700 bg-slate-700/30 p-3">
+              <label className="flex items-center gap-2 text-sm text-slate-300">
+                <input type="checkbox" checked={recargoCobroActivo} onChange={(e) => setRecargoCobroActivo(e.target.checked)} className="rounded" />
+                Aplicar recargo
+              </label>
+              {recargoCobroActivo && (
+                <div className="flex gap-2 mt-2">
+                  <input type="number" min="0" step="0.01" value={recargoCobroValor} onChange={(e) => setRecargoCobroValor(e.target.value)} className="input font-mono text-right py-1" />
+                  <div className="flex rounded-lg border border-slate-600 overflow-hidden shrink-0">
+                    <button type="button" onClick={() => setRecargoCobroUnidad('%')} className={`px-2 text-xs ${recargoCobroUnidad === '%' ? 'bg-blue-500/20 text-blue-300' : 'text-slate-400'}`}>%</button>
+                    <button type="button" onClick={() => setRecargoCobroUnidad('$')} className={`px-2 text-xs ${recargoCobroUnidad === '$' ? 'bg-blue-500/20 text-blue-300' : 'text-slate-400'}`}>$</button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
@@ -888,11 +1095,19 @@ export const ClientesModule: React.FC = () => {
             )}
           </div>
 
+          {totalSeleccionado > 0 && (
+            <div className="bg-slate-700/50 rounded-lg p-3 text-sm space-y-1">
+              <div className="flex justify-between"><span className="text-slate-400">Subtotal:</span><span className="font-mono text-white">{formatCurrency(totalSeleccionado)}</span></div>
+              {descuentoCobro > 0 && <div className="flex justify-between text-amber-300"><span>Descuento:</span><span className="font-mono">-{formatCurrency(descuentoCobro)}</span></div>}
+              {recargoCobro > 0 && <div className="flex justify-between text-blue-300"><span>Recargo:</span><span className="font-mono">+{formatCurrency(recargoCobro)}</span></div>}
+              <div className="flex justify-between border-t border-slate-600 pt-1 font-semibold"><span className="text-slate-300">Total a cobrar:</span><span className="font-mono text-white">{formatCurrency(totalCobro)}</span></div>
+            </div>
+          )}
           {totalSeleccionado > 0 && saldoActual !== null && (
             <div className="bg-slate-700/50 rounded-lg p-3 text-sm flex justify-between">
               <span className="text-slate-400">{t('clie.remaining')}:</span>
-              <span className={`font-mono font-bold ${saldoActual - totalSeleccionado > 0.01 ? 'text-red-400' : 'text-green-400'}`}>
-                {formatCurrency(Math.max(0, saldoActual - totalSeleccionado))}
+              <span className={`font-mono font-bold ${saldoActual - totalCobro > 0.01 ? 'text-red-400' : 'text-green-400'}`}>
+                {formatCurrency(Math.max(0, saldoActual - totalCobro))}
               </span>
             </div>
           )}
@@ -930,6 +1145,32 @@ export const ClientesModule: React.FC = () => {
           placeholder="••••"
           autoFocus
           disabled={deleteAdminChecking}
+        />
+      </Modal>
+
+      <Modal
+        isOpen={showDeleteFiadosByDayModal}
+        onClose={() => { setShowDeleteFiadosByDayModal(false); setDeleteByDayPin(''); setDeleteFiadosByDayDate(null); }}
+        title="Eliminar fiados por día"
+        size="sm"
+        footer={(
+          <>
+            <button type="button" className="btn-secondary btn" onClick={() => { setShowDeleteFiadosByDayModal(false); setDeleteByDayPin(''); setDeleteFiadosByDayDate(null); }} disabled={deleteByDayChecking}>Cancelar</button>
+            <button type="button" className="btn-danger btn" onClick={() => void handleDeleteFiadosByDay()} disabled={deleteByDayChecking}> {deleteByDayChecking ? 'Verificando…' : 'Eliminar'} </button>
+          </>
+        )}
+      >
+        <p className="text-sm mb-4 text-slate-300">Ingresá el PIN del administrador para confirmar la eliminación de todos los fiados del día <strong>{deleteFiadosByDayDate}</strong>.</p>
+        <label className="label">PIN de administrador</label>
+        <input
+          type="password"
+          className="input font-mono"
+          value={deleteByDayPin}
+          onChange={(e) => setDeleteByDayPin(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') void handleDeleteFiadosByDay(); }}
+          placeholder="••••"
+          autoFocus
+          disabled={deleteByDayChecking}
         />
       </Modal>
     </div>

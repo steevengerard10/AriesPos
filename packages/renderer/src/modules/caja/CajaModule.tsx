@@ -173,11 +173,19 @@ export const CajaModule: React.FC = () => {
       if (!result?.success) {
         throw new Error(result?.error || 'No se pudo reabrir la caja');
       }
-      toast.success('Caja reabierta');
+      
+      // Sincronizar completamente con servidor: cargar sesión, movimientos y datos del libro
+      await loadData();
+      
+      // Sincronizar datos del libro de caja del turno reabierto
+      await cargarHistoricoLibro();
+      const hoy = toLocalDateISO(new Date());
+      await cargarDia(hoy);
+      
+      toast.success('Caja reabierta. Todos los datos sincronizados con el servidor.');
       setShowReabrirModal(false);
       setReabrirPin('');
       setReabrirSessionId(null);
-      await loadData();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Error al reabrir la caja');
     } finally {

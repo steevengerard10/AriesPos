@@ -640,15 +640,16 @@ export function registerIpcHandlers(): void {
   // ── CLIENTES ────────────────────────────────────────────────
   ipcMain.handle('clientes:getAll', (_e, search?: string) => {
     const db = getDb();
-    // saldo_pendiente revalorizado: usa precio_venta actual del producto si es > 0,
-    // sino el precio histórico. COALESCE: si no hay ítems, usa total almacenado.
+    // saldo_pendiente: usa precio cobrado manual o precio vigente del producto.
     let query = `
       SELECT c.*,
         COALESCE((
           SELECT SUM(
             MAX(0,
               COALESCE(
-                (SELECT SUM(CASE WHEN p.precio_venta > 0 THEN p.precio_venta ELSE vi.precio_unitario END * vi.cantidad)
+                (SELECT SUM(CASE WHEN vi.precio_cobrado IS NOT NULL THEN vi.precio_cobrado
+                                 WHEN p.precio_venta > 0 THEN p.precio_venta
+                                 ELSE vi.precio_unitario END * vi.cantidad)
                    - COALESCE(vf.descuento, 0)
                  FROM venta_items vi
                  LEFT JOIN productos p ON p.id = vi.producto_id
@@ -718,8 +719,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('clientes:getSaldoActual', (_e, clienteId: number) => {
     const db = getDb();
-    // Devuelve el saldo recalculado con precios actuales de productos
-    // Usa precio_venta del producto solo si es mayor a 0; si no, usa el precio histórico de la venta
+    // Devuelve el saldo recalculado con precio cobrado manual o precio vigente.
     const ventas = db.prepare(`
       SELECT v.id, COALESCE(v.descuento, 0) as descuento, COALESCE(v.monto_pagado, 0) as monto_pagado, v.total as total_historico
       FROM ventas v
@@ -730,12 +730,14 @@ export function registerIpcHandlers(): void {
     let saldoActual = 0;
     for (const venta of ventas) {
       const items = db.prepare(`
-        SELECT vi.cantidad, vi.precio_unitario,
-               CASE WHEN p.precio_venta > 0 THEN p.precio_venta ELSE vi.precio_unitario END as precio_actual
+         SELECT vi.cantidad, vi.precio_unitario, vi.precio_cobrado,
+           CASE WHEN vi.precio_cobrado IS NOT NULL THEN vi.precio_cobrado
+                WHEN p.precio_venta > 0 THEN p.precio_venta
+                ELSE vi.precio_unitario END as precio_actual
         FROM venta_items vi
         LEFT JOIN productos p ON p.id = vi.producto_id
         WHERE vi.venta_id = ?
-      `).all(venta.id) as { cantidad: number; precio_unitario: number; precio_actual: number }[];
+      `).all(venta.id) as { cantidad: number; precio_unitario: number; precio_cobrado: number | null; precio_actual: number }[];
       if (items.length === 0) {
         // Sin items: usar total histórico
         saldoActual += Math.max(0, venta.total_historico - venta.monto_pagado);
@@ -765,7 +767,9 @@ export function registerIpcHandlers(): void {
     const getVentaSaldo = (ventaId: number, montoYaPagado: number, descuento: number, totalHistorico: number): number => {
       const items = db.prepare(`
         SELECT vi.cantidad,
-               CASE WHEN p.precio_venta > 0 THEN p.precio_venta ELSE vi.precio_unitario END as precio_actual
+              CASE WHEN vi.precio_cobrado IS NOT NULL THEN vi.precio_cobrado
+                WHEN p.precio_venta > 0 THEN p.precio_venta
+                ELSE vi.precio_unitario END as precio_actual
         FROM venta_items vi
         LEFT JOIN productos p ON p.id = vi.producto_id
         WHERE vi.venta_id = ?
@@ -815,6 +819,94 @@ export function registerIpcHandlers(): void {
     try { exportFiadosToExcel(db); } catch { /* silencioso */ }
 
     return { success: true };
+  });
+
+  ipcMain.handle('clientes:deleteFiadosByDay', (_e, clienteId: number, fecha: string) => {
+    const db = getDb();
+    
+    // Obtener todos los fiados (no pagados) del cliente en esa fecha
+    const fiados = db.prepare(`
+      SELECT v.id, v.numero, v.tipo, v.estado, v.fecha, v.hora, v.cliente_id, v.vendedor_id,
+             v.subtotal, v.descuento, v.total, v.metodo_pago, v.es_fiado, v.observaciones, v.created_at
+      FROM ventas v
+      WHERE v.cliente_id = ? AND DATE(v.fecha) = ? AND v.es_fiado = 1 AND v.estado NOT IN ('pagado')
+      ORDER BY v.id ASC
+    `).all(clienteId, fecha) as Record<string, unknown>[];
+
+    if (fiados.length === 0) {
+      return { success: false, error: 'No hay fiados para eliminar en esa fecha' };
+    }
+
+    db.transaction(() => {
+      for (const venta of fiados) {
+        const items = db.prepare(`
+          SELECT vi.*, p.nombre as producto_nombre, p.codigo as producto_codigo
+          FROM venta_items vi
+          LEFT JOIN productos p ON p.id = vi.producto_id
+          WHERE vi.venta_id = ?
+        `).all(venta.id) as {
+          producto_id: number; cantidad: number; precio_unitario: number; descuento: number; total: number;
+          producto_nombre: string; producto_codigo: string;
+        }[];
+
+        // Registrar en ventas_canceladas
+        const cancelId = (db.prepare(`
+          INSERT INTO ventas_canceladas (
+            venta_id_original, numero, tipo, estado, fecha, hora, cliente_id, vendedor_id,
+            subtotal, descuento, total, metodo_pago, es_fiado, observaciones,
+            cliente_nombre, vendedor_nombre, motivo, created_at_original
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          venta.id,
+          venta.numero,
+          venta.tipo,
+          venta.estado,
+          venta.fecha,
+          venta.hora,
+          venta.cliente_id,
+          venta.vendedor_id,
+          venta.subtotal,
+          venta.descuento,
+          venta.total,
+          venta.metodo_pago,
+          venta.es_fiado,
+          venta.observaciones,
+          '',
+          '',
+          'Eliminación de fiados por día (admin)',
+          venta.created_at,
+        ) as { lastInsertRowid: number }).lastInsertRowid;
+
+        // Registrar items cancelados
+        for (const item of items) {
+          db.prepare(`
+            INSERT INTO venta_cancelada_items (
+              venta_cancelada_id, producto_id, producto_nombre, producto_codigo,
+              cantidad, precio_unitario, descuento, total
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          `).run(
+            cancelId, item.producto_id, item.producto_nombre, item.producto_codigo,
+            item.cantidad, item.precio_unitario, item.descuento, item.total,
+          );
+        }
+
+        // Eliminar de ventas
+        db.prepare(`DELETE FROM ventas WHERE id = ?`).run(venta.id);
+      }
+    })();
+
+    emitToWeb('venta:actualizada', { clienteId });
+    emitToWeb('fiados:list-changed', { clienteId });
+
+    // Notificar al renderer Electron
+    BrowserWindow.getAllWindows().forEach((w) => {
+      if (!w.isDestroyed()) w.webContents.send('fiados:list-changed', { clienteId });
+    });
+
+    // Actualizar Excel de fiados
+    try { exportFiadosToExcel(db); } catch { /* silencioso */ }
+
+    return { success: true, deleted: fiados.length };
   });
 
   ipcMain.handle('clientes:exportCSV', () => {
@@ -874,9 +966,14 @@ export function registerIpcHandlers(): void {
       for (const item of payload.items) {
         const itemTotal = item.precio_unitario * item.cantidad - item.descuento;
         db.prepare(`
-          INSERT INTO venta_items (venta_id, producto_id, cantidad, precio_unitario, descuento, total)
-          VALUES (?, ?, ?, ?, ?, ?)
-        `).run(ventaId, item.producto_id, item.cantidad, item.precio_unitario, item.descuento, itemTotal);
+          INSERT INTO venta_items (venta_id, producto_id, cantidad, precio_unitario, precio_cobrado, precio_sistema, descuento, total)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          ventaId, item.producto_id, item.cantidad, item.precio_unitario,
+          payload.es_fiado ? (item.precio_cobrado ?? item.precio_modificado ?? null) : null,
+          payload.es_fiado ? (item.precio_sistema ?? null) : null,
+          item.descuento, itemTotal,
+        );
 
         if (payload.tipo === 'venta') {
           const prodStock = db.prepare(`SELECT stock_actual FROM productos WHERE id = ?`).get(item.producto_id) as { stock_actual: number } | undefined;
@@ -1397,40 +1494,30 @@ export function registerIpcHandlers(): void {
   // ── ESTADÍSTICAS ────────────────────────────────────────────────
   ipcMain.handle('stats:dashboard', () => {
     const db = getDb();
-    const today = new Date().toISOString().split('T')[0];
-    const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    const now = new Date();
+    const toLocalDate = (date: Date) => {
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    };
+    const today = toLocalDate(now);
+    const weekStart = new Date(now);
+    weekStart.setHours(0, 0, 0, 0);
+    weekStart.setDate(weekStart.getDate() - 6);
+    const weekAgo = toLocalDate(weekStart);
     const monthStart = new Date();
     monthStart.setDate(1);
-    const monthStartStr = monthStart.toISOString().split('T')[0];
-    const prevWeekStart = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    const monthStartStr = toLocalDate(monthStart);
+    const prevWeekStartDate = new Date(weekStart);
+    prevWeekStartDate.setDate(prevWeekStartDate.getDate() - 7);
+    const prevWeekStart = toLocalDate(prevWeekStartDate);
 
-    // Hoy — count y total (se ajusta a apertura/cierre de caja si hay sesión del día)
-    let rowHoy = db.prepare(`
+    // Hoy — todas las ventas del día, independientemente de la caja.
+    const rowHoy = db.prepare(`
       SELECT COUNT(*) as count, COALESCE(SUM(total),0) as total
       FROM ventas WHERE fecha = ? AND tipo = 'venta'
     `).get(today) as { count: number; total: number };
-
-    // Ventas de hoy = desde apertura de caja del día hasta ahora (o cierre si ya cerró)
-    const sesionHoy = db.prepare(`
-      SELECT id
-      FROM caja_sesiones
-      WHERE date(fecha_apertura) = ?
-      ORDER BY id DESC
-      LIMIT 1
-    `).get(today) as { id: number } | undefined;
-
-    if (sesionHoy?.id) {
-      rowHoy = db.prepare(`
-        SELECT
-          COUNT(DISTINCT v.id) as count,
-          COALESCE(SUM(cm.monto), 0) as total
-        FROM caja_movimientos cm
-        LEFT JOIN ventas v ON v.id = cm.venta_id
-        WHERE cm.sesion_id = ?
-          AND cm.tipo = 'ingreso'
-          AND cm.venta_id IS NOT NULL
-      `).get(sesionHoy.id) as { count: number; total: number };
-    }
 
     // Semana
     const rowSemana = db.prepare(`

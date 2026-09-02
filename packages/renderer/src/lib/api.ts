@@ -91,6 +91,8 @@ export const clientesAPI = {
     invoke('clientes:pagarFiado', clienteId, monto, metodo || 'efectivo'),
   getSaldoActual: (clienteId: number) =>
     invoke<number>('clientes:getSaldoActual', clienteId),
+  deleteFiadosByDay: (clienteId: number, fecha: string) =>
+    invoke<{ success: boolean; error?: string; deleted?: number }>('clientes:deleteFiadosByDay', clienteId, fecha),
   exportCSV: () => invoke<string>('clientes:exportCSV'),
 };
 
