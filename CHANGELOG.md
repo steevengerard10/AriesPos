@@ -1,4 +1,7 @@
 
+## v3.0.0 — 2/9/2026
+Mejoras en fiados, cobros, precios manuales y metricas del dashboard
+
 ## v2.6.0 — 18/8/2026
 nejora en modulo fiados
 
