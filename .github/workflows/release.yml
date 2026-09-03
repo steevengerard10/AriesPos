@@ -8,6 +8,9 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: write
+
 jobs:
 
   # ── JOB 1: Compilar el instalador de Windows ─────────────────────────────
@@ -40,7 +43,7 @@ jobs:
       - name: Empaquetar instalador Windows
         run: pnpm --filter @ariespos/desktop exec electron-builder --win --publish always
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # ── JOB 2: Compilar la APK de Android ────────────────────────────────────
   build-android:
@@ -73,26 +76,3 @@ jobs:
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
 
-      - name: Crear Release en GitHub con nota de cambios
-        uses: softprops/action-gh-release@v1
-        with:
-          draft: false
-          prerelease: false
-          body: |
-            ## ARIESPos ${{ github.ref_name }}
-
-            ### Instalación
-            - **Windows**: Descargá el archivo `.exe` y ejecutalo
-            - **Android**: La APK se compila en Expo y llega por notificación, o descargá desde [expo.dev](https://expo.dev)
-
-            ### Actualización automática
-            Si ya tenés ARIESPos instalado, se actualiza solo al abrirlo.
-
-            ### Cambios
-            $(cat CHANGELOG.md | head -20)
-          files: |
-            packages/desktop/release/*.exe
-            packages/desktop/release/*.blockmap
-            packages/desktop/release/latest.yml
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
