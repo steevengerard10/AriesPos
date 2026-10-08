@@ -1,6 +1,6 @@
 {
   "name": "@ariespos/desktop",
-  "version": "3.0.0",
+  "version": "4.0.0",
   "private": true,
   "main": "dist/main.js",
   "scripts": {
@@ -56,6 +56,7 @@
   "build": {
     "appId": "com.ariespos.app",
     "productName": "ARIESPos",
+    "artifactName": "${productName}.Setup.${version}.${ext}",
     "directories": {
       "output": "release"
     },
@@ -90,7 +91,12 @@
       }
     ],
     "win": {
-      "target": "nsis",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
       "icon": "assets/icon.ico"
     },
     "mac": {

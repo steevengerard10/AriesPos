@@ -1,4 +1,7 @@
 
+## v4.0.0 — 8/10/2026
+Actualización mayor: impresión configurable de tickets, pagos parciales por unidades y “Varios”, sincronización horaria con servidor, caja e indicadores de stock actualizados, y mejoras de configuración y tutoriales.
+
 ## v3.0.0 — 2/9/2026
 Mejoras en fiados, cobros, precios manuales y metricas del dashboard
 
