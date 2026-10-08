@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
-  Play, Pause, SkipForward, SkipBack,
+  Play, Pause, SkipForward, SkipBack, Clock, DollarSign, RefreshCw, TrendingUp,
   ChevronRight, BookOpen, ShoppingCart, Package, Users,
   Archive, Wallet, CreditCard, Layers, BarChart2, Settings,
   CheckCircle, Maximize2, Minimize2, Volume2, VolumeX, Subtitles,
@@ -498,12 +498,44 @@ const TUTORIALES: Tutorial[] = [
         waypoints: [{x:65,y:48,t:0},{x:73,y:55,t:1.5,click:true},{x:73,y:55,t:3},{x:73,y:62,t:4.5,click:true},{x:73,y:55,t:6}],
       },
       {
+        title: 'Aplicar un descuento porcentual',
+        captionES: 'El descuento porcentual se aplica desde la columna de descuento del producto y el total se actualiza antes del cobro.',
+        captionEN: 'Apply a percentage discount from the product discount column; the total updates before checkout.',
+        visual: (
+          <StepGuide
+            steps={[
+              { icon: <ShoppingCart size={18} />, text: 'En el carrito del POS, ubicá la columna «Descuento» del producto que vas a ajustar.' },
+              { icon: <DollarSign size={18} />, text: 'Editá el descuento, seleccioná «%» e ingresá el porcentaje; confirmá con Enter o saliendo del campo.' },
+              { icon: <CheckCircle size={18} />, text: 'Verificá que el subtotal y el total se hayan recalculado antes de cobrar.' },
+            ]}
+          />
+        ),
+        duration: 9,
+        waypoints: [{x:75,y:55,t:0},{x:75,y:55,t:2,click:true},{x:75,y:55,t:5},{x:75,y:85,t:8}],
+      },
+      {
         title: 'Cobrar y cerrar la venta',
         captionES: 'Revisá el total abajo, elegí efectivo, tarjeta, QR, transferencia o fiado según corresponda, y confirmá con el botón o con Enter. La venta queda guardada en SQLite y actualiza caja y stock.',
         captionEN: 'Check the bottom total, pick cash, card, QR, transfer, or credit as needed, then confirm with the button or Enter. The sale is saved and updates cash and stock.',
         visual: <PosVisual highlight="confirm" />,
         duration: 8,
         waypoints: [{x:65,y:70,t:0},{x:73,y:85,t:2},{x:73,y:90,t:3.5,click:true},{x:73,y:90,t:7}],
+      },
+      {
+        title: 'Aplicar recargo por tarjeta',
+        captionES: 'Al cobrar con tarjeta podés activar un recargo porcentual y revisar el total final antes de confirmar.',
+        captionEN: 'When paying by card, enable a percentage surcharge and review the final total before confirming.',
+        visual: (
+          <StepGuide
+            steps={[
+              { icon: <CreditCard size={18} />, text: 'Abrí el cobro del POS y elegí «Tarjeta» como método de pago.' },
+              { icon: <DollarSign size={18} />, text: 'Activá «Aplicar recargo por tarjeta» e ingresá el porcentaje.' },
+              { icon: <Receipt size={18} />, text: 'Revisá el recargo y el total actualizado; confirmá el pago para registrar la venta.' },
+            ]}
+          />
+        ),
+        duration: 9,
+        waypoints: [{x:70,y:50,t:0},{x:50,y:60,t:3,click:true},{x:50,y:75,t:6},{x:75,y:85,t:8,click:true}],
       },
     ],
   },
@@ -566,12 +598,112 @@ const TUTORIALES: Tutorial[] = [
         waypoints: [{x:22,y:45,t:0,click:true},{x:65,y:55,t:2},{x:65,y:65,t:4},{x:65,y:55,t:6}],
       },
       {
-        title: 'Registrar un pago',
-        captionES: 'Cuando cobrás una deuda, «Registrar pago» descuenta el monto del saldo en la base y deja constancia del día. Podés cargar un adelanto parcial y seguir vendiendo con límites claros.',
-        captionEN: 'When you collect, Register payment reduces the balance in the database with a dated record. Enter a partial payment and keep selling within clear limits.',
-        visual: <ClientesVisual step={2} />,
-        duration: 8,
+        title: 'Respetar un precio manual en un fiado',
+        captionES: 'El precio unitario que ajustás en el POS se conserva en la venta fiada y queda visible en el detalle del cliente.',
+        captionEN: 'A unit price changed in the POS is saved with the credit sale and remains visible in the client details.',
+        visual: (
+          <StepGuide
+            steps={[
+              { icon: <Users size={18} />, text: 'En el POS, asigná el cliente antes de confirmar la venta como fiado.' },
+              { icon: <Package size={18} />, text: 'En la fila del producto, hacé clic en el precio unitario, ingresá el precio acordado y confirmá con Enter.' },
+              { icon: <Receipt size={18} />, text: 'Confirmá el fiado y abrí la cuenta del cliente para verificar el precio manual en el detalle.' },
+            ]}
+          />
+        ),
+        duration: 9,
         waypoints: [{x:65,y:55,t:0},{x:65,y:75,t:2,click:true},{x:65,y:75,t:5},{x:65,y:55,t:7}],
+      },
+      {
+        title: 'Cobrar productos con pago parcial',
+        captionES: 'Elegí qué productos completar: manualmente con casillas o automáticamente indicando un monto. Solo los productos cubiertos salen del fiado.',
+        captionEN: 'Choose which products to pay: select them manually or enter an amount for automatic selection. Only covered products leave the credit balance.',
+        visual: (
+          <StepGuide
+            steps={[
+              { icon: <Users size={18} />, text: 'En Clientes, elegí al cliente y expandí la venta que figura como fiado o parcial.' },
+              { icon: <DollarSign size={18} />, text: 'Tocá «Pago parcial». En Manual marcá productos completos; en Automático ingresá el monto y revisá la selección por precio ascendente.' },
+              { icon: <CreditCard size={18} />, text: 'Elegí el método de pago, verificá productos y total del resumen y tocá «Confirmar».' },
+            ]}
+          />
+        ),
+        duration: 11,
+        waypoints: [{x:22,y:45,t:0,click:true},{x:65,y:55,t:3},{x:65,y:75,t:6,click:true},{x:65,y:55,t:9}],
+      },
+      {
+        title: 'Eliminar fiados de un día con PIN',
+        captionES: 'La acción elimina los fiados pendientes de la fecha elegida y solicita autorización de administrador.',
+        captionEN: 'This removes pending credit sales from the chosen date and requires administrator authorization.',
+        visual: (
+          <StepGuide
+            steps={[
+              { icon: <Users size={18} />, text: 'Abrí la cuenta del cliente y buscá la sección «Fiados pendientes por día».' },
+              { icon: <Package size={18} />, text: 'En la fecha que corresponda, tocá el botón de eliminar.' },
+              { icon: <Lock size={18} />, text: 'Ingresá el PIN de administrador y confirmá para eliminar los fiados pendientes de ese día.' },
+            ]}
+          />
+        ),
+        duration: 9,
+        waypoints: [{x:22,y:45,t:0},{x:70,y:75,t:3},{x:70,y:75,t:5,click:true},{x:55,y:55,t:8}],
+      },
+    ],
+  },
+  {
+    id: 'dashboard', title: 'Dashboard y fechas', description: 'Consultar ventas del día y de la semana calendario',
+    icon: <BarChart2 size={20} />, color: '#06b6d4',
+    slides: [
+      {
+        title: 'Ventas por fecha calendario',
+        captionES: 'El Dashboard calcula «Ventas hoy» con la fecha calendario actual y «Semana» con el período semanal; los valores no dependen de cuándo se abrió la caja.',
+        captionEN: 'Dashboard uses the current calendar date for Today and the calendar week for Week; figures do not depend on the cash session opening time.',
+        visual: (
+          <StepGuide
+            steps={[
+              { icon: <BarChart2 size={18} />, text: 'Abrí «Dashboard» desde el menú principal.' },
+              { icon: <ShoppingCart size={18} />, text: 'Consultá «Ventas hoy»: corresponde a las ventas de la fecha calendario actual.' },
+              { icon: <TrendingUp size={18} />, text: 'Consultá «Semana» para ver el acumulado del período calendario y su comparación semanal.' },
+            ]}
+          />
+        ),
+        duration: 9,
+        waypoints: [{x:50,y:25,t:0},{x:30,y:35,t:3},{x:70,y:35,t:6}],
+      },
+    ],
+  },
+  {
+    id: 'estadisticas', title: 'Estadísticas', description: 'Ganancia potencial del stock y estado de caja',
+    icon: <BarChart2 size={20} />, color: '#10b981',
+    slides: [
+      {
+        title: 'Ganancia potencial del stock',
+        captionES: 'La tabla incluye todos los productos con stock positivo, ordenados por ganancia potencial de mayor a menor.',
+        captionEN: 'The table includes every product with positive stock, sorted by potential profit from highest to lowest.',
+        visual: (
+          <StepGuide
+            steps={[
+              { icon: <BarChart2 size={18} />, text: 'Abrí «Estadísticas» y desplazate hasta «Ganancia potencial del stock».' },
+              { icon: <Package size={18} />, text: 'Revisá los productos con stock, su costo, precio de venta y ganancia potencial.' },
+              { icon: <DollarSign size={18} />, text: 'Si el costo es cero, la ganancia potencial se calcula como precio de venta por stock; revisá también los totales al pie.' },
+            ]}
+          />
+        ),
+        duration: 9,
+        waypoints: [{x:50,y:25,t:0},{x:50,y:55,t:3},{x:70,y:75,t:6}],
+      },
+      {
+        title: 'Estadísticas sincronizadas con caja',
+        captionES: 'El estado se consulta a la sesión activa del servidor y se actualiza cada 60 segundos.',
+        captionEN: 'Cash status comes from the server active session and refreshes every 60 seconds.',
+        visual: (
+          <StepGuide
+            steps={[
+              { icon: <Wallet size={18} />, text: 'En «Estadísticas», revisá el bloque «Estado de Caja» al inicio de la pantalla.' },
+              { icon: <Clock size={18} />, text: 'Con una sesión activa verás «Abierta desde» y los datos del turno; sin sesión, verás «Caja cerrada».' },
+              { icon: <RefreshCw size={18} />, text: 'La consulta al servidor se repite cada 60 segundos; también podés actualizar con el botón de recarga.' },
+            ]}
+          />
+        ),
+        duration: 9,
+        waypoints: [{x:50,y:25,t:0},{x:50,y:45,t:3},{x:80,y:20,t:6,click:true}],
       },
     ],
   },
@@ -627,10 +759,18 @@ const TUTORIALES: Tutorial[] = [
       },
       {
         title: 'Resumen de la caja',
-        captionES: 'Caja del día resume efectivo, tarjeta/QR, transferencias y fiados según lo cobrado en el POS. Sirve para cuadrar el mostrador antes del cierre sin abrir planillas aparte.',
+        captionES: 'El resumen separa los cobros por método para revisar los importes antes del cierre.',
         captionEN: 'Daily Cash summarizes cash, card/QR, transfers, and credit sales from the POS—use it to reconcile the counter before closing.',
-        visual: <CajaVisual step={0} />,
-        duration: 7,
+        visual: (
+          <StepGuide
+            steps={[
+              { icon: <Wallet size={18} />, text: 'Abrí «Caja del día» y consultá el resumen de la sesión activa.' },
+              { icon: <CreditCard size={18} />, text: 'Revisá por separado efectivo, tarjeta/QR, transferencias y fiados.' },
+              { icon: <Receipt size={18} />, text: 'Contrastá los importes con los movimientos antes de cerrar la sesión.' },
+            ]}
+          />
+        ),
+        duration: 9,
         waypoints: [{x:20,y:40,t:0},{x:50,y:40,t:1.5},{x:80,y:40,t:3},{x:50,y:65,t:5},{x:50,y:75,t:6}],
       },
       {
@@ -642,11 +782,36 @@ const TUTORIALES: Tutorial[] = [
         waypoints: [{x:50,y:50,t:0},{x:50,y:75,t:2},{x:50,y:80,t:3.5,click:true},{x:50,y:80,t:7}],
       },
       {
-        title: 'Libro de caja mensual',
-        captionES: 'En la barra lateral abrí Libro de Caja: ves cada día del mes con ventas, efectivo, tarjeta y QR, transferencias y gastos. Los administradores pueden corregir montos por celda y quedan guardados en la base.',
-        captionEN: 'Open Monthly Cash Book from the sidebar: each day shows sales, cash, card and QR, transfers, and expenses. Admins can fix amounts per cell and they are saved to the database.',
-        visual: <CajaVisual step={0} />,
+        title: 'Reabrir una caja cerrada con PIN',
+        captionES: 'Una sesión cerrada puede reabrirse desde el historial con autorización de administrador.',
+        captionEN: 'A closed session can be reopened from history with administrator authorization.',
+        visual: (
+          <StepGuide
+            steps={[
+              { icon: <Wallet size={18} />, text: 'En «Caja del día», abrí la pestaña «Histórico».' },
+              { icon: <DoorOpen size={18} />, text: 'Buscá la sesión cerrada y tocá «Reabrir» en su fila.' },
+              { icon: <Lock size={18} />, text: 'Ingresá el PIN de administrador y confirmá para volver a abrir la sesión.' },
+            ]}
+          />
+        ),
         duration: 9,
+        waypoints: [{x:50,y:50,t:0},{x:70,y:35,t:3},{x:85,y:60,t:6,click:true}],
+      },
+      {
+        title: 'Libro de caja mensual',
+        captionES: 'El Libro de Caja registra los importes por fecha, permite editar celdas con PIN y muestra los totales del período.',
+        captionEN: 'Open Monthly Cash Book from the sidebar: each day shows sales, cash, card and QR, transfers, and expenses. Admins can fix amounts per cell and they are saved to the database.',
+        visual: (
+          <StepGuide
+            steps={[
+              { icon: <BookOpen size={18} />, text: 'Abrí «Libro de Caja» y elegí el mes que querés revisar.' },
+              { icon: <DollarSign size={18} />, text: 'Ubicá la fecha y revisá los importes del día, incluido «Total en caja», donde registrás el saldo acumulado de esa fecha.' },
+              { icon: <Lock size={18} />, text: 'Para editar una celda, hacé clic, ingresá el PIN de administrador y guardá el importe; la autorización dura cinco minutos.' },
+              { icon: <CheckCircle size={18} />, text: 'Consultá la fila «Totales» para verificar la suma del mes seleccionado.' },
+            ]}
+          />
+        ),
+        duration: 11,
         waypoints: [{x:15,y:50,t:0},{x:50,y:40,t:2},{x:80,y:35,t:4},{x:50,y:70,t:6},{x:50,y:70,t:8}],
       },
     ],

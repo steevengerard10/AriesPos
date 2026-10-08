@@ -35,7 +35,7 @@ export function sendEvent(channel: string, ...args: unknown[]): void {
 export const productosAPI = {
   getAll: (filters?: {
     categoria?: number;
-    activo?: boolean;
+    activo?: boolean | 'all';
     search?: string;
     stockBajo?: boolean;
     limit?: number;
@@ -89,6 +89,8 @@ export const clientesAPI = {
   getVentas: (clienteId: number) => invoke('clientes:getVentas', clienteId),
   pagarFiado: (clienteId: number, monto: number, metodo?: string) =>
     invoke('clientes:pagarFiado', clienteId, monto, metodo || 'efectivo'),
+  pagarFiadoProductos: (clienteId: number, ventaId: number, items: { venta_id: number; item_id: number; cantidad: number }[], montoRecibido: number, metodo: string) =>
+    invoke<{ success: boolean; monto: number; montoProductos: number; varios: number; items: number }>('clientes:pagarFiadoProductos', clienteId, ventaId, items, montoRecibido, metodo),
   getSaldoActual: (clienteId: number) =>
     invoke<number>('clientes:getSaldoActual', clienteId),
   deleteFiadosByDay: (clienteId: number, fecha: string) =>
@@ -248,6 +250,8 @@ export const appAPI = {
     const [ip, port] = await Promise.all([invoke<string>('server:getLocalIP'), invoke<number>('server:getPort')]);
     return { ip, port };
   },
+
+  getServerHora: () => invoke<{ now: string; timeZone?: string }>('server:getHora'),
   getAppConfig: () =>
     invoke<{ mode: 'server' | 'client' | 'server-only' | null; serverIP: string; serverPort: number; terminalName: string }>(
       'app:getAppConfig',
@@ -260,6 +264,20 @@ export const appAPI = {
   restartApp: () => invoke('app:restart'),
   becomeServer: () => invoke('app:become-server'),
   resetToSetup: () => invoke('app:reset-to-setup'),
+};
+
+export interface PrinterDevice {
+  name: string;
+  displayName?: string;
+  description?: string;
+  isDefault?: boolean;
+  paperSize?: string;
+}
+
+export const printerAPI = {
+  list: () => invoke<PrinterDevice[]>('printer:list'),
+  printTicket: (sale: Record<string, unknown>, config: Record<string, string>) =>
+    invoke<{ success: boolean; error?: string }>('printer:imprimir-ticket', sale, config),
 };
 
 // ── LIBRO DE CAJA ──────────────────────────────────────────────────

@@ -22,6 +22,7 @@ import { LoginScreen } from './components/auth/LoginScreen';
 import Dashboard from './modules/dashboard/Dashboard';
 import { configAPI, appAPI } from './lib/api';
 import { setAppTimeZoneConfig } from './lib/dateTz';
+import { syncServerTime, startServerTimeSync } from './lib/serverTime';
 import { onEvent } from './lib/api';
 import { useAlertMonitorStore } from './store/useAlertMonitorStore';
 import { SetupScreen } from './setup/SetupScreen';
@@ -238,8 +239,15 @@ const App: React.FC = () => {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
+    const stopTimeSync = startServerTimeSync();
+    return () => stopTimeSync();
+  }, []);
+
+  useEffect(() => {
     const init = async () => {
       try {
+        await syncServerTime();
+
         // Verificar licencia primero
         const lic = await (window as any).electron?.licenseCheck?.();
         if (lic && !lic.licensed) {
@@ -289,7 +297,12 @@ const App: React.FC = () => {
   useEffect(() => {
     if (!connectionServerIP) return;
     const cleanup = onEvent('connection:status', (status: unknown) => {
-      setConnectionLost(status === 'disconnected');
+      if (status === 'disconnected') {
+        setConnectionLost(true);
+      } else if (status === 'connected') {
+        setConnectionLost(false);
+        void syncServerTime();
+      }
     });
     return cleanup;
   }, [connectionServerIP]);

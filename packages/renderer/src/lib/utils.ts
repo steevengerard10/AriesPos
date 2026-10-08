@@ -1,4 +1,5 @@
 import { getResolvedIanaTimezone } from './dateTz';
+import { getServerNow } from './serverTime';
 
 export function cn(...classes: (string | undefined | null | false)[]): string {
   return classes.filter(Boolean).join(' ');
@@ -58,7 +59,7 @@ export function formatDateTime(dateStr: string): string {
 }
 
 /** Hora actual (relojes en cabeceras) según zona configurada */
-export function formatNowTime(dt: Date = new Date()): string {
+export function formatNowTime(dt: Date = getServerNow()): string {
   return dt.toLocaleTimeString('es-AR', {
     hour: '2-digit',
     minute: '2-digit',
@@ -67,7 +68,7 @@ export function formatNowTime(dt: Date = new Date()): string {
   });
 }
 
-export function formatNowTimeShort(dt: Date = new Date()): string {
+export function formatNowTimeShort(dt: Date = getServerNow()): string {
   return dt.toLocaleTimeString('es-AR', {
     hour: '2-digit',
     minute: '2-digit',
@@ -76,7 +77,7 @@ export function formatNowTimeShort(dt: Date = new Date()): string {
 }
 
 /** Fecha larga tipo “sábado, 9 de mayo de 2026” */
-export function formatLocaleDateFull(dt: Date = new Date()): string {
+export function formatLocaleDateFull(dt: Date = getServerNow()): string {
   return dt.toLocaleDateString('es-AR', {
     weekday: 'long',
     year: 'numeric',
@@ -110,7 +111,7 @@ export function formatTimeHm(isoOrDbDatetime: string): string {
   });
 }
 
-export function toLocalDateISO(date: Date = new Date()): string {
+export function toLocalDateISO(date: Date = getServerNow()): string {
   const tz = getResolvedIanaTimezone();
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: tz,
@@ -126,17 +127,17 @@ export function toLocalDateISO(date: Date = new Date()): string {
 }
 
 export function today(): string {
-  return toLocalDateISO(new Date());
+  return toLocalDateISO(getServerNow());
 }
 
 export function weekAgo(): string {
-  const d = new Date();
+  const d = getServerNow();
   d.setDate(d.getDate() - 7);
   return toLocalDateISO(d);
 }
 
 export function monthStart(): string {
-  const d = new Date();
+  const d = getServerNow();
   d.setDate(1);
   return toLocalDateISO(d);
 }

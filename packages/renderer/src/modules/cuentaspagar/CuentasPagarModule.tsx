@@ -4,6 +4,7 @@ import { FileText, Plus, Search, RefreshCw, Check, X, AlertCircle, Edit, Trash2,
 import toast from 'react-hot-toast';
 import { Modal, ConfirmDialog } from '../../components/shared/Modal';
 import { formatCurrency, formatDate } from '../../lib/utils';
+import { getServerNow } from '../../lib/serverTime';
 import { useAppStore } from '../../store/useAppStore';
 import { useLibroCajaStore } from '../../store/useLibroCajaStore';
 
@@ -174,7 +175,7 @@ export const CuentasPagarModule: React.FC = () => {
 
   const isVencida = (fecha: string | null) => {
     if (!fecha) return false;
-    return new Date(fecha) < new Date();
+    return new Date(fecha) < getServerNow();
   };
 
   // Scroll automático al final si la lista es larga

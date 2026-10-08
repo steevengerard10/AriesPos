@@ -258,6 +258,9 @@ export function registerClientProxyHandlers(serverIP: string, port: number, serv
   ipcMain.handle('clientes:pagarFiado', (_e, clienteId: number, monto: number, metodo: string) =>
     post(`/api/sync/clientes/${clienteId}/pagar-fiado`, { monto, metodo: metodo || 'efectivo' }));
 
+  ipcMain.handle('clientes:pagarFiadoProductos', (_e, clienteId: number, ventaId: number, items: { venta_id: number; item_id: number; cantidad: number }[], montoRecibido: number, metodo: string) =>
+    post(`/api/sync/clientes/${clienteId}/pagar-fiado-productos`, { venta_id: ventaId, items, monto: montoRecibido, metodo: metodo || 'efectivo' }));
+
   ipcMain.handle('clientes:exportCSV', () =>
     get('/api/sync/clientes/export-csv'));
 
@@ -594,6 +597,19 @@ export function registerClientProxyHandlers(serverIP: string, port: number, serv
   // ── SERVER INFO (devuelve info del servidor remoto) ──────────────────────────
   ipcMain.handle('server:getLocalIP', () => serverIP);
   ipcMain.handle('server:getPort', () => port);
+  ipcMain.handle('server:getHora', async () => {
+    const ctrl = new AbortController();
+    const tid = setTimeout(() => ctrl.abort(), 5000);
+    try {
+      const res = await fetch(`${_base}/api/servidor/hora`, { signal: ctrl.signal });
+      clearTimeout(tid);
+      if (!res.ok) throw new Error(String(res.status));
+      return res.json() as Promise<{ now: string; timeZone?: string }>;
+    } catch (err) {
+      clearTimeout(tid);
+      throw err;
+    }
+  });
 
   // ── NETWORK (escaneo local) ──────────────────────────────────────
   ipcMain.handle('network:scan', async (_e, scanPort?: number) => {

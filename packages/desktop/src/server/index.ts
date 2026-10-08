@@ -9,7 +9,7 @@ import { app as electronApp } from 'electron';
 import { getDb } from '../database/db';
 import { generatePosHTML } from './webpos';
 import { exportFiadosToExcel } from '../services/fiados-excel-backup';
-import { createSyncRouter } from './syncRoutes';
+import { createServerTimeRouter, createSyncRouter } from './syncRoutes';
 const localtunnel = require('localtunnel') as (opts: { port: number; subdomain?: string }) => Promise<{ url: string; close(): void; on(ev: string, cb: (...a: unknown[]) => void): void }>;
 const cloudflared = require('cloudflared') as {
   bin: string;
@@ -380,6 +380,8 @@ export function startServer(): void {
   expressApp.get('/api/servidor/info', (_req, res) => {
     res.json({ ok: true, version: '1.0', nombre: 'ARIESPos' });
   });
+
+  expressApp.use('/api/servidor', createServerTimeRouter());
 
   // ── CREAR VENTA (POST) ───────────────────────────────────────────────────
   expressApp.post('/api/ventas', basicAuth, (req, res) => {

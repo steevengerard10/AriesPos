@@ -4,7 +4,7 @@ import {
   Check, AlertTriangle, ExternalLink, Copy, Wifi, Globe, CreditCard, Plus, Trash2, Archive, Palette, ShieldCheck, Lock, Eye, EyeOff, RotateCcw, FolderOpen, Wrench
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { configAPI, backupAPI, appAPI, productosAPI, firmaAPI } from '../../lib/api';
+import { configAPI, backupAPI, appAPI, productosAPI, firmaAPI, printerAPI, PrinterDevice } from '../../lib/api';
 import { formatDate, toLocalDateISO } from '../../lib/utils';
 import { ImportNixtarModal } from '../../components/modals/ImportNixtarModal';
 import { setAppTimeZoneConfig } from '../../lib/dateTz';
@@ -92,6 +92,7 @@ export const ConfiguracionModule: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [serverInfo, setServerInfo] = useState({ port: 3001, localIP: '' });
+  const [printers, setPrinters] = useState<PrinterDevice[]>([]);
   const [metodosPago, setMetodosPago] = useState<MetodoPagoConfig[]>(METODOS_PAGO_DEFAULT);
   const [nuevoMetodoNombre, setNuevoMetodoNombre] = useState('');
   const csvRef = useRef<HTMLInputElement>(null);
@@ -117,17 +118,23 @@ export const ConfiguracionModule: React.FC = () => {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [cfg, bkps, ip, firma, appCfg] = await Promise.all([
+      const [cfg, bkps, ip, firma, appCfg, printerList] = await Promise.all([
         configAPI.getAll() as Promise<Record<string, string>>,
         backupAPI.list() as Promise<BackupInfo[]>,
         appAPI.getServerInfo(),
         firmaAPI.estado(),
         appAPI.getAppConfig().catch(() => null),
+        printerAPI.list().catch(() => []),
       ]);
-      setConfig(cfg);
+      const defaultPrinter = printerList.find((printer) => printer.isDefault);
+      const configWithPrinter = cfg.ticket_impresora || !defaultPrinter
+        ? cfg
+        : { ...cfg, ticket_impresora: defaultPrinter.name };
+      setConfig(configWithPrinter);
       setAppTimeZoneConfig(cfg);
       setBackups(bkps);
       setServerInfo({ port: ip.port, localIP: ip.ip });
+      setPrinters(printerList);
       setFirmaEstado(firma);
       setIsClientMode(appCfg?.mode === 'client');
       try {
@@ -159,6 +166,36 @@ export const ConfiguracionModule: React.FC = () => {
       toast.success('Configuración guardada');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handlePrinterChange = (printerName: string) => {
+    setField('ticket_impresora', printerName);
+    const printer = printers.find((item) => item.name === printerName);
+    const reportedSize = `${printer?.paperSize || ''} ${printer?.description || ''} ${printer?.displayName || ''}`;
+    if (/(^|\D)58\s?mm|58\s?mm/i.test(reportedSize)) setField('ticket_ancho', '58');
+    else if (/(^|\D)80\s?mm|80\s?mm/i.test(reportedSize)) setField('ticket_ancho', '80');
+    else if (/\bA4\b/i.test(reportedSize)) setField('ticket_ancho', 'A4');
+  };
+
+  const handleTestTicket = async () => {
+    try {
+      const result = await printerAPI.printTicket({
+        numero: 'PRUEBA',
+        fecha: new Date().toLocaleDateString('es-AR'),
+        hora: new Date().toLocaleTimeString('es-AR'),
+        subtotal: 1000,
+        descuento: 100,
+        recargo: 0,
+        total: 900,
+        metodo_pago: 'Prueba',
+        vendedor_nombre: 'Prueba',
+        items: [{ producto_nombre: 'Producto de prueba', cantidad: 1, precio_unitario: 1000, total: 1000 }],
+      }, config);
+      if (!result.success) throw new Error(result.error || 'No se pudo imprimir');
+      toast.success('Ticket de prueba enviado a la impresora');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'No se pudo imprimir el ticket de prueba');
     }
   };
 
@@ -354,26 +391,83 @@ export const ConfiguracionModule: React.FC = () => {
 
         {tab === 'ticket' && (
           <div className="max-w-xl space-y-4">
-            <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wider">Configuración de ticket</h2>
+            <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-wider">Impresora de tickets</h2>
             <div>
-              <label className="label">Ancho del papel</label>
+              <label className="label">Impresora instalada</label>
+              <div className="flex gap-2">
+                <select className="input flex-1" value={config.ticket_impresora || ''} onChange={(e) => handlePrinterChange(e.target.value)}>
+                  <option value="">Sin impresora seleccionada</option>
+                  {config.ticket_impresora && !printers.some((printer) => printer.name === config.ticket_impresora) && (
+                    <option value={config.ticket_impresora}>{config.ticket_impresora} (no disponible)</option>
+                  )}
+                  {printers.map((printer) => (
+                    <option key={printer.name} value={printer.name}>
+                      {printer.displayName || printer.name}{printer.isDefault ? ' (predeterminada)' : ''}
+                    </option>
+                  ))}
+                </select>
+                <button type="button" className="btn-secondary btn p-2" title="Actualizar impresoras" onClick={() => printerAPI.list().then(setPrinters).catch(() => toast.error('No se pudieron listar las impresoras'))}>
+                  <RefreshCw size={16} />
+                </button>
+              </div>
+              <p className="text-xs text-slate-500 mt-1">{printers.length} impresora{printers.length === 1 ? '' : 's'} detectada{printers.length === 1 ? '' : 's'} en este equipo.</p>
+            </div>
+            <div>
+              <label className="label">Tamaño de papel</label>
               <select className="input" value={config.ticket_ancho || '80'} onChange={(e) => setField('ticket_ancho', e.target.value)}>
-                <option value="58">58mm (pequeño)</option>
-                <option value="80">80mm (estándar)</option>
+                <option value="58">58 mm</option>
+                <option value="80">80 mm</option>
+                <option value="A4">A4</option>
               </select>
             </div>
             <div>
-              <label className="label">Mensaje en el ticket</label>
-              <input className="input" value={config.ticket_mensaje || ''} onChange={(e) => setField('ticket_mensaje', e.target.value)} placeholder="¡Gracias por su compra!" />
+              <label className="label">Nombre del negocio en el ticket</label>
+              <input className="input" value={config.ticket_nombre_negocio ?? config.nombre_negocio ?? ''} onChange={(e) => setField('ticket_nombre_negocio', e.target.value)} placeholder="Mi Negocio" />
             </div>
-            <div className="flex items-center gap-3">
-              <input type="checkbox" id="auto_print" checked={config.auto_imprimir_ticket === 'true'} onChange={(e) => setField('auto_imprimir_ticket', e.target.checked ? 'true' : 'false')} className="w-4 h-4 rounded" />
-              <label htmlFor="auto_print" className="text-sm text-slate-300 cursor-pointer">Imprimir ticket automáticamente al confirmar venta</label>
+            <div>
+              <label className="label">Dirección</label>
+              <input className="input" value={config.ticket_direccion ?? config.direccion ?? ''} onChange={(e) => setField('ticket_direccion', e.target.value)} placeholder="Dirección del negocio" />
             </div>
-            <div className="flex items-center gap-3">
-              <input type="checkbox" id="show_cuit" checked={config.ticket_mostrar_cuit === 'true'} onChange={(e) => setField('ticket_mostrar_cuit', e.target.checked ? 'true' : 'false')} className="w-4 h-4 rounded" />
-              <label htmlFor="show_cuit" className="text-sm text-slate-300 cursor-pointer">Mostrar CUIT en el ticket</label>
+            <div>
+              <label className="label">Teléfono</label>
+              <input className="input" value={config.ticket_telefono ?? config.telefono ?? ''} onChange={(e) => setField('ticket_telefono', e.target.value)} placeholder="Teléfono del negocio" />
             </div>
+            <div>
+              <label className="label">Mensaje de cabecera</label>
+              <textarea className="input resize-y" rows={2} value={config.ticket_mensaje_cabecera || ''} onChange={(e) => setField('ticket_mensaje_cabecera', e.target.value)} placeholder="Mensaje al inicio del ticket" />
+            </div>
+            <div>
+              <label className="label">Mensaje de pie</label>
+              <textarea className="input resize-y" rows={2} value={config.ticket_mensaje_pie ?? config.ticket_mensaje ?? ''} onChange={(e) => setField('ticket_mensaje_pie', e.target.value)} placeholder="Gracias por su compra" />
+            </div>
+            <div className="space-y-2">
+              <div className="label">Mostrar en el ticket</div>
+              {[
+                { key: 'ticket_mostrar_logo', label: 'Logo', defaultValue: false },
+                { key: 'ticket_mostrar_fecha', label: 'Fecha', defaultValue: true },
+                { key: 'ticket_mostrar_numero', label: 'Número de ticket', defaultValue: true },
+                { key: 'ticket_mostrar_vendedor', label: 'Vendedor', defaultValue: true },
+                { key: 'ticket_mostrar_cuit', label: 'RUT / CUIT', defaultValue: false },
+              ].map(({ key, label, defaultValue }) => (
+                <label key={key} className="flex items-center gap-3 text-sm text-slate-300">
+                  <input type="checkbox" checked={config[key] === undefined ? defaultValue : config[key] === 'true'} onChange={(e) => setField(key, e.target.checked ? 'true' : 'false')} className="w-4 h-4 rounded" />
+                  {label}
+                </label>
+              ))}
+            </div>
+            <div>
+              <label className="label">Al confirmar una venta</label>
+              <select className="input" value={config.ticket_modo_impresion || 'preguntar'} onChange={(e) => setField('ticket_modo_impresion', e.target.value)}>
+                <option value="preguntar">Preguntar siempre</option>
+                <option value="siempre">Imprimir siempre</option>
+                <option value="nunca">Nunca imprimir</option>
+              </select>
+            </div>
+            <button type="button" className="btn-secondary btn" disabled={!config.ticket_impresora} onClick={() => void handleTestTicket()}>
+              <Printer size={16} /> Imprimir ticket de prueba
+            </button>
+            {!config.ticket_impresora && <p className="text-xs text-amber-400">Seleccioná una impresora y guardá la configuración para imprimir.</p>}
+            <div className="text-xs text-slate-500">Si la impresora informa 58 mm, 80 mm o A4 en el nombre o descripción, se seleccionará ese tamaño automáticamente.</div>
           </div>
         )}
 

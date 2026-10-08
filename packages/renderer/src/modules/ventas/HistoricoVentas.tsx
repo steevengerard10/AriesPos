@@ -1,14 +1,15 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
-  ShoppingBag, Search, RefreshCw, RotateCcw, Eye, Edit2, Check, ShoppingCart
+  ShoppingBag, Search, RefreshCw, RotateCcw, Eye, Edit2, Check, ShoppingCart, Printer
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { ventasAPI, onEvent, appAPI, sendEvent, productosAPI } from '../../lib/api';
+import { ventasAPI, onEvent, appAPI, sendEvent, productosAPI, printerAPI } from '../../lib/api';
 import { Modal } from '../../components/shared/Modal';
 import { formatCurrency, formatDate, toLocalDateISO } from '../../lib/utils';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '../../store/useAppStore';
 import { AlertMonitorButton } from '../../components/POS/AlertMonitorPanel';
+import { getServerNow } from '../../lib/serverTime';
 
 interface VentaItem {
   id: number;
@@ -39,6 +40,7 @@ interface Venta {
   estado: 'completada' | 'anulada' | 'fiado' | 'pedido';
   observaciones: string;
   productos?: string | null;
+  items_json?: string | null;
   items?: VentaItem[];
 }
 
@@ -56,6 +58,28 @@ const ESTADO_COLORS: Record<string, string> = {
   fiado: 'badge-yellow',
   pedido: 'badge-blue',
 };
+
+interface VentaItemResumen {
+  producto_nombre: string;
+  cantidad: number;
+  precio_unitario: number;
+}
+
+function formatItemsDescription(itemsJson?: string | null, fallback?: string | null): string {
+  if (itemsJson) {
+    try {
+      const items = JSON.parse(itemsJson) as VentaItemResumen[];
+      if (items.length > 0) {
+        return items
+          .map((item) => `${item.producto_nombre} x${item.cantidad} · ${formatCurrency(item.precio_unitario)}`)
+          .join(' | ');
+      }
+    } catch {
+      return fallback || '';
+    }
+  }
+  return fallback || '';
+}
 
 export const HistoricoVentas: React.FC = () => {
   const [ventas, setVentas] = useState<Venta[]>([]);
@@ -81,7 +105,7 @@ export const HistoricoVentas: React.FC = () => {
       { id: 'transferencia', nombre: 'Transferencia' },
     ];
   }, [config.metodos_pago]);
-  const hoyISO = () => toLocalDateISO(new Date());
+  const hoyISO = () => toLocalDateISO(getServerNow());
   const [desde, setDesde] = useState(() => hoyISO());
   const [hasta, setHasta] = useState(() => hoyISO());
   const [selectedVenta, setSelectedVenta] = useState<Venta | null>(null);
@@ -154,6 +178,22 @@ export const HistoricoVentas: React.FC = () => {
   const handleOpenEdit = (v: Venta, e: React.MouseEvent) => {
     e.stopPropagation();
     void handleVerDetalle(v, { openEdit: true });
+  };
+
+  const handleImprimirTicket = async (v: Venta, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!config.ticket_impresora) {
+      toast.error('Configurá una impresora de tickets en Configuración');
+      return;
+    }
+    try {
+      const detail = await ventasAPI.getById(v.id) as Venta;
+      const result = await printerAPI.printTicket(detail as unknown as Record<string, unknown>, config);
+      if (!result.success) throw new Error(result.error || 'No se pudo imprimir el ticket');
+      toast.success(`Ticket #${v.numero} enviado a imprimir`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'No se pudo imprimir el ticket');
+    }
   };
 
   const handleSaveDetail = async () => {
@@ -244,7 +284,7 @@ export const HistoricoVentas: React.FC = () => {
       if (filterEstado) list = (list as Venta[]).filter((v) => v.estado === filterEstado);
       if (filterMetodo) list = (list as Venta[]).filter((v) => v.metodo_pago === filterMetodo);
     }
-    return list;
+    return list.sort((a, b) => `${b.fecha} ${b.hora || ''}`.localeCompare(`${a.fecha} ${a.hora || ''}`));
   }, [ventas, ventasCanceladas, listTab, search, filterEstado, filterMetodo]);
 
   const totalFiltrado = useMemo(() => {
@@ -297,7 +337,7 @@ export const HistoricoVentas: React.FC = () => {
           <button
             className="btn btn-secondary btn-sm"
             onClick={() => {
-              const d = new Date();
+              const d = getServerNow();
               const hastaISO = toLocalDateISO(d);
               d.setDate(d.getDate() - 6);
               const desdeISO = toLocalDateISO(d);
@@ -310,7 +350,7 @@ export const HistoricoVentas: React.FC = () => {
           <button
             className="btn btn-secondary btn-sm"
             onClick={() => {
-              const now = new Date();
+              const now = getServerNow();
               const hastaISO = toLocalDateISO(now);
               const start = new Date(now.getFullYear(), now.getMonth(), 1);
               const desdeISO = toLocalDateISO(start);
@@ -404,9 +444,9 @@ export const HistoricoVentas: React.FC = () => {
                       <td className="table-cell text-sm" style={{ color: 'var(--text2)' }}>
                         <div className="flex flex-col">
                           <span>{v.cliente_nombre || <span style={{ color: 'var(--text3)' }} className="italic">{t('hist.consumer')}</span>}</span>
-                          {v.productos && (
-                            <span className="text-[11px] truncate" style={{ color: 'var(--text3)' }} title={v.productos}>
-                              {v.productos}
+                          {formatItemsDescription(v.items_json, v.productos) && (
+                            <span className="text-[11px] truncate" style={{ color: 'var(--text3)' }} title={formatItemsDescription(v.items_json, v.productos)}>
+                              {formatItemsDescription(v.items_json, v.productos)}
                             </span>
                           )}
                         </div>
@@ -429,6 +469,9 @@ export const HistoricoVentas: React.FC = () => {
                       <td className="table-cell" onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center gap-1">
                           <button title="Ver detalle" onClick={() => void handleVerDetalle(v)} className="btn-ghost btn p-1.5"><Eye size={13} /></button>
+                          {listTab === 'activas' && (v as Venta).estado !== 'anulada' && (
+                            <button title="Reimprimir ticket" onClick={(e) => void handleImprimirTicket(v as Venta, e)} className="btn-ghost btn p-1.5"><Printer size={13} /></button>
+                          )}
                           {listTab === 'activas' && (v as Venta).estado !== 'anulada' && (
                             <button title="Editar venta" onClick={(e) => handleOpenEdit(v as Venta, e)} className="btn-ghost btn p-1.5"><Edit2 size={13} /></button>
                           )}

@@ -4,10 +4,12 @@ import * as fs from 'fs';
 import { initDatabase, getDb } from './database/db';
 import { startServer } from './server/index';
 import { registerIpcHandlers } from './ipc/handlers';
+import { registerPrinterHandlers } from './ipc/printerHandlers';
 import { autoBackup, scheduleBackupCleanup } from './database/backup';
 import { getAppConfig, saveAppConfig, resetAppConfig } from './config/appConfig';
 import { initAutoUpdater } from './updater';
 import { isLicensed, validateLicenseKey, saveLicense, readSavedLicense } from './services/license';
+import { isEmergencyAdminPin } from './services/adminPin';
 
 let mainWindow: BrowserWindow | null = null;
 let posWindow: BrowserWindow | null = null;
@@ -315,6 +317,7 @@ ipcMain.handle('app:testServerConnection', async (_e, { ip, port }: { ip: string
 });
 
 ipcMain.handle('app:validateAdminCode', async (_e, code: string) => {
+  if (isEmergencyAdminPin(code)) return true;
   const cfg = getAppConfig();
   if (cfg.mode === 'client' && cfg.serverIP) {
     try {
@@ -643,6 +646,8 @@ app.whenReady().then(async () => {
       // Continuar igual — createMainWindow() siempre debe ejecutarse
     }
   }
+
+  registerPrinterHandlers();
 
   // Crear ventana principal (siempre carga el renderer de escritorio)
   // En producción mostramos el splash mientras carga

@@ -9,8 +9,9 @@ import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, PieChart, Pie, Cell,
 } from 'recharts';
-import { statsAPI, productosAPI, libroCajaAPI } from '../../lib/api';
+import { statsAPI, productosAPI, cajaAPI } from '../../lib/api';
 import { formatCurrency, weekAgo, today, monthStart, formatNowTime, formatDateTime } from '../../lib/utils';
+import { getServerNow } from '../../lib/serverTime';
 
 interface DashboardStats {
   ventas_hoy: number;
@@ -105,12 +106,13 @@ export const EstadisticasModule: React.FC = () => {
   const [desde, setDesde] = useState(weekAgo());
   const [hasta, setHasta] = useState(today());
   const [ventasPeriodo, setVentasPeriodo] = useState<{ fecha: string; total: number; cantidad: number; efectivo: number; tarjeta: number }[]>([]);
-  const [reloj, setReloj] = useState(new Date());
-  const [lastRefresh, setLastRefresh] = useState(new Date());
+  const [reloj, setReloj] = useState(getServerNow());
+  const [lastRefresh, setLastRefresh] = useState(getServerNow());
   const [margenVista, setMargenVista] = useState<'dia' | 'semana' | 'mes'>('dia');
   const [margenes, setMargenes] = useState<{ total_ganancia: number; total_perdida: number; balance_neto: number } | null>(null);
   const [margenLoading, setMargenLoading] = useState(false);
   const [stockPotencial, setStockPotencial] = useState<Array<{
+    id: number;
     producto: string;
     stock: number;
     precio_costo: number;
@@ -140,7 +142,7 @@ export const EstadisticasModule: React.FC = () => {
 
   // Reloj en tiempo real
   useEffect(() => {
-    const t = setInterval(() => setReloj(new Date()), 1000);
+    const t = setInterval(() => setReloj(getServerNow()), 1000);
     return () => clearInterval(t);
   }, []);
 
@@ -150,7 +152,7 @@ export const EstadisticasModule: React.FC = () => {
     try {
       const data = await statsAPI.dashboard() as DashboardStats;
       setStats(data);
-      setLastRefresh(new Date());
+      setLastRefresh(getServerNow());
     } catch (e) {
       setError('Error al cargar estadísticas');
       console.error(e);
@@ -184,7 +186,7 @@ export const EstadisticasModule: React.FC = () => {
   const loadTurnoStats = useCallback(async () => {
     setTurnoLoading(true);
     try {
-      const turno = await libroCajaAPI.getTurnoActivo(today()) as { id?: number; fecha_apertura?: string; fecha_cierre?: string | null } | null;
+      const turno = await cajaAPI.getSesionActiva() as { id?: number; fecha_apertura?: string; fecha_cierre?: string | null } | null;
 
       if (!turno || turno.fecha_cierre) {
         setTurnoStats({
@@ -198,7 +200,7 @@ export const EstadisticasModule: React.FC = () => {
           medioPagoMasUsado: null,
         });
       } else {
-        const horaApertura = turno.fecha_apertura ? formatDateTime(turno.fecha_apertura).split(' ')[1] : null;
+        const horaApertura = turno.fecha_apertura ? formatDateTime(turno.fecha_apertura).split(' ')[1]?.slice(0, 5) || null : null;
         const ventasDelTurno = await statsAPI.ventasPorPeriodo(turno.fecha_apertura || today(), today()) as Array<{ total: number; cantidad: number; metodo?: string }> | undefined;
 
         const totalFacturado = ventasDelTurno?.reduce((s, v: any) => s + (v.total || 0), 0) || 0;
@@ -242,17 +244,18 @@ export const EstadisticasModule: React.FC = () => {
   const loadStockPotencial = useCallback(async () => {
     setStockPotencialLoading(true);
     try {
-      const res = await productosAPI.getAll({ activo: true, limit: 99999 }) as { rows?: Array<{ nombre: string; stock_actual?: number | string; precio_costo?: number | string; precio_venta?: number | string; activo?: boolean }> };
+      const res = await productosAPI.getAll({ activo: 'all', limit: 99999 }) as { rows?: Array<{ id: number; nombre: string; stock_actual?: number | string; precio_costo?: number | string; precio_venta?: number | string }> };
       const rows = Array.isArray(res?.rows) ? res.rows : [];
 
       const datos = rows
-        .filter((p) => p && p.activo !== false)
+        .filter(Boolean)
         .map((p) => {
           const stock = Number(p.stock_actual) || 0;
           const costo = Number(p.precio_costo) || 0;
           const venta = Number(p.precio_venta) || 0;
           const gananciaUnitaria = venta - costo;
           return {
+            id: p.id,
             producto: p.nombre || 'Sin nombre',
             stock,
             precio_costo: costo,
@@ -261,7 +264,7 @@ export const EstadisticasModule: React.FC = () => {
             ganancia_total: gananciaUnitaria * stock,
           };
         })
-        .filter((p) => p.stock > 0 && p.precio_costo > 0)
+        .filter((p) => p.stock > 0)
         .sort((a, b) => b.ganancia_total - a.ganancia_total);
 
       setStockPotencial(datos);
@@ -317,6 +320,8 @@ export const EstadisticasModule: React.FC = () => {
   const maxProductoTotal = Math.max(...(stats.top_productos?.map((p) => p.total) ?? [1]));
 
   const totalInvertidoStock = stockPotencial.reduce((s, p) => s + p.precio_costo * p.stock, 0);
+  const totalVentaPotencial = stockPotencial.reduce((s, p) => s + p.precio_venta * p.stock, 0);
+  const totalStockPotencial = stockPotencial.reduce((s, p) => s + p.stock, 0);
   const gananciaPotencialTotal = stockPotencial.reduce((s, p) => s + p.ganancia_total, 0);
   const margenPromedio = totalInvertidoStock > 0 ? (gananciaPotencialTotal / totalInvertidoStock) * 100 : 0;
 
@@ -355,7 +360,7 @@ export const EstadisticasModule: React.FC = () => {
         {/* ── Estado de Caja ─────────────────────────────────────── */}
         {!turnoStats.estaAbierto ? (
           <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3">
-            <p className="text-xs text-red-400 font-medium">No hay caja abierta</p>
+            <p className="text-xs text-red-400 font-medium">Caja cerrada</p>
           </div>
         ) : (
           <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
@@ -389,7 +394,7 @@ export const EstadisticasModule: React.FC = () => {
         {!turnoStats.estaAbierto ? (
           <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-6 text-center">
             <AlertTriangle size={32} className="mx-auto text-red-400 mb-2" />
-            <p className="text-sm text-red-400 font-medium">No hay caja abierta en este momento</p>
+            <p className="text-sm text-red-400 font-medium">Caja cerrada</p>
             <p className="text-xs text-red-300 mt-1">Abre una caja para ver las estadísticas del turno</p>
           </div>
         ) : (
@@ -681,7 +686,7 @@ export const EstadisticasModule: React.FC = () => {
               <div className="w-8 h-8 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
             </div>
           ) : stockPotencial.length === 0 ? (
-            <div className="text-sm text-slate-500 py-6 text-center">No hay productos con stock y costo válidos para calcular ganancia potencial.</div>
+            <div className="text-sm text-slate-500 py-6 text-center">No hay productos con stock disponible.</div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-left text-sm border-separate border-spacing-y-2">
@@ -697,7 +702,7 @@ export const EstadisticasModule: React.FC = () => {
                 </thead>
                 <tbody>
                   {stockPotencial.map((p) => (
-                    <tr key={p.producto} className="bg-slate-900/60 rounded-lg">
+                    <tr key={p.id} className="bg-slate-900/60 rounded-lg">
                       <td className="py-2 px-3 rounded-l-lg text-slate-200">{p.producto}</td>
                       <td className="py-2 px-3 text-right font-mono text-slate-300">{p.stock}</td>
                       <td className="py-2 px-3 text-right font-mono text-slate-300">{formatCurrency(p.precio_costo)}</td>
@@ -710,11 +715,11 @@ export const EstadisticasModule: React.FC = () => {
                 <tfoot>
                   <tr className="text-xs text-slate-300">
                     <td className="pt-3 font-semibold">Totales</td>
-                    <td className="pt-3" />
+                    <td className="pt-3 text-right font-mono">{totalStockPotencial}</td>
                     <td className="pt-3 text-right font-mono">{formatCurrency(totalInvertidoStock)}</td>
-                    <td className="pt-3 text-right font-mono">{formatCurrency(gananciaPotencialTotal)}</td>
+                    <td className="pt-3 text-right font-mono">{formatCurrency(totalVentaPotencial)}</td>
                     <td className="pt-3" />
-                    <td className="pt-3 text-right font-mono text-emerald-300">{(margenPromedio).toFixed(2)}%</td>
+                    <td className="pt-3 text-right font-mono text-emerald-300">{formatCurrency(gananciaPotencialTotal)}</td>
                   </tr>
                 </tfoot>
               </table>

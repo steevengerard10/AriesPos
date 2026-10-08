@@ -804,6 +804,26 @@ function runMigrations(db: Database.Database): void {
         console.log('[DB] Migración 017: ventas_canceladas OK');
       },
     },
+    {
+      name: '018_fiado_items_pagos',
+      run: (db: Database.Database) => {
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS fiado_items_pagos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            venta_id INTEGER NOT NULL REFERENCES ventas(id) ON DELETE CASCADE,
+            venta_item_id INTEGER NOT NULL,
+            producto_id INTEGER,
+            producto_nombre TEXT NOT NULL,
+            cantidad REAL NOT NULL,
+            precio_unitario REAL NOT NULL,
+            monto REAL NOT NULL,
+            metodo_pago TEXT NOT NULL DEFAULT 'efectivo',
+            fecha TEXT NOT NULL DEFAULT (datetime('now'))
+          );
+          CREATE INDEX IF NOT EXISTS idx_fiado_items_pagos_venta ON fiado_items_pagos(venta_id);
+        `);
+      },
+    },
   ];
 
   const executedMigrations: { name: string }[] = db

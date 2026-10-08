@@ -6,7 +6,7 @@ import {
 import toast from 'react-hot-toast';
 import { authAPI, cajaAPI } from '../../lib/api';
 import { Modal } from '../../components/shared/Modal';
-import { formatCurrency, formatDate, formatTimeHm, toLocalDateISO } from '../../lib/utils';
+import { formatCurrency, formatDate, formatTimeHm, today } from '../../lib/utils';
 import { useTranslation } from 'react-i18next';
 import { useLibroCajaStore } from '../../store/useLibroCajaStore';
 import { useAppStore } from '../../store/useAppStore';
@@ -65,6 +65,15 @@ const METODOS_DEFAULT_CAJA: MetodoPagoConfig[] = [
   { id: 'qr',              nombre: 'QR / MercadoPago', activo: true },
   { id: 'cripto',          nombre: 'Cripto',           activo: false },
 ];
+
+const metodoPagoKey = (method: string): string => {
+  const key = method.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (['cash', 'efectivo'].includes(key)) return 'efectivo';
+  if (['debito', 'debit', 'tarjetadebito'].includes(key)) return 'tarjeta_debito';
+  if (['credito', 'credit', 'tarjetacredito'].includes(key)) return 'tarjeta_credito';
+  if (['transferencia', 'transferencias', 'transfer'].includes(key)) return 'transferencia';
+  return key;
+};
 
 export const CajaModule: React.FC = () => {
   const [sesionActiva, setSesionActiva] = useState<CajaSesion | null>(null);
@@ -151,7 +160,7 @@ export const CajaModule: React.FC = () => {
     setSesionActiva(null);
     setMovimientos([]);
     loadData();
-    const hoy = toLocalDateISO(new Date());
+    const hoy = today();
     cargarDia(hoy);
     cargarHistoricoLibro();
   };
@@ -179,7 +188,7 @@ export const CajaModule: React.FC = () => {
       
       // Sincronizar datos del libro de caja del turno reabierto
       await cargarHistoricoLibro();
-      const hoy = toLocalDateISO(new Date());
+      const hoy = today();
       await cargarDia(hoy);
       
       toast.success('Caja reabierta. Todos los datos sincronizados con el servidor.');
@@ -225,7 +234,8 @@ export const CajaModule: React.FC = () => {
   // Calcula totales por método de pago (todos los ingresos, ventas y manuales)
   const totalesPorMetodo = useMemo(() => movimientos.reduce<Record<string, number>>((acc, m) => {
     if (m.tipo === 'ingreso') {
-      acc[m.metodo_pago] = (acc[m.metodo_pago] || 0) + m.monto;
+      const key = metodoPagoKey(m.metodo_pago);
+      acc[key] = (acc[key] || 0) + m.monto;
     }
     return acc;
   }, {}), [movimientos]);
@@ -331,7 +341,7 @@ export const CajaModule: React.FC = () => {
                 <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-3">{t('caja.byMethod')}</h3>
                 <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
                   {metodosActivos.map(({ id, nombre }) => {
-                    const total = totalesPorMetodo[id] || 0;
+                    const total = totalesPorMetodo[metodoPagoKey(id) || metodoPagoKey(nombre)] || 0;
                     const hayMovimiento = total > 0;
                     return (
                       <div key={id} className={`border rounded-lg p-3 flex items-center gap-3 transition-colors ${
@@ -562,7 +572,7 @@ export const CajaModule: React.FC = () => {
                 <span className="font-mono text-green-400 font-bold">{formatCurrency(movimientos.filter((m) => m.tipo === 'ingreso' && m.venta_numero).reduce((s, m) => s + m.monto, 0))}</span>
               </div>
               {metodosActivos.map(({ id, nombre }) => {
-                const total = totalesPorMetodo[id] || 0;
+                const total = totalesPorMetodo[metodoPagoKey(id) || metodoPagoKey(nombre)] || 0;
                 if (!total) return null;
                 return (
                   <div key={id} className="flex justify-between">

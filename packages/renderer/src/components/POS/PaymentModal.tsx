@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { formatCurrency } from '../../lib/utils';
+import toast from 'react-hot-toast';
 import { useTranslation } from 'react-i18next';
 import { useVentasStore, MetodoPago } from '../../store/useVentasStore';
 import { useAppStore } from '../../store/useAppStore';
-import { Banknote, CreditCard, Smartphone, Bitcoin, FileText, Wallet, X, CheckCircle, AlertTriangle, ChevronLeft, Plus, Trash2, QrCode, type LucideIcon } from 'lucide-react';
+import { printerAPI } from '../../lib/api';
+import { Banknote, CreditCard, Smartphone, Bitcoin, FileText, Wallet, X, CheckCircle, AlertTriangle, ChevronLeft, Plus, Trash2, QrCode, Printer, type LucideIcon } from 'lucide-react';
 
 interface MetodoPagoConfig { id: string; nombre: string; activo: boolean; }
 
@@ -32,7 +34,7 @@ const METODOS_DEFAULT: MetodoPagoConfig[] = [
 interface PaymentModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onConfirm: (cobrado: number) => void | Promise<void>;
+  onConfirm: (cobrado: number) => void | false | Record<string, unknown> | Promise<void | false | Record<string, unknown> | null>;
   simbolo?: string;
 }
 
@@ -47,11 +49,15 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onC
   // Líneas del pago mixto: { metodo, monto }
   const [mixtoLineas, setMixtoLineas] = useState<{ metodo: string; monto: string }[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  const [ticketAfterSale, setTicketAfterSale] = useState<Record<string, unknown> | null>(null);
+  const [printingTicket, setPrintingTicket] = useState(false);
+  const paymentInitializedRef = useRef(false);
   const [metodoSeleccionado, setMetodoSeleccionado] = useState<MetodoPago | null>(null);
   const [recargoTarjetaEnabled, setRecargoTarjetaEnabled] = useState(false);
   const [recargoTarjetaPorcentaje, setRecargoTarjetaPorcentaje] = useState('0');
   const inputRef = useRef<HTMLInputElement>(null);
   const recargoInputRef = useRef<HTMLInputElement>(null);
+  const enterHandlerRef = useRef<(event: KeyboardEvent) => void>(() => {});
 
   const methods = useMemo<MetodoPagoConfig[]>(() => {
     try {
@@ -68,17 +74,20 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onC
   );
 
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && !paymentInitializedRef.current) {
+      paymentInitializedRef.current = true;
       setStep('metodo');
       setReceived(total.toFixed(2));
       setCobrarMonto(total.toFixed(2));
       setSelectedIdx(0);
       setMixtoLineas([]);
       setSubmitting(false);
+      setTicketAfterSale(null);
       setMetodoSeleccionado(null);
       setRecargoTarjetaEnabled(false);
       setRecargoTarjetaPorcentaje('0');
     }
+    if (!isOpen) paymentInitializedRef.current = false;
   }, [isOpen, total]);
 
   useEffect(() => {
@@ -92,18 +101,18 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onC
       if (submitting) return;
       if (e.key === 'ArrowDown') { e.preventDefault(); setSelectedIdx((i) => (i + 1) % (methods.length + 1)); }
       else if (e.key === 'ArrowUp') { e.preventDefault(); setSelectedIdx((i) => (i - 1 + methods.length + 1) % (methods.length + 1)); }
-      else if (e.key === 'Enter') {
-        e.preventDefault();
-        const totalOptions = methods.length + 1; // +1 for mixto
-        if (selectedIdx === totalOptions - 1) { handleOpenMixto(); return; }
-        const m = methods[selectedIdx];
-        if (m && !(m.id === 'fiado' && !clienteId)) handleSelectMetodo(m.id as MetodoPago);
-      } else if (e.key === 'Escape') { onClose(); }
+      else if (e.key === 'Escape') { onClose(); }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, step, selectedIdx, methods, clienteId, submitting]);
+
+  useEffect(() => {
+    const handleEnter = (event: KeyboardEvent) => enterHandlerRef.current(event);
+    window.addEventListener('keydown', handleEnter, true);
+    return () => window.removeEventListener('keydown', handleEnter, true);
+  }, []);
 
   if (!isOpen) return null;
 
@@ -155,11 +164,67 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onC
     if (submitting) return;
     setSubmitting(true);
     try {
-      await onConfirm(cobrado);
+      const ticket = await onConfirm(cobrado);
+      if (ticket === false) return;
+      if (!ticket || !('items' in ticket)) {
+        onClose();
+        return;
+      }
+      const mode = config.ticket_modo_impresion || 'preguntar';
+      if (mode === 'nunca') {
+        onClose();
+        return;
+      }
+      if (mode === 'siempre' && config.ticket_impresora) {
+        const result = await printerAPI.printTicket(ticket, config);
+        if (!result.success) toast.error(result.error || 'No se pudo imprimir el ticket');
+        else toast.success('Ticket enviado a imprimir');
+        onClose();
+        return;
+      }
+      setTicketAfterSale(ticket);
     } finally {
       setSubmitting(false);
     }
   };
+
+  const handlePrintTicket = async () => {
+    if (!ticketAfterSale) return;
+    setPrintingTicket(true);
+    try {
+      const result = await printerAPI.printTicket(ticketAfterSale, config);
+      if (!result.success) throw new Error(result.error || 'No se pudo imprimir el ticket');
+      toast.success('Ticket enviado a imprimir');
+      setTicketAfterSale(null);
+      onClose();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'No se pudo imprimir el ticket');
+    } finally {
+      setPrintingTicket(false);
+    }
+  };
+
+  if (ticketAfterSale) {
+    return (
+      <div style={{ position: 'fixed', inset: 0, zIndex: 1100, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+        <div className="bg-slate-800 border border-slate-700 rounded-xl p-6 w-full max-w-sm space-y-4 text-center">
+          <CheckCircle size={32} className="text-emerald-400 mx-auto" />
+          <h2 className="text-lg font-bold text-white">Venta registrada</h2>
+          <p className="text-sm text-slate-400">{config.ticket_impresora ? '¿Querés imprimir el ticket ahora?' : 'No hay una impresora configurada.'}</p>
+          <div className="flex flex-col gap-2">
+            {config.ticket_impresora && (
+              <button type="button" className="btn-primary btn w-full" onClick={() => void handlePrintTicket()} disabled={printingTicket}>
+                <Printer size={16} /> {printingTicket ? 'Imprimiendo…' : 'Imprimir ticket'}
+              </button>
+            )}
+            <button type="button" className="btn-secondary btn w-full" onClick={() => { setTicketAfterSale(null); onClose(); }} disabled={printingTicket}>
+              Continuar sin imprimir
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const handleConfirmMixto = () => {
     setMetodoPago('mixto' as MetodoPago);
@@ -202,6 +267,46 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onC
   };
 
   const handleConfirmEfectivo = () => { setEsFiado(false); void confirmarVenta(cobradoNum); };
+
+  enterHandlerRef.current = (event) => {
+    if (!isOpen || event.key !== 'Enter' || submitting || ticketAfterSale) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+
+    if (step === 'metodo') {
+      if (selectedIdx === methods.length) {
+        handleOpenMixto();
+        return;
+      }
+      const selectedMethod = methods[selectedIdx];
+      if (!selectedMethod || (selectedMethod.id === 'fiado' && !clienteId)) return;
+      const methodId = selectedMethod.id as MetodoPago;
+      setMetodoPago(methodId);
+      setMetodoPagoMixto([]);
+      setEsFiado(methodId === 'fiado');
+      setMetodoSeleccionado(methodId);
+      void confirmarVenta(cobradoNum);
+      return;
+    }
+    if (step === 'efectivo') {
+      handleConfirmEfectivo();
+      return;
+    }
+    if (step === 'tarjeta') {
+      handleConfirmTarjeta();
+      return;
+    }
+    if (mixtoOk) {
+      handleConfirmMixto();
+    } else if (mixtoLineas.length === 1 && Math.abs(mixtoSum - total) < 0.01) {
+      setMetodoPago(mixtoLineas[0].metodo as MetodoPago);
+      setMetodoPagoMixto([]);
+      setEsFiado(false);
+      void confirmarVenta(mixtoSum);
+    } else {
+      toast.error('Revisá los importes del pago mixto antes de confirmar');
+    }
+  };
 
   const overlay: React.CSSProperties = {
     position: 'fixed', inset: 0, zIndex: 1000,
@@ -352,7 +457,6 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onC
                   type="number"
                   value={received}
                   onChange={(e) => setReceived(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter' && !submitting) handleConfirmEfectivo(); }}
                   title="Monto recibido"
                   placeholder={cobradoNum.toFixed(2)}
                   style={{ width: '100%', boxSizing: 'border-box', background: 'var(--bg3)', border: '2px solid var(--accent3)', borderRadius: 12, padding: '14px 16px', fontSize: 30, fontWeight: 900, fontFamily: "'DM Mono', monospace", color: 'var(--text)', textAlign: 'right', outline: 'none' }}
@@ -536,7 +640,6 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onC
                       type="number"
                       value={recargoTarjetaPorcentaje}
                       onChange={(e) => setRecargoTarjetaPorcentaje(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === 'Enter' && !submitting) handleConfirmTarjeta(); }}
                       title="Porcentaje de recargo"
                       placeholder="0"
                       min="0"

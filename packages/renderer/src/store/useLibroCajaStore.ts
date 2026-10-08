@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { libroCajaAPI, LibroCajaDia, LibroCajaTurno, LibroCajaBillete, LibroCajaEgreso } from '../lib/api';
-import { toLocalDateISO } from '../lib/utils';
+import { today } from '../lib/utils';
+import { getServerNow } from '../lib/serverTime';
 
 export interface LibroCajaPeriodo {
   periodo: string;
@@ -48,11 +49,11 @@ interface LibroCajaState {
 }
 
 function hoyISO(): string {
-  return toLocalDateISO(new Date());
+  return today();
 }
 
 function mesActualISO(): string {
-  const now = new Date();
+  const now = getServerNow();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 }
 
@@ -193,7 +194,7 @@ export const useLibroCajaStore = create<LibroCajaState>((set, get) => ({
       proveedor,
       monto,
       medio_pago,
-      fecha: new Date().toISOString(),
+      fecha: getServerNow().toISOString(),
     };
     set(s => ({
       egresos: [nuevoEgreso, ...s.egresos],

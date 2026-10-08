@@ -7,7 +7,7 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from 'recharts';
 import { statsAPI, ventasAPI } from '../../lib/api';
-import { formatDayShort, formatLocaleDateFull } from '../../lib/utils';
+import { formatCurrency, formatDayShort, formatLocaleDateFull } from '../../lib/utils';
 import { useAppStore } from '../../store/useAppStore';
 import { useTranslation } from 'react-i18next';
 
@@ -34,13 +34,32 @@ interface Venta {
   id: number;
   numero: string;
   fecha: string;
+  hora?: string;
   total: number;
   metodo_pago: string;
   cliente_nombre?: string;
+  productos?: string | null;
+  items_json?: string | null;
 }
 
 function fmt(n: number) {
   return '$' + n.toLocaleString('es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+}
+
+function formatItemsDescription(itemsJson?: string | null, fallback?: string | null): string {
+  if (itemsJson) {
+    try {
+      const items = JSON.parse(itemsJson) as { producto_nombre: string; cantidad: number; precio_unitario: number }[];
+      if (items.length > 0) {
+        return items
+          .map((item) => `${item.producto_nombre} x${item.cantidad} · ${formatCurrency(item.precio_unitario)}`)
+          .join(' | ');
+      }
+    } catch {
+      return fallback || '';
+    }
+  }
+  return fallback || '';
 }
 
 interface KPIProps {
@@ -126,7 +145,9 @@ export default function Dashboard() {
     return () => window.clearInterval(interval);
   }, []);
 
-  const ventasHoy = ventas.filter((v) => v.fecha === stats?.fecha_hoy);
+  const ventasHoy = ventas
+    .filter((v) => v.fecha === stats?.fecha_hoy)
+    .sort((a, b) => `${b.fecha} ${b.hora || ''}`.localeCompare(`${a.fecha} ${a.hora || ''}`));
 
   const trend =
     stats && stats.total_semana_anterior > 0
@@ -247,6 +268,9 @@ export default function Dashboard() {
                       <td className="table-cell">
                         <div style={{ fontSize: 12, color: 'var(--text)' }}>{v.cliente_nombre ?? t('dash.consumer')}</div>
                         <div style={{ fontSize: 10, color: 'var(--text3)' }}>{v.metodo_pago}</div>
+                        <div className="truncate" style={{ fontSize: 10, color: 'var(--text3)' }} title={formatItemsDescription(v.items_json, v.productos)}>
+                          {formatItemsDescription(v.items_json, v.productos)}
+                        </div>
                       </td>
                       <td className="table-cell pr-4 text-right">
                         <span className="num font-semibold" style={{ fontSize: 13, color: 'var(--accent3)' }}>

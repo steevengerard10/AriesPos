@@ -3,6 +3,7 @@ import { BookOpen, ChevronLeft, ChevronRight, Lock } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { authAPI, libroCajaAPI, LibroCajaDiarioRow } from '../../lib/api';
 import { Modal } from '../../components/shared/Modal';
+import { getServerNow } from '../../lib/serverTime';
 
 const fmt = (n: number) => n.toLocaleString('es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 
@@ -11,7 +12,7 @@ const COL_COUNT = 9;
 const EDIT_SESSION_MS = 5 * 60 * 1000;
 
 function mesActualISO(): string {
-  const now = new Date();
+  const now = getServerNow();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 }
 

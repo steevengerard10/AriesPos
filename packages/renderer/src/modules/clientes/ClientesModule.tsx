@@ -51,6 +51,8 @@ interface FiadoPendienteItem {
   precioSistema?: number;        // precio original del producto
 }
 
+type PagoParcialModo = 'manual' | 'automatico';
+
 interface Venta {
   id: number;
   numero: string;
@@ -93,6 +95,14 @@ export const ClientesModule: React.FC = () => {
   const [pagoSeleccion, setPagoSeleccion] = useState<Record<string, { checked: boolean; cantidad: number }>>({});
   const [loadingPagoItems, setLoadingPagoItems] = useState(false);
   const [pagoSubmitting, setPagoSubmitting] = useState(false);
+  const [showPagoParcialModal, setShowPagoParcialModal] = useState(false);
+  const [pagoParcialModo, setPagoParcialModo] = useState<PagoParcialModo>('manual');
+  const [pagoParcialVentaId, setPagoParcialVentaId] = useState<number | null>(null);
+  const [pagoParcialItems, setPagoParcialItems] = useState<FiadoPendienteItem[]>([]);
+  const [pagoParcialSeleccion, setPagoParcialSeleccion] = useState<Record<string, number>>({});
+  const [pagoParcialMonto, setPagoParcialMonto] = useState('');
+  const [pagoParcialMetodo, setPagoParcialMetodo] = useState('efectivo');
+  const [pagoParcialLoading, setPagoParcialLoading] = useState(false);
   const [descuentoCobroActivo, setDescuentoCobroActivo] = useState(false);
   const [descuentoCobroUnidad, setDescuentoCobroUnidad] = useState<'%' | '$'>('%');
   const [descuentoCobroValor, setDescuentoCobroValor] = useState('0');
@@ -265,8 +275,10 @@ export const ClientesModule: React.FC = () => {
     }
   };
 
-  const loadFiadoPendientes = async (clienteId: number): Promise<FiadoPendienteItem[]> => {
-    const ventas = await clientesAPI.getVentas(clienteId) as Venta[];
+  const loadFiadoPendientes = async (clienteId: number, ventaId?: number): Promise<FiadoPendienteItem[]> => {
+    const ventas = ventaId == null
+      ? await clientesAPI.getVentas(clienteId) as Venta[]
+      : [await ventasAPI.getById(ventaId) as Venta];
     const pendientes = ventas.filter((v) => v.estado === 'fiado' || v.estado === 'parcial');
     const items: FiadoPendienteItem[] = [];
     await Promise.all(
@@ -277,7 +289,9 @@ export const ClientesModule: React.FC = () => {
           // Si existe precio_modificado: usar ese precio
           // Si no: usar precio_actual (precio vigente)
           // Si no existe precio_actual: usar precio_unitario (precio en la venta)
-          const precioParaUsar = item.precio_cobrado ?? item.precio_modificado ?? (item.precio_actual ?? item.precio_unitario);
+          const precioParaUsar = ventaId != null
+            ? (item.precio_actual != null && item.precio_actual > 0 ? item.precio_actual : item.precio_unitario)
+            : item.precio_cobrado ?? item.precio_modificado ?? (item.precio_actual ?? item.precio_unitario);
           
           items.push({
             key: `${v.id}-${item.id}`,
@@ -380,6 +394,27 @@ export const ClientesModule: React.FC = () => {
     }
   };
 
+  const handleOpenPagoParcial = async (ventaId: number) => {
+    if (!selectedCliente) return;
+    setPagoParcialVentaId(ventaId);
+    setPagoParcialModo('manual');
+    setPagoParcialSeleccion({});
+    setPagoParcialMonto('');
+    setPagoParcialMetodo('efectivo');
+    setShowPagoParcialModal(true);
+    setPagoParcialLoading(true);
+    try {
+      const items = await loadFiadoPendientes(selectedCliente.id, ventaId);
+      setPagoParcialItems(items);
+      setPagoParcialSeleccion(Object.fromEntries(items.map((item) => [item.key, 0])));
+    } catch {
+      toast.error('No se pudieron cargar los productos pendientes');
+      setShowPagoParcialModal(false);
+    } finally {
+      setPagoParcialLoading(false);
+    }
+  };
+
   const handleToggleVenta = async (ventaId: number) => {
     if (expandedVentaId === ventaId) {
       setExpandedVentaId(null);
@@ -412,6 +447,61 @@ export const ClientesModule: React.FC = () => {
     ? (recargoCobroUnidad === '%' ? totalSeleccionado * ((parseFloat(recargoCobroValor) || 0) / 100) : Math.max(0, parseFloat(recargoCobroValor) || 0))
     : 0;
   const totalCobro = Math.max(0, totalSeleccionado - descuentoCobro + recargoCobro);
+
+  const pagoParcialSeleccionados = useMemo(() => {
+    if (pagoParcialModo === 'manual') {
+      return pagoParcialItems.flatMap((item) => {
+        const cantidad = Math.min(Math.max(0, Number(pagoParcialSeleccion[item.key]) || 0), item.cantidad);
+        return cantidad > 0 ? [{ item, cantidad }] : [];
+      });
+    }
+    const monto = Math.max(0, Number(pagoParcialMonto) || 0);
+    const totalPendiente = pagoParcialItems.reduce((total, item) => total + item.cantidad * item.precioActual, 0);
+    if (monto <= 0 || totalPendiente <= 0) return [];
+    return pagoParcialItems.flatMap((item) => {
+      if (item.precioActual <= 0) return [];
+      const montoProporcional = monto * (item.cantidad * item.precioActual) / totalPendiente;
+      const cantidad = Math.min(item.cantidad, Math.floor((montoProporcional + 0.000001) / item.precioActual));
+      return cantidad > 0 ? [{ item, cantidad }] : [];
+    });
+  }, [pagoParcialModo, pagoParcialItems, pagoParcialSeleccion, pagoParcialMonto]);
+  const pagoParcialTotalProductos = pagoParcialSeleccionados.reduce(
+    (total, seleccion) => total + Math.round(seleccion.item.precioActual * seleccion.cantidad * 100) / 100,
+    0,
+  );
+  const pagoParcialMontoRecibido = Math.max(0, Math.round((Number(pagoParcialMonto) || 0) * 100) / 100);
+  const pagoParcialVarios = Math.max(0, Math.round((pagoParcialMontoRecibido - pagoParcialTotalProductos) * 100) / 100);
+  const pagoParcialMontoInsuficiente = pagoParcialModo === 'manual' && pagoParcialTotalProductos > pagoParcialMontoRecibido + 0.009;
+
+  const handleConfirmarPagoParcial = async () => {
+    if (!selectedCliente || pagoParcialVentaId == null || pagoSubmitting || pagoParcialMontoRecibido <= 0 || pagoParcialMontoInsuficiente) return;
+    setPagoSubmitting(true);
+    try {
+      const result = await clientesAPI.pagarFiadoProductos(
+        selectedCliente.id,
+        pagoParcialVentaId,
+        pagoParcialSeleccionados.map(({ item, cantidad }) => ({ venta_id: item.ventaId, item_id: item.itemId, cantidad })),
+        pagoParcialMontoRecibido,
+        pagoParcialMetodo,
+      );
+      toast.success(`Pago parcial registrado: ${formatCurrency(result.monto)}`);
+      setShowPagoParcialModal(false);
+      setPagoParcialItems([]);
+      setPagoParcialSeleccion({});
+      const freshList = await loadData();
+      const updated = freshList?.find((cliente) => cliente.id === selectedCliente.id) || selectedCliente;
+      await handleVerCuenta(updated);
+      setExpandedVentaId(pagoParcialVentaId);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'No se pudo registrar el pago parcial');
+      if (selectedCliente) {
+        const items = await loadFiadoPendientes(selectedCliente.id, pagoParcialVentaId).catch(() => []);
+        setPagoParcialItems(items);
+      }
+    } finally {
+      setPagoSubmitting(false);
+    }
+  };
 
   const cargarFiadoEnPos = async (ventaId?: number) => {
     if (!selectedCliente) return;
@@ -837,6 +927,17 @@ export const ClientesModule: React.FC = () => {
                                   {v.observaciones}
                                 </div>
                               )}
+                              {(v.estado === 'fiado' || v.estado === 'parcial') && (
+                                <div className="flex justify-end pt-2 border-t border-slate-600/40 mt-1">
+                                  <button
+                                    type="button"
+                                    className="btn-success btn btn-sm"
+                                    onClick={() => void handleOpenPagoParcial(v.id)}
+                                  >
+                                    <DollarSign size={14} /> Pago parcial
+                                  </button>
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>
@@ -1111,6 +1212,159 @@ export const ClientesModule: React.FC = () => {
               </span>
             </div>
           )}
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={showPagoParcialModal}
+        onClose={() => { setShowPagoParcialModal(false); setPagoParcialItems([]); setPagoParcialSeleccion({}); }}
+        title="Pago parcial"
+        size="lg"
+        footer={(
+          <>
+            <button
+              type="button"
+              className="btn-secondary btn"
+              onClick={() => { setShowPagoParcialModal(false); setPagoParcialItems([]); setPagoParcialSeleccion({}); }}
+              disabled={pagoSubmitting}
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              className="btn-success btn"
+              onClick={() => void handleConfirmarPagoParcial()}
+              disabled={pagoSubmitting || pagoParcialLoading || pagoParcialMontoRecibido <= 0 || pagoParcialMontoInsuficiente}
+            >
+              <DollarSign size={15} /> {pagoSubmitting ? 'Procesando…' : `Confirmar ${formatCurrency(pagoParcialMontoRecibido)}`}
+            </button>
+          </>
+        )}
+      >
+        <div className="space-y-4">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="inline-flex rounded-lg border border-slate-600 p-1 bg-slate-900/50" role="group" aria-label="Modo de pago parcial">
+              <button
+                type="button"
+                aria-pressed={pagoParcialModo === 'manual'}
+                onClick={() => setPagoParcialModo('manual')}
+                className={`btn btn-sm ${pagoParcialModo === 'manual' ? 'btn-primary' : 'btn-ghost'}`}
+              >
+                Manual
+              </button>
+              <button
+                type="button"
+                aria-pressed={pagoParcialModo === 'automatico'}
+                onClick={() => setPagoParcialModo('automatico')}
+                className={`btn btn-sm ${pagoParcialModo === 'automatico' ? 'btn-primary' : 'btn-ghost'}`}
+              >
+                Automático
+              </button>
+            </div>
+            <label className="flex items-center gap-3 text-sm text-slate-300">
+              Monto recibido
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={pagoParcialMonto}
+                onChange={(e) => setPagoParcialMonto(e.target.value)}
+                className="input w-40 text-right font-mono"
+                autoFocus
+              />
+            </label>
+          </div>
+
+          {pagoParcialLoading ? (
+            <p className="text-sm text-slate-400 text-center py-8">Cargando productos pendientes…</p>
+          ) : pagoParcialItems.length === 0 ? (
+            <p className="text-sm text-slate-500 text-center py-8">No hay productos pendientes en este fiado.</p>
+          ) : (
+            <div className="rounded-lg border border-slate-700 overflow-hidden max-h-72 overflow-y-auto">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-slate-800 z-10">
+                  <tr className="border-b border-slate-700 text-xs text-slate-400">
+                    <th className="text-left px-3 py-2">Producto</th>
+                    <th className="text-right px-3 py-2">Pendiente</th>
+                    <th className="text-right px-3 py-2">Precio vigente</th>
+                    <th className="text-right px-3 py-2">Unidades a pagar</th>
+                    <th className="text-right px-3 py-2">Total</th>
+                    {pagoParcialModo === 'automatico' && <th className="text-right px-3 py-2">Estado</th>}
+                  </tr>
+                </thead>
+                <tbody>
+                  {pagoParcialItems.map((item) => {
+                    const seleccion = pagoParcialSeleccionados.find((selected) => selected.item.key === item.key);
+                    const cantidadSeleccionada = seleccion?.cantidad ?? 0;
+                    return (
+                      <tr key={item.key} className="border-b border-slate-700/50">
+                        <td className="px-3 py-2 text-slate-200">{item.producto_nombre || 'Producto eliminado'}</td>
+                        <td className="px-3 py-2 text-right font-mono text-slate-300">{item.cantidad}</td>
+                        <td className="px-3 py-2 text-right font-mono text-slate-300">{formatCurrency(item.precioActual)}</td>
+                        <td className="px-3 py-2 text-right">
+                          {pagoParcialModo === 'manual' ? (
+                            <input
+                              type="number"
+                              min="0"
+                              max={item.cantidad}
+                              step={item.cantidad % 1 === 0 ? 1 : 0.01}
+                              value={pagoParcialSeleccion[item.key] ?? 0}
+                              onChange={(e) => {
+                                const cantidad = Math.min(Math.max(0, Number(e.target.value) || 0), item.cantidad);
+                                setPagoParcialSeleccion((prev) => ({ ...prev, [item.key]: cantidad }));
+                              }}
+                              className="input w-24 py-1 text-right font-mono text-xs"
+                              aria-label={`Unidades de ${item.producto_nombre} a pagar`}
+                            />
+                          ) : (
+                            <span className="font-mono text-white">{cantidadSeleccionada}</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 text-right font-mono text-white">{formatCurrency(item.precioActual * cantidadSeleccionada)}</td>
+                        {pagoParcialModo === 'automatico' && (
+                          <td className={`px-3 py-2 text-right text-xs ${cantidadSeleccionada > 0 ? 'text-emerald-400' : 'text-slate-500'}`}>
+                            {cantidadSeleccionada > 0 ? 'Se pagará' : 'Pendiente'}
+                          </td>
+                        )}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <div>
+            <label className="label">Método de pago</label>
+            <select className="input" value={pagoParcialMetodo} onChange={(e) => setPagoParcialMetodo(e.target.value)}>
+              {metodosPagoFiado.map((metodo) => <option key={metodo.id} value={metodo.id}>{metodo.nombre}</option>)}
+            </select>
+          </div>
+
+          <div className="rounded-lg border border-slate-700 bg-slate-900/50 p-3 space-y-2 text-sm">
+            <div className="text-xs font-semibold uppercase tracking-wider text-slate-400">Resumen del cobro</div>
+            <div className="space-y-1">
+              {pagoParcialSeleccionados.map(({ item, cantidad }) => (
+                <div key={item.key} className="flex justify-between gap-3 text-slate-300">
+                  <span>{item.producto_nombre} x{cantidad}</span>
+                  <span className="font-mono">{formatCurrency(item.precioActual * cantidad)}</span>
+                </div>
+              ))}
+              {pagoParcialVarios > 0 && (
+                <div className="flex justify-between gap-3 text-amber-300">
+                  <span>Varios</span>
+                  <span className="font-mono">{formatCurrency(pagoParcialVarios)}</span>
+                </div>
+              )}
+              {pagoParcialMontoInsuficiente && (
+                <p className="text-xs text-red-400">El monto recibido no alcanza para las unidades seleccionadas.</p>
+              )}
+              <div className="flex justify-between border-t border-slate-700 pt-2 font-semibold text-white">
+                <span>Total recibido · {metodosPagoFiado.find((metodo) => metodo.id === pagoParcialMetodo)?.nombre || pagoParcialMetodo}</span>
+                <span className="font-mono">{formatCurrency(pagoParcialMontoRecibido)}</span>
+              </div>
+            </div>
+          </div>
         </div>
       </Modal>
 

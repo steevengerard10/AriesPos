@@ -12,7 +12,7 @@ import { Modal } from '../shared/Modal';
 
 import { useVentasStore, type MetodoPago } from '../../store/useVentasStore';
 import { useAppStore } from '../../store/useAppStore';
-import { formatCurrency, generateTicketHTML } from '../../lib/utils';
+import { formatCurrency } from '../../lib/utils';
 import { ventasAPI, clientesAPI, usuariosAPI, configAPI, appAPI, sendEvent, onEvent, productosAPI } from '../../lib/api';
 import { useTranslation } from 'react-i18next';
 
@@ -324,7 +324,6 @@ export const POSWindow: React.FC = () => {
         { duration: 3000 }
       );
 
-      setShowPayment(false);
       resetSale();
 
       // Refocus en el search bar para venta rápida
@@ -332,22 +331,32 @@ export const POSWindow: React.FC = () => {
         productSearchRef.current?.focus();
       }, 100);
 
-      // Imprimir ticket (fuera del try/catch principal para que un fallo al imprimir no cancele la venta)
-      try {
-        const allConfig = await configAPI.getAll() as Record<string, string>;
-        const ticketHTML = generateTicketHTML(result.venta as Record<string, unknown>, cart as unknown as Record<string, unknown>[], allConfig);
-        const printWindow = window.open('', '_blank', 'width=400,height=600');
-        if (printWindow) {
-          printWindow.document.write(ticketHTML);
-          printWindow.document.close();
-          printWindow.print();
-          printWindow.close();
-        }
-      } catch { /* no interrumpir si falla la impresión */ }
+      if (tipoOperacion !== 'venta') return;
+      const ventaGuardada = result.venta || {};
+      const subtotalTicket = rawSubtotal;
+      const totalAntesRecargo = Math.max(0, subtotalTicket - descuentoFinal);
+      return {
+        ...ventaGuardada,
+        numero: result.numero,
+        vendedor_nombre: vendedorNombre,
+        cliente_nombre: clienteNombre,
+        subtotal: subtotalTicket,
+        descuento: descuentoFinal,
+        recargo: Math.max(0, cobrado - totalAntesRecargo),
+        total: cobrado,
+        metodo_pago: currentMetodo,
+        items: cart.map((item) => ({
+          producto_nombre: item.nombre,
+          cantidad: item.cantidad,
+          precio_unitario: item.precio_unitario,
+          total: item.total,
+        })),
+      };
     } catch (err) {
       toast.error(t('pos.saleError'));
       console.error(err);
       sendEvent('broadcast-event', 'pos:alert', { type: 'sale_failed', message: 'Error al registrar la venta', detail: String(err) });
+      return false;
     } finally {
       setProcesando(false);
     }
