@@ -30,6 +30,7 @@ interface Venta {
   numero: string;
   fecha: string;
   hora: string;
+  created_at?: string;
   cliente_id?: number | null;
   cliente_nombre: string | null;
   vendedor_nombre: string;
@@ -79,6 +80,27 @@ function formatItemsDescription(itemsJson?: string | null, fallback?: string | n
     }
   }
   return fallback || '';
+}
+
+function formatVentaDateTime(venta: Pick<Venta, 'fecha' | 'hora' | 'created_at'>): string {
+  if (venta.created_at?.includes('T')) {
+    const timestamp = new Date(venta.created_at);
+    if (!Number.isNaN(timestamp.getTime())) {
+      const fecha = timestamp.toLocaleDateString('es-AR', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        timeZone: 'America/Argentina/Buenos_Aires',
+      });
+      const hora = timestamp.toLocaleTimeString('es-AR', {
+        hour: '2-digit',
+        minute: '2-digit',
+        timeZone: 'America/Argentina/Buenos_Aires',
+      });
+      return `${fecha} ${hora}`;
+    }
+  }
+  return `${formatDate(venta.fecha)}${venta.hora ? ` ${String(venta.hora).slice(0, 5)}` : ''}`;
 }
 
 export const HistoricoVentas: React.FC = () => {
@@ -284,7 +306,7 @@ export const HistoricoVentas: React.FC = () => {
       if (filterEstado) list = (list as Venta[]).filter((v) => v.estado === filterEstado);
       if (filterMetodo) list = (list as Venta[]).filter((v) => v.metodo_pago === filterMetodo);
     }
-    return list.sort((a, b) => `${b.fecha} ${b.hora || ''}`.localeCompare(`${a.fecha} ${a.hora || ''}`));
+    return list.sort((a, b) => b.fecha.localeCompare(a.fecha) || b.id - a.id);
   }, [ventas, ventasCanceladas, listTab, search, filterEstado, filterMetodo]);
 
   const totalFiltrado = useMemo(() => {
@@ -439,7 +461,7 @@ export const HistoricoVentas: React.FC = () => {
                     <tr key={v.id} className="table-row cursor-pointer" onClick={() => void handleVerDetalle(v)}>
                       <td className="table-cell font-mono text-blue-400 text-sm">#{v.numero}</td>
                       <td className="table-cell text-xs" style={{ color: 'var(--text3)' }}>
-                        {formatDate(v.fecha)}{v.hora ? ` ${String(v.hora).slice(0, 5)}` : ''}
+                        {formatVentaDateTime(v)}
                       </td>
                       <td className="table-cell text-sm" style={{ color: 'var(--text2)' }}>
                         <div className="flex flex-col">
@@ -615,7 +637,7 @@ export const HistoricoVentas: React.FC = () => {
               <div>
                 <div style={{ color: 'var(--text3)' }}>Fecha</div>
                 <div style={{ color: 'var(--text)' }}>
-                  {formatDate(selectedVenta.fecha)}{selectedVenta.hora ? ` ${String(selectedVenta.hora).slice(0, 5)}` : ''}
+                  {formatVentaDateTime(selectedVenta)}
                 </div>
               </div>
               <div>

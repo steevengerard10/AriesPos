@@ -1,6 +1,4 @@
-import { BrowserWindow, app } from 'electron';
-import * as fs from 'fs';
-import * as path from 'path';
+import { BrowserWindow } from 'electron';
 
 type TicketConfig = Record<string, string>;
 type TicketRecord = Record<string, unknown>;
@@ -17,17 +15,6 @@ const money = (value: unknown, symbol: string): string => `${symbol}${(Number(va
   maximumFractionDigits: 2,
 })}`;
 
-function getLogoDataUrl(): string {
-  const logoPath = app.isPackaged
-    ? path.join(process.resourcesPath, 'logo', 'icon_logo.png')
-    : path.join(app.getAppPath(), 'packages/renderer/src/assets/icon_logo.png');
-  try {
-    return `data:image/png;base64,${fs.readFileSync(logoPath).toString('base64')}`;
-  } catch {
-    return '';
-  }
-}
-
 export function generateTicketHTML(venta: TicketRecord, config: TicketConfig): { html: string; pageSize: { width: number; height: number } | 'A4' } {
   const items = Array.isArray(venta.items) ? venta.items as TicketRecord[] : [];
   const format = config.ticket_ancho || config.formato_ticket || '80';
@@ -43,7 +30,9 @@ export function generateTicketHTML(venta: TicketRecord, config: TicketConfig): {
   const showNumber = config.ticket_mostrar_numero !== 'false';
   const showSeller = config.ticket_mostrar_vendedor !== 'false';
   const showCuit = config.ticket_mostrar_cuit === 'true';
-  const logo = config.ticket_mostrar_logo === 'true' ? getLogoDataUrl() : '';
+  const logo = /^data:image\/(?:png|jpeg);base64,[A-Za-z0-9+/]+={0,2}$/.test(config.logo_negocio || '')
+    ? config.logo_negocio
+    : '';
   const date = showDate ? `<div>Fecha: ${escapeHtml(venta.fecha)} ${escapeHtml(venta.hora)}</div>` : '';
   const number = showNumber ? `<div>Ticket: ${escapeHtml(venta.numero)}</div>` : '';
   const seller = showSeller && venta.vendedor_nombre ? `<div>Vendedor: ${escapeHtml(venta.vendedor_nombre)}</div>` : '';
@@ -122,7 +111,13 @@ export async function imprimirTicket(venta: TicketRecord, config: TicketConfig):
   });
 
   try {
-    await printWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+    await printWindow.loadURL('about:blank');
+    await printWindow.webContents.executeJavaScript(
+      `document.open(); document.write(${JSON.stringify(html)}); document.close();`,
+    );
+    await printWindow.webContents.executeJavaScript(
+      `Promise.all(Array.from(document.images, (image) => image.decode().catch(() => undefined)))`,
+    );
     await new Promise<void>((resolve, reject) => {
       printWindow.webContents.print({
         silent: true,

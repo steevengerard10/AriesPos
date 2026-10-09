@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Settings, Save, Server, Printer, Database, Upload, Download, RefreshCw,
-  Check, AlertTriangle, ExternalLink, Copy, Wifi, Globe, CreditCard, Plus, Trash2, Archive, Palette, ShieldCheck, Lock, Eye, EyeOff, RotateCcw, FolderOpen, Wrench
+  Check, AlertTriangle, ExternalLink, Copy, Wifi, Globe, CreditCard, Plus, Trash2, Archive, Palette, ShieldCheck, Lock, Eye, EyeOff, RotateCcw, FolderOpen, Wrench, X
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { configAPI, backupAPI, appAPI, productosAPI, firmaAPI, printerAPI, PrinterDevice } from '../../lib/api';
@@ -97,6 +97,7 @@ export const ConfiguracionModule: React.FC = () => {
   const [nuevoMetodoNombre, setNuevoMetodoNombre] = useState('');
   const csvRef = useRef<HTMLInputElement>(null);
   const jsonRef = useRef<HTMLInputElement>(null);
+  const logoRef = useRef<HTMLInputElement>(null);
   const [showImportNixtar, setShowImportNixtar] = useState(false);
   const [showResetModal, setShowResetModal] = useState(false);
   const [resetConfirmText, setResetConfirmText] = useState('');
@@ -104,6 +105,7 @@ export const ConfiguracionModule: React.FC = () => {
   const [isClientMode, setIsClientMode] = useState(false);
   const [repairing, setRepairing] = useState(false);
   const [repairResult, setRepairResult] = useState<{ integrityOk: boolean; message: string } | null>(null);
+  const [savingLogo, setSavingLogo] = useState(false);
 
   // ── Firma del propietario ──
   const [firmaEstado, setFirmaEstado] = useState<{ registrada: boolean; nombre: string; fecha: string } | null>(null);
@@ -176,6 +178,64 @@ export const ConfiguracionModule: React.FC = () => {
     if (/(^|\D)58\s?mm|58\s?mm/i.test(reportedSize)) setField('ticket_ancho', '58');
     else if (/(^|\D)80\s?mm|80\s?mm/i.test(reportedSize)) setField('ticket_ancho', '80');
     else if (/\bA4\b/i.test(reportedSize)) setField('ticket_ancho', 'A4');
+  };
+
+  const handleLogoUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = '';
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) {
+      toast.error('El logo no puede superar 2 MB');
+      return;
+    }
+
+    try {
+      const signature = new Uint8Array(await file.slice(0, 8).arrayBuffer());
+      const isPng = signature.length === 8
+        && signature[0] === 0x89 && signature[1] === 0x50 && signature[2] === 0x4e
+        && signature[3] === 0x47 && signature[4] === 0x0d && signature[5] === 0x0a
+        && signature[6] === 0x1a && signature[7] === 0x0a;
+      const isJpeg = signature.length >= 3
+        && signature[0] === 0xff && signature[1] === 0xd8 && signature[2] === 0xff;
+      if (!isPng && !isJpeg) {
+        toast.error('El archivo debe ser una imagen PNG o JPG válida');
+        return;
+      }
+
+      setSavingLogo(true);
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => typeof reader.result === 'string'
+          ? resolve(reader.result)
+          : reject(new Error('No se pudo leer la imagen'));
+        reader.onerror = () => reject(reader.error || new Error('No se pudo leer la imagen'));
+        reader.readAsDataURL(file);
+      });
+      const updatedConfig = { ...config, logo_negocio: dataUrl };
+      await configAPI.set('logo_negocio', dataUrl);
+      setConfig(updatedConfig);
+      applyGlobalConfig(updatedConfig);
+      toast.success('Logo del negocio guardado');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'No se pudo guardar el logo');
+    } finally {
+      setSavingLogo(false);
+    }
+  };
+
+  const handleRemoveLogo = async () => {
+    setSavingLogo(true);
+    try {
+      await configAPI.set('logo_negocio', '');
+      const updatedConfig = { ...config, logo_negocio: '' };
+      setConfig(updatedConfig);
+      applyGlobalConfig(updatedConfig);
+      toast.success('Logo eliminado');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'No se pudo eliminar el logo');
+    } finally {
+      setSavingLogo(false);
+    }
   };
 
   const handleTestTicket = async () => {
@@ -433,6 +493,38 @@ export const ConfiguracionModule: React.FC = () => {
               <input className="input" value={config.ticket_telefono ?? config.telefono ?? ''} onChange={(e) => setField('ticket_telefono', e.target.value)} placeholder="Teléfono del negocio" />
             </div>
             <div>
+              <label className="label">Logo del negocio</label>
+              <input
+                ref={logoRef}
+                type="file"
+                accept="image/png,image/jpeg"
+                className="hidden"
+                onChange={(event) => void handleLogoUpload(event)}
+              />
+              <div className="flex items-center justify-center rounded-lg border border-slate-700 bg-slate-900 p-4 min-h-32">
+                {config.logo_negocio ? (
+                  <img
+                    src={config.logo_negocio}
+                    alt="Vista previa del logo"
+                    style={{ maxWidth: 240, maxHeight: 128, objectFit: 'contain' }}
+                  />
+                ) : (
+                  <span className="text-sm text-slate-500">No hay un logo cargado</span>
+                )}
+              </div>
+              <div className="flex gap-2 mt-2">
+                <button type="button" className="btn-secondary btn" disabled={savingLogo} onClick={() => logoRef.current?.click()}>
+                  <Upload size={16} /> {savingLogo ? 'Guardando…' : 'Subir logo'}
+                </button>
+                {config.logo_negocio && (
+                  <button type="button" className="btn-secondary btn" disabled={savingLogo} onClick={() => void handleRemoveLogo()}>
+                    <X size={16} /> Quitar logo
+                  </button>
+                )}
+              </div>
+              <p className="text-xs text-slate-500 mt-1">PNG o JPG, máximo 2 MB. Se imprimirá en el ticket al estar configurado.</p>
+            </div>
+            <div>
               <label className="label">Mensaje de cabecera</label>
               <textarea className="input resize-y" rows={2} value={config.ticket_mensaje_cabecera || ''} onChange={(e) => setField('ticket_mensaje_cabecera', e.target.value)} placeholder="Mensaje al inicio del ticket" />
             </div>
@@ -443,7 +535,6 @@ export const ConfiguracionModule: React.FC = () => {
             <div className="space-y-2">
               <div className="label">Mostrar en el ticket</div>
               {[
-                { key: 'ticket_mostrar_logo', label: 'Logo', defaultValue: false },
                 { key: 'ticket_mostrar_fecha', label: 'Fecha', defaultValue: true },
                 { key: 'ticket_mostrar_numero', label: 'Número de ticket', defaultValue: true },
                 { key: 'ticket_mostrar_vendedor', label: 'Vendedor', defaultValue: true },
@@ -454,14 +545,6 @@ export const ConfiguracionModule: React.FC = () => {
                   {label}
                 </label>
               ))}
-            </div>
-            <div>
-              <label className="label">Al confirmar una venta</label>
-              <select className="input" value={config.ticket_modo_impresion || 'preguntar'} onChange={(e) => setField('ticket_modo_impresion', e.target.value)}>
-                <option value="preguntar">Preguntar siempre</option>
-                <option value="siempre">Imprimir siempre</option>
-                <option value="nunca">Nunca imprimir</option>
-              </select>
             </div>
             <button type="button" className="btn-secondary btn" disabled={!config.ticket_impresora} onClick={() => void handleTestTicket()}>
               <Printer size={16} /> Imprimir ticket de prueba

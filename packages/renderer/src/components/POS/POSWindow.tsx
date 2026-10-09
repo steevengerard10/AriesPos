@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Save, RefreshCw, FileText, UserPlus, Percent, StickyNote, AlertTriangle,
-  User, X
+  User, X, Printer
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { ProductSearch } from '../POS/ProductSearch';
@@ -13,7 +13,7 @@ import { Modal } from '../shared/Modal';
 import { useVentasStore, type MetodoPago } from '../../store/useVentasStore';
 import { useAppStore } from '../../store/useAppStore';
 import { formatCurrency } from '../../lib/utils';
-import { ventasAPI, clientesAPI, usuariosAPI, configAPI, appAPI, sendEvent, onEvent, productosAPI } from '../../lib/api';
+import { ventasAPI, clientesAPI, usuariosAPI, configAPI, appAPI, sendEvent, onEvent, productosAPI, printerAPI } from '../../lib/api';
 import { useTranslation } from 'react-i18next';
 
 interface Cliente {
@@ -56,6 +56,8 @@ export const POSWindow: React.FC = () => {
   const productSearchRef = useRef<ProductSearchHandle>(null);
   const [clienteSearch, setClienteSearch] = useState('');
   const [procesando, setProcesando] = useState(false);
+  const [lastTicket, setLastTicket] = useState<Record<string, unknown> | null>(null);
+  const [printingTicket, setPrintingTicket] = useState(false);
   const [selectedPrecio, setSelectedPrecio] = useState<1 | 2 | 3>(1);
   const [editVenta, setEditVenta] = useState<{ id: number; numero: string } | null>(null);
   const [editMetodo, setEditMetodo] = useState('efectivo');
@@ -335,7 +337,7 @@ export const POSWindow: React.FC = () => {
       const ventaGuardada = result.venta || {};
       const subtotalTicket = rawSubtotal;
       const totalAntesRecargo = Math.max(0, subtotalTicket - descuentoFinal);
-      return {
+      const ticket = {
         ...ventaGuardada,
         numero: result.numero,
         vendedor_nombre: vendedorNombre,
@@ -352,6 +354,8 @@ export const POSWindow: React.FC = () => {
           total: item.total,
         })),
       };
+      setLastTicket(ticket);
+      return ticket;
     } catch (err) {
       toast.error(t('pos.saleError'));
       console.error(err);
@@ -359,6 +363,53 @@ export const POSWindow: React.FC = () => {
       return false;
     } finally {
       setProcesando(false);
+    }
+  };
+
+  const handleQuickPrint = async () => {
+    if (printingTicket) return;
+    let ticket = lastTicket;
+    if (!ticket) {
+      if (cart.length === 0) {
+        toast.error('No hay una venta reciente ni artículos en el carrito');
+        return;
+      }
+      const now = new Date();
+      ticket = {
+        numero: 'BORRADOR',
+        fecha: now.toLocaleDateString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' }),
+        hora: now.toLocaleTimeString('es-AR', {
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          timeZone: 'America/Argentina/Buenos_Aires',
+        }),
+        vendedor_nombre: vendedorNombre,
+        cliente_nombre: clienteNombre,
+        subtotal,
+        descuento: totalDescuento,
+        recargo: recargoGlobal,
+        total,
+        metodo_pago: metodoPago,
+        items: cart.map((item) => ({
+          producto_nombre: item.nombre,
+          cantidad: item.cantidad,
+          precio_unitario: item.precio_unitario,
+          total: item.total,
+        })),
+      };
+    }
+
+    setPrintingTicket(true);
+    try {
+      const ticketConfig = await configAPI.getAll() as Record<string, string>;
+      const result = await printerAPI.printTicket(ticket, ticketConfig);
+      if (!result.success) throw new Error(result.error || 'No se pudo imprimir el ticket');
+      toast.success('Ticket enviado a imprimir');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'No se pudo imprimir el ticket');
+    } finally {
+      setPrintingTicket(false);
     }
   };
 
@@ -546,6 +597,17 @@ export const POSWindow: React.FC = () => {
           <StickyNote size={11} />
           <span style={{ color: observaciones ? 'var(--accent2)' : 'var(--text3)' }}>{t('pos.notes')}</span>
           <kbd>F7</kbd>
+        </button>
+
+        <button
+          className="btn btn-secondary btn-sm flex items-center gap-1.5"
+          style={{ fontSize: 11 }}
+          onClick={() => void handleQuickPrint()}
+          disabled={printingTicket}
+          title="Imprimir el último ticket o el carrito actual"
+        >
+          <Printer size={11} />
+          {printingTicket ? 'Imprimiendo…' : 'Imprimir'}
         </button>
 
         {/* Nueva venta */}

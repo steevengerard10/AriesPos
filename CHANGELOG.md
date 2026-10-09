@@ -1,4 +1,10 @@
 
+## v4.1.1 — 9/10/2026
+En pagos en efectivo se puede ingresar el monto recibido y ver el vuelto o cuánto falta; la confirmación requiere cubrir el monto a cobrar.
+
+## v4.1.0 — 9/10/2026
+Mejoras en ventas y pagos, horarios de venta, impresión de tickets, configuración, historial y métricas del dashboard.
+
 ## v4.0.0 — 8/10/2026
 Actualización mayor: impresión configurable de tickets, pagos parciales por unidades y “Varios”, sincronización horaria con servidor, caja e indicadores de stock actualizados, y mejoras de configuración y tutoriales.
 

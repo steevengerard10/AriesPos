@@ -6,13 +6,14 @@ import {
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from 'recharts';
-import { statsAPI, ventasAPI } from '../../lib/api';
+import { statsAPI } from '../../lib/api';
 import { formatCurrency, formatDayShort, formatLocaleDateFull } from '../../lib/utils';
 import { useAppStore } from '../../store/useAppStore';
 import { useTranslation } from 'react-i18next';
 
 interface DashStats {
-  fecha_hoy: string;
+  caja_abierta: boolean;
+  ventas_turno: Venta[];
   ventas_hoy: number;
   total_hoy: number;
   ventas_semana: number;
@@ -126,12 +127,9 @@ export default function Dashboard() {
   async function load() {
     setLoading(true);
     try {
-      const [s, v] = await Promise.all([
-        statsAPI.dashboard() as Promise<DashStats>,
-        ventasAPI.getHistorico({} as Record<string, unknown>) as Promise<Venta[]>,
-      ]);
+      const s = await statsAPI.dashboard() as DashStats;
       setStats(s);
-      setVentas(Array.isArray(v) ? v : []);
+      setVentas(Array.isArray(s.ventas_turno) ? s.ventas_turno : []);
     } catch (e) {
       console.error('[Dashboard] Error cargando datos:', e);
     } finally {
@@ -145,9 +143,7 @@ export default function Dashboard() {
     return () => window.clearInterval(interval);
   }, []);
 
-  const ventasHoy = ventas
-    .filter((v) => v.fecha === stats?.fecha_hoy)
-    .sort((a, b) => `${b.fecha} ${b.hora || ''}`.localeCompare(`${a.fecha} ${a.hora || ''}`));
+  const ventasHoy = [...ventas].sort((a, b) => b.fecha.localeCompare(a.fecha) || b.id - a.id);
 
   const trend =
     stats && stats.total_semana_anterior > 0
@@ -181,7 +177,7 @@ export default function Dashboard() {
         <KPICard
           title={t('dash.kpi.ventasHoy')}
           value={loading ? '—' : fmt(stats?.total_hoy ?? 0)}
-          sub={t('dash.kpi.ventasHoySub')}
+          sub={stats?.caja_abierta === false ? 'No hay caja abierta' : t('dash.kpi.ventasHoySub')}
           icon={TrendingUp}
           color="var(--accent)"
         />

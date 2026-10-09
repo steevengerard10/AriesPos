@@ -1,5 +1,6 @@
 import { ipcMain, dialog, BrowserWindow } from 'electron';
 import { getDb } from '../database/db';
+import { getSaleTimestamp } from '../database/saleTimestamp';
 import { emitToWeb, getActivePort } from '../server/index';
 import { manualBackup, restoreBackup, listBackups, autoBackup, getBackupsDir } from '../database/backup';
 import { importFromNextar } from '../utils/nextar-importer';
@@ -947,9 +948,7 @@ export function registerIpcHandlers(): void {
     const db = getDb();
 
     const numero = `V${Date.now()}`;
-    const ahora = new Date();
-    const fecha = ahora.toISOString().split('T')[0];
-    const hora = ahora.toTimeString().split(' ')[0];
+    const { fecha, hora, created_at } = getSaleTimestamp();
 
     const subtotal = payload.items.reduce((s, i) => s + i.precio_unitario * i.cantidad, 0);
     const total = subtotal - payload.descuento;
@@ -961,8 +960,8 @@ export function registerIpcHandlers(): void {
     db.transaction(() => {
       const result = db.prepare(`
         INSERT INTO ventas (numero, tipo, estado, fecha, hora, cliente_id, vendedor_id,
-          subtotal, descuento, total, metodo_pago, es_fiado, observaciones)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          subtotal, descuento, total, metodo_pago, es_fiado, observaciones, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         numero,
         payload.tipo,
@@ -972,7 +971,8 @@ export function registerIpcHandlers(): void {
         subtotal, payload.descuento, total,
         payload.metodo_pago,
         payload.es_fiado ? 1 : 0,
-        payload.observaciones
+        payload.observaciones,
+        created_at
       );
 
       ventaId = result.lastInsertRowid as number;
@@ -1082,7 +1082,7 @@ export function registerIpcHandlers(): void {
     if (filters?.vendedor_id) { query += ` AND v.vendedor_id = ?`; params.push(filters.vendedor_id); }
 
     query += ` AND (v.estado IS NULL OR v.estado NOT IN ('cancelada'))`;
-    query += ` ORDER BY v.created_at DESC LIMIT 500`;
+    query += ` ORDER BY v.fecha DESC, v.id DESC LIMIT 500`;
     return db.prepare(query).all(...params);
   });
 
@@ -1285,7 +1285,7 @@ export function registerIpcHandlers(): void {
     const sesionActiva = db.prepare(`SELECT id FROM caja_sesiones WHERE fecha_cierre IS NULL ORDER BY id DESC LIMIT 1`).get() as { id: number } | undefined;
 
     const numero = `DEV${Date.now()}`;
-    const ahora = new Date();
+    const { fecha, hora, created_at } = getSaleTimestamp();
 
     db.transaction(() => {
       const total = items.reduce((s, i) => {
@@ -1294,9 +1294,9 @@ export function registerIpcHandlers(): void {
       }, 0);
 
       const devId = (db.prepare(`
-        INSERT INTO ventas (numero, tipo, estado, fecha, hora, cliente_id, subtotal, total, metodo_pago, observaciones)
-        VALUES (?, 'devolucion', 'completada', ?, ?, ?, ?, ?, 'efectivo', ?)
-      `).run(numero, ahora.toISOString().split('T')[0], ahora.toTimeString().split(' ')[0], ventaOriginal.cliente_id, total, total, `Devolución de Venta #${ventaOriginal.numero}`) as { lastInsertRowid: number }).lastInsertRowid;
+        INSERT INTO ventas (numero, tipo, estado, fecha, hora, cliente_id, subtotal, total, metodo_pago, observaciones, created_at)
+        VALUES (?, 'devolucion', 'completada', ?, ?, ?, ?, ?, 'efectivo', ?, ?)
+      `).run(numero, fecha, hora, ventaOriginal.cliente_id, total, total, `Devolución de Venta #${ventaOriginal.numero}`, created_at) as { lastInsertRowid: number }).lastInsertRowid;
 
       for (const i of items) {
         const item = db.prepare(`SELECT * FROM venta_items WHERE venta_id = ? AND producto_id = ?`).get(ventaId, i.producto_id) as { precio_unitario: number } | undefined;
@@ -1328,8 +1328,9 @@ export function registerIpcHandlers(): void {
     const items = db.prepare(`SELECT * FROM venta_items WHERE venta_id = ?`).all(pedidoId) as { producto_id: number; cantidad: number; precio_unitario: number; descuento: number }[];
     const sesionActiva = db.prepare(`SELECT id FROM caja_sesiones WHERE fecha_cierre IS NULL ORDER BY id DESC LIMIT 1`).get() as { id: number } | undefined;
 
+    const { fecha, hora, created_at } = getSaleTimestamp();
     db.transaction(() => {
-      db.prepare(`UPDATE ventas SET tipo = 'venta', estado = 'completada', fecha = date('now'), hora = time('now') WHERE id = ?`).run(pedidoId);
+      db.prepare(`UPDATE ventas SET tipo = 'venta', estado = 'completada', fecha = ?, hora = ?, created_at = ? WHERE id = ?`).run(fecha, hora, created_at, pedidoId);
       for (const item of items) {
         const prodStockPedido = db.prepare(`SELECT stock_actual FROM productos WHERE id = ?`).get(item.producto_id) as { stock_actual: number } | undefined;
         const stockPrevioPedido = prodStockPedido?.stock_actual ?? 0;
@@ -1545,11 +1546,35 @@ export function registerIpcHandlers(): void {
     prevWeekStartDate.setDate(prevWeekStartDate.getDate() - 7);
     const prevWeekStart = toLocalDate(prevWeekStartDate);
 
-    // Hoy — todas las ventas del día, independientemente de la caja.
-    const rowHoy = db.prepare(`
-      SELECT COUNT(*) as count, COALESCE(SUM(total),0) as total
-      FROM ventas WHERE fecha = ? AND tipo = 'venta'
-    `).get(today) as { count: number; total: number };
+    const cajaActiva = db.prepare(`
+      SELECT fecha_apertura FROM caja_sesiones
+      WHERE fecha_cierre IS NULL ORDER BY id DESC LIMIT 1
+    `).get() as { fecha_apertura: string } | undefined;
+    const rowHoy = cajaActiva
+      ? db.prepare(`
+          SELECT COUNT(*) as count, COALESCE(SUM(total),0) as total
+          FROM ventas WHERE tipo = 'venta' AND julianday(created_at) >= julianday(?)
+        `).get(cajaActiva.fecha_apertura) as { count: number; total: number }
+      : { count: 0, total: 0 };
+    const ventas_turno = cajaActiva
+      ? db.prepare(`
+          SELECT v.id, v.numero, v.fecha, v.hora, v.created_at, v.total, v.metodo_pago,
+            c.nombre as cliente_nombre,
+            (SELECT GROUP_CONCAT(COALESCE(p.nombre, 'Item') || ' x' || CAST(vi.cantidad AS TEXT), ' | ')
+             FROM venta_items vi LEFT JOIN productos p ON p.id = vi.producto_id
+             WHERE vi.venta_id = v.id) as productos,
+            (SELECT json_group_array(json_object(
+              'producto_nombre', COALESCE(p.nombre, 'Item'),
+              'cantidad', vi.cantidad,
+              'precio_unitario', vi.precio_unitario
+            ))
+             FROM venta_items vi LEFT JOIN productos p ON p.id = vi.producto_id
+             WHERE vi.venta_id = v.id) as items_json
+          FROM ventas v LEFT JOIN clientes c ON c.id = v.cliente_id
+          WHERE v.tipo = 'venta' AND julianday(v.created_at) >= julianday(?)
+          ORDER BY v.fecha DESC, v.id DESC LIMIT 500
+        `).all(cajaActiva.fecha_apertura)
+      : [];
 
     // Semana
     const rowSemana = db.prepare(`
@@ -1631,6 +1656,8 @@ export function registerIpcHandlers(): void {
     `).all() as { nombre: string; stock_actual: number; stock_minimo: number }[];
 
     return {
+      caja_abierta: Boolean(cajaActiva),
+      ventas_turno,
       ventas_hoy: rowHoy.count,
       total_hoy: rowHoy.total,
       ventas_semana: rowSemana.count,

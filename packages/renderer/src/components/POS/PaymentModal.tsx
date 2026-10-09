@@ -4,8 +4,7 @@ import toast from 'react-hot-toast';
 import { useTranslation } from 'react-i18next';
 import { useVentasStore, MetodoPago } from '../../store/useVentasStore';
 import { useAppStore } from '../../store/useAppStore';
-import { printerAPI } from '../../lib/api';
-import { Banknote, CreditCard, Smartphone, Bitcoin, FileText, Wallet, X, CheckCircle, AlertTriangle, ChevronLeft, Plus, Trash2, QrCode, Printer, type LucideIcon } from 'lucide-react';
+import { Banknote, CreditCard, Smartphone, Bitcoin, FileText, Wallet, X, CheckCircle, AlertTriangle, ChevronLeft, Plus, Trash2, QrCode, type LucideIcon } from 'lucide-react';
 
 interface MetodoPagoConfig { id: string; nombre: string; activo: boolean; }
 
@@ -49,8 +48,6 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onC
   // Líneas del pago mixto: { metodo, monto }
   const [mixtoLineas, setMixtoLineas] = useState<{ metodo: string; monto: string }[]>([]);
   const [submitting, setSubmitting] = useState(false);
-  const [ticketAfterSale, setTicketAfterSale] = useState<Record<string, unknown> | null>(null);
-  const [printingTicket, setPrintingTicket] = useState(false);
   const paymentInitializedRef = useRef(false);
   const [metodoSeleccionado, setMetodoSeleccionado] = useState<MetodoPago | null>(null);
   const [recargoTarjetaEnabled, setRecargoTarjetaEnabled] = useState(false);
@@ -82,7 +79,6 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onC
       setSelectedIdx(0);
       setMixtoLineas([]);
       setSubmitting(false);
-      setTicketAfterSale(null);
       setMetodoSeleccionado(null);
       setRecargoTarjetaEnabled(false);
       setRecargoTarjetaPorcentaje('0');
@@ -120,7 +116,10 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onC
   const recargoTarjetaMonto = recargoTarjetaEnabled ? total * (parseFloat(recargoTarjetaPorcentaje) || 0) / 100 : 0;
   const totalConRecargoTarjeta = total + recargoTarjetaMonto;
   const esParcial = cobradoNum < total - 0.01;
-  const change = Math.max(0, parseFloat(received || '0') - cobradoNum);
+  const receivedCents = Math.round((parseFloat(received) || 0) * 100);
+  const cobradoCents = Math.round(cobradoNum * 100);
+  const change = Math.max(0, receivedCents - cobradoCents) / 100;
+  const cashInsufficient = receivedCents < cobradoCents;
   const quickAmounts = [...new Set([
     Math.ceil(cobradoNum / 100) * 100,
     Math.ceil(cobradoNum / 500) * 500,
@@ -166,65 +165,11 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onC
     try {
       const ticket = await onConfirm(cobrado);
       if (ticket === false) return;
-      if (!ticket || !('items' in ticket)) {
-        onClose();
-        return;
-      }
-      const mode = config.ticket_modo_impresion || 'preguntar';
-      if (mode === 'nunca') {
-        onClose();
-        return;
-      }
-      if (mode === 'siempre' && config.ticket_impresora) {
-        const result = await printerAPI.printTicket(ticket, config);
-        if (!result.success) toast.error(result.error || 'No se pudo imprimir el ticket');
-        else toast.success('Ticket enviado a imprimir');
-        onClose();
-        return;
-      }
-      setTicketAfterSale(ticket);
+      onClose();
     } finally {
       setSubmitting(false);
     }
   };
-
-  const handlePrintTicket = async () => {
-    if (!ticketAfterSale) return;
-    setPrintingTicket(true);
-    try {
-      const result = await printerAPI.printTicket(ticketAfterSale, config);
-      if (!result.success) throw new Error(result.error || 'No se pudo imprimir el ticket');
-      toast.success('Ticket enviado a imprimir');
-      setTicketAfterSale(null);
-      onClose();
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'No se pudo imprimir el ticket');
-    } finally {
-      setPrintingTicket(false);
-    }
-  };
-
-  if (ticketAfterSale) {
-    return (
-      <div style={{ position: 'fixed', inset: 0, zIndex: 1100, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-        <div className="bg-slate-800 border border-slate-700 rounded-xl p-6 w-full max-w-sm space-y-4 text-center">
-          <CheckCircle size={32} className="text-emerald-400 mx-auto" />
-          <h2 className="text-lg font-bold text-white">Venta registrada</h2>
-          <p className="text-sm text-slate-400">{config.ticket_impresora ? '¿Querés imprimir el ticket ahora?' : 'No hay una impresora configurada.'}</p>
-          <div className="flex flex-col gap-2">
-            {config.ticket_impresora && (
-              <button type="button" className="btn-primary btn w-full" onClick={() => void handlePrintTicket()} disabled={printingTicket}>
-                <Printer size={16} /> {printingTicket ? 'Imprimiendo…' : 'Imprimir ticket'}
-              </button>
-            )}
-            <button type="button" className="btn-secondary btn w-full" onClick={() => { setTicketAfterSale(null); onClose(); }} disabled={printingTicket}>
-              Continuar sin imprimir
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   const handleConfirmMixto = () => {
     setMetodoPago('mixto' as MetodoPago);
@@ -236,7 +181,11 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onC
   const handleSelectMetodo = (id: MetodoPago) => {
     setMetodoPago(id);
     setMetodoPagoMixto([]);
-    if (id === 'efectivo') { setStep('efectivo'); return; }
+    if (id === 'efectivo') {
+      setReceived(cobradoNum.toFixed(2));
+      setStep('efectivo');
+      return;
+    }
     if (id === 'fiado') { if (!clienteId) return; setEsFiado(true); } else { setEsFiado(false); }
     // Mostrar step tarjeta para métodos tarjeta
     if (id === 'tarjeta' || id === 'tarjeta_credito' || id === 'tarjeta_debito') {
@@ -266,10 +215,14 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onC
     void confirmarVenta(montoFinal);
   };
 
-  const handleConfirmEfectivo = () => { setEsFiado(false); void confirmarVenta(cobradoNum); };
+  const handleConfirmEfectivo = () => {
+    if (cashInsufficient) return;
+    setEsFiado(false);
+    void confirmarVenta(cobradoNum);
+  };
 
   enterHandlerRef.current = (event) => {
-    if (!isOpen || event.key !== 'Enter' || submitting || ticketAfterSale) return;
+    if (!isOpen || event.key !== 'Enter' || submitting) return;
     event.preventDefault();
     event.stopImmediatePropagation();
 
@@ -280,12 +233,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onC
       }
       const selectedMethod = methods[selectedIdx];
       if (!selectedMethod || (selectedMethod.id === 'fiado' && !clienteId)) return;
-      const methodId = selectedMethod.id as MetodoPago;
-      setMetodoPago(methodId);
-      setMetodoPagoMixto([]);
-      setEsFiado(methodId === 'fiado');
-      setMetodoSeleccionado(methodId);
-      void confirmarVenta(cobradoNum);
+      handleSelectMetodo(selectedMethod.id as MetodoPago);
       return;
     }
     if (step === 'efectivo') {
@@ -470,12 +418,10 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onC
                   </button>
                 ))}
               </div>
-              {change > 0 && (
-                <div style={{ background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.3)', borderRadius: 12, padding: '14px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontSize: 14, color: 'var(--text3)' }}>{t('pos.pay.change')}</span>
-                  <span style={{ fontSize: 28, fontWeight: 900, color: 'var(--accent3)', fontFamily: "'DM Mono', monospace" }}>{formatCurrency(change, simbolo)}</span>
+              <div style={{ background: cashInsufficient ? 'rgba(245,158,11,0.1)' : 'rgba(16,185,129,0.1)', border: `1px solid ${cashInsufficient ? 'rgba(245,158,11,0.3)' : 'rgba(16,185,129,0.3)'}`, borderRadius: 12, padding: '14px 18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: 14, color: 'var(--text3)' }}>{cashInsufficient ? 'Falta recibir' : t('pos.pay.change')}</span>
+                  <span style={{ fontSize: 28, fontWeight: 900, color: cashInsufficient ? 'var(--warn)' : 'var(--accent3)', fontFamily: "'DM Mono', monospace" }}>{formatCurrency(cashInsufficient ? (cobradoCents - receivedCents) / 100 : change, simbolo)}</span>
                 </div>
-              )}
               {esParcial && (
                 <div style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: 10, padding: '10px 14px', fontSize: 12, color: 'var(--warn)', display: 'flex', alignItems: 'center', gap: 8 }}>
                   ⚠ {t('pos.pay.partialWarning', { amount: formatCurrency(cobradoNum, simbolo) })}
@@ -483,8 +429,8 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({ isOpen, onClose, onC
               )}
               <button
                 onClick={handleConfirmEfectivo}
-                disabled={submitting}
-                style={{ background: 'var(--accent3)', color: '#fff', border: 'none', borderRadius: 14, padding: '16px', fontSize: 15, fontWeight: 800, cursor: submitting ? 'not-allowed' : 'pointer', opacity: submitting ? 0.6 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, fontFamily: "'Syne', sans-serif" }}
+                disabled={submitting || cashInsufficient}
+                style={{ background: 'var(--accent3)', color: '#fff', border: 'none', borderRadius: 14, padding: '16px', fontSize: 15, fontWeight: 800, cursor: submitting || cashInsufficient ? 'not-allowed' : 'pointer', opacity: submitting || cashInsufficient ? 0.6 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, fontFamily: "'Syne', sans-serif" }}
               >
                 <CheckCircle size={20} />
                 {t('pos.pay.confirm')} {esParcial ? `(${formatCurrency(cobradoNum, simbolo)})` : ''}

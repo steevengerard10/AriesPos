@@ -7,6 +7,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { app as electronApp } from 'electron';
 import { getDb } from '../database/db';
+import { getSaleTimestamp } from '../database/saleTimestamp';
 import { generatePosHTML } from './webpos';
 import { exportFiadosToExcel } from '../services/fiados-excel-backup';
 import { createServerTimeRouter, createSyncRouter } from './syncRoutes';
@@ -402,9 +403,7 @@ export function startServer(): void {
 
     try {
       const numero = `V${Date.now()}`;
-      const ahora = new Date();
-      const fecha = ahora.toISOString().split('T')[0];
-      const hora = ahora.toTimeString().split(' ')[0];
+      const { fecha, hora, created_at } = getSaleTimestamp();
       const tipo = payload.tipo || 'venta';
       const descuento = payload.descuento || 0;
       const subtotal = payload.items.reduce((s, i) => s + i.precio_unitario * i.cantidad, 0);
@@ -419,8 +418,8 @@ export function startServer(): void {
       db.transaction(() => {
         const result = db.prepare(`
           INSERT INTO ventas (numero, tipo, estado, fecha, hora, cliente_id, vendedor_id,
-            subtotal, descuento, total, metodo_pago, es_fiado, observaciones)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            subtotal, descuento, total, metodo_pago, es_fiado, observaciones, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           numero, tipo,
           tipo === 'venta' ? (payload.es_fiado ? 'fiado' : 'completada') : 'abierto',
@@ -428,7 +427,8 @@ export function startServer(): void {
           payload.cliente_id || null, null,
           subtotal, descuento, total,
           payload.metodo_pago, payload.es_fiado ? 1 : 0,
-          payload.observaciones || ''
+          payload.observaciones || '',
+          created_at
         );
         ventaId = result.lastInsertRowid as number;
 
@@ -854,9 +854,7 @@ export function startServer(): void {
         if (!saleData?.items?.length) throw new Error('items requeridos');
 
         const numero = `VM${Date.now()}`;
-        const ahora = new Date();
-        const fecha = ahora.toISOString().split('T')[0];
-        const hora = ahora.toTimeString().split(' ')[0];
+        const { fecha, hora, created_at } = getSaleTimestamp();
         const subtotal = saleData.items.reduce((s, i) => s + i.total, 0);
         const total = subtotal;
         const metodo = saleData.esFiado ? 'fiado' : saleData.metodoPago;
@@ -870,8 +868,8 @@ export function startServer(): void {
         db.transaction(() => {
           const result = db.prepare(`
             INSERT INTO ventas (numero, tipo, estado, fecha, hora, cliente_id, vendedor_id,
-              subtotal, descuento, total, metodo_pago, es_fiado, observaciones)
-            VALUES (?, 'venta', ?, ?, ?, ?, NULL, ?, 0, ?, ?, ?, ?)
+              subtotal, descuento, total, metodo_pago, es_fiado, observaciones, created_at)
+            VALUES (?, 'venta', ?, ?, ?, ?, NULL, ?, 0, ?, ?, ?, ?, ?)
           `).run(
             numero,
             saleData.esFiado ? 'fiado' : 'completada',
@@ -879,7 +877,8 @@ export function startServer(): void {
             saleData.clienteId || null,
             subtotal, total, metodo,
             saleData.esFiado ? 1 : 0,
-            `Venta desde app móvil (${saleData.source})`
+            `Venta desde app móvil (${saleData.source})`,
+            created_at
           );
           ventaId = result.lastInsertRowid as number;
 

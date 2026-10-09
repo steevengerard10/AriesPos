@@ -11,6 +11,7 @@
 import { Router, Request, Response } from 'express';
 import { Server as SocketIOServer } from 'socket.io';
 import { getDb } from '../database/db';
+import { getSaleTimestamp } from '../database/saleTimestamp';
 import { seedProductos } from '../services/seed-productos';
 import { pagarItemsFiado } from '../services/fiado-item-payments';
 import { isEmergencyAdminPin } from '../services/adminPin';
@@ -534,9 +535,7 @@ export function createSyncRouter(io: SocketIOServer, exportFiadosToExcel: Export
 
     try {
       const numero = `V${Date.now()}`;
-      const ahora = new Date();
-      const fecha = ahora.toISOString().split('T')[0];
-      const hora = ahora.toTimeString().split(' ')[0];
+      const { fecha, hora, created_at } = getSaleTimestamp();
       const tipo = payload.tipo || 'venta';
       const descuento = payload.descuento || 0;
       const subtotal = payload.items.reduce((s, i) => s + i.precio_unitario * i.cantidad, 0);
@@ -551,8 +550,8 @@ export function createSyncRouter(io: SocketIOServer, exportFiadosToExcel: Export
       db.transaction(() => {
         const result = db.prepare(`
           INSERT INTO ventas (numero, tipo, estado, fecha, hora, cliente_id, vendedor_id,
-            subtotal, descuento, total, metodo_pago, es_fiado, observaciones)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            subtotal, descuento, total, metodo_pago, es_fiado, observaciones, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           numero, tipo,
           tipo === 'venta' ? (payload.es_fiado ? 'fiado' : 'completada') : 'abierto',
@@ -562,7 +561,8 @@ export function createSyncRouter(io: SocketIOServer, exportFiadosToExcel: Export
           subtotal, descuento, total,
           payload.metodo_pago,
           payload.es_fiado ? 1 : 0,
-          payload.observaciones || ''
+          payload.observaciones || '',
+          created_at
         );
         ventaId = result.lastInsertRowid as number;
 
@@ -648,7 +648,7 @@ export function createSyncRouter(io: SocketIOServer, exportFiadosToExcel: Export
     if (cliente_id) { query += ` AND v.cliente_id = ?`; params.push(parseInt(cliente_id)); }
     if (vendedor_id) { query += ` AND v.vendedor_id = ?`; params.push(parseInt(vendedor_id)); }
     query += ` AND (v.estado IS NULL OR v.estado NOT IN ('cancelada'))`;
-    query += ` ORDER BY v.created_at DESC LIMIT 500`;
+    query += ` ORDER BY v.fecha DESC, v.id DESC LIMIT 500`;
     res.json(db.prepare(query).all(...params));
   });
 
@@ -817,7 +817,7 @@ export function createSyncRouter(io: SocketIOServer, exportFiadosToExcel: Export
 
     const sesion = db.prepare(`SELECT id FROM caja_sesiones WHERE fecha_cierre IS NULL ORDER BY id DESC LIMIT 1`).get() as { id: number } | undefined;
     const numero = `DEV${Date.now()}`;
-    const ahora = new Date();
+    const { fecha, hora, created_at } = getSaleTimestamp();
 
     db.transaction(() => {
       const total = (items || []).reduce((s, i) => {
@@ -826,9 +826,9 @@ export function createSyncRouter(io: SocketIOServer, exportFiadosToExcel: Export
       }, 0);
 
       const devId = (db.prepare(`
-        INSERT INTO ventas (numero, tipo, estado, fecha, hora, cliente_id, subtotal, total, metodo_pago, observaciones)
-        VALUES (?, 'devolucion', 'completada', ?, ?, ?, ?, ?, 'efectivo', ?)
-      `).run(numero, ahora.toISOString().split('T')[0], ahora.toTimeString().split(' ')[0], venta.cliente_id, total, total, `Devolución de Venta #${venta.numero}`) as { lastInsertRowid: number }).lastInsertRowid;
+        INSERT INTO ventas (numero, tipo, estado, fecha, hora, cliente_id, subtotal, total, metodo_pago, observaciones, created_at)
+        VALUES (?, 'devolucion', 'completada', ?, ?, ?, ?, ?, 'efectivo', ?, ?)
+      `).run(numero, fecha, hora, venta.cliente_id, total, total, `Devolución de Venta #${venta.numero}`, created_at) as { lastInsertRowid: number }).lastInsertRowid;
 
       for (const i of (items || [])) {
         const item = db.prepare(`SELECT * FROM venta_items WHERE venta_id = ? AND producto_id = ?`).get(ventaId, i.producto_id) as { precio_unitario: number } | undefined;
@@ -856,8 +856,9 @@ export function createSyncRouter(io: SocketIOServer, exportFiadosToExcel: Export
     const items = db.prepare(`SELECT * FROM venta_items WHERE venta_id = ?`).all(pedidoId) as { producto_id: number; cantidad: number; precio_unitario: number }[];
     const sesion = db.prepare(`SELECT id FROM caja_sesiones WHERE fecha_cierre IS NULL ORDER BY id DESC LIMIT 1`).get() as { id: number } | undefined;
 
+    const { fecha, hora, created_at } = getSaleTimestamp();
     db.transaction(() => {
-      db.prepare(`UPDATE ventas SET tipo = 'venta', estado = 'completada', fecha = date('now'), hora = time('now') WHERE id = ?`).run(pedidoId);
+      db.prepare(`UPDATE ventas SET tipo = 'venta', estado = 'completada', fecha = ?, hora = ?, created_at = ? WHERE id = ?`).run(fecha, hora, created_at, pedidoId);
       for (const item of items) {
         const p = db.prepare(`SELECT stock_actual FROM productos WHERE id = ?`).get(item.producto_id) as { stock_actual: number } | undefined;
         const previo = p?.stock_actual ?? 0;
@@ -1031,7 +1032,35 @@ export function createSyncRouter(io: SocketIOServer, exportFiadosToExcel: Export
     const ms = toLocalDateISO(monthStart);
     const prevWeekStart = toLocalDateISO(new Date(Date.now() - 14 * 86400000));
 
-    const rowHoy = db.prepare(`SELECT COUNT(*) as count, COALESCE(SUM(total),0) as total FROM ventas WHERE fecha = ? AND tipo='venta'`).get(today) as { count: number; total: number };
+    const cajaActiva = db.prepare(`
+      SELECT fecha_apertura FROM caja_sesiones
+      WHERE fecha_cierre IS NULL ORDER BY id DESC LIMIT 1
+    `).get() as { fecha_apertura: string } | undefined;
+    const rowHoy = cajaActiva
+      ? db.prepare(`
+          SELECT COUNT(*) as count, COALESCE(SUM(total),0) as total
+          FROM ventas WHERE tipo = 'venta' AND julianday(created_at) >= julianday(?)
+        `).get(cajaActiva.fecha_apertura) as { count: number; total: number }
+      : { count: 0, total: 0 };
+    const ventasTurno = cajaActiva
+      ? db.prepare(`
+          SELECT v.id, v.numero, v.fecha, v.hora, v.created_at, v.total, v.metodo_pago,
+            c.nombre as cliente_nombre,
+            (SELECT GROUP_CONCAT(COALESCE(p.nombre, 'Item') || ' x' || CAST(vi.cantidad AS TEXT), ' | ')
+             FROM venta_items vi LEFT JOIN productos p ON p.id = vi.producto_id
+             WHERE vi.venta_id = v.id) as productos,
+            (SELECT json_group_array(json_object(
+              'producto_nombre', COALESCE(p.nombre, 'Item'),
+              'cantidad', vi.cantidad,
+              'precio_unitario', vi.precio_unitario
+            ))
+             FROM venta_items vi LEFT JOIN productos p ON p.id = vi.producto_id
+             WHERE vi.venta_id = v.id) as items_json
+          FROM ventas v LEFT JOIN clientes c ON c.id = v.cliente_id
+          WHERE v.tipo = 'venta' AND julianday(v.created_at) >= julianday(?)
+          ORDER BY v.fecha DESC, v.id DESC LIMIT 500
+        `).all(cajaActiva.fecha_apertura)
+      : [];
     const rowSemana = db.prepare(`SELECT COUNT(*) as count, COALESCE(SUM(total),0) as total FROM ventas WHERE fecha >= ? AND tipo='venta'`).get(weekAgo) as { count: number; total: number };
     const rowSemAnt = db.prepare(`SELECT COALESCE(SUM(total),0) as total FROM ventas WHERE fecha >= ? AND fecha < ? AND tipo='venta'`).get(prevWeekStart, weekAgo) as { total: number };
     const rowMes = db.prepare(`SELECT COUNT(*) as count, COALESCE(SUM(total),0) as total FROM ventas WHERE fecha >= ? AND tipo='venta'`).get(ms) as { count: number; total: number };
@@ -1045,6 +1074,8 @@ export function createSyncRouter(io: SocketIOServer, exportFiadosToExcel: Export
     const alertasStock = db.prepare(`SELECT nombre, stock_actual, stock_minimo FROM productos WHERE stock_actual <= stock_minimo AND activo=1 ORDER BY stock_actual ASC LIMIT 5`).all();
 
     res.json({
+      caja_abierta: Boolean(cajaActiva),
+      ventas_turno: ventasTurno,
       ventas_hoy: rowHoy.count, total_hoy: rowHoy.total,
       ventas_semana: rowSemana.count, total_semana: rowSemana.total,
       total_semana_anterior: rowSemAnt.total,
