@@ -26,7 +26,7 @@ jobs:
           node-version: '22'
 
       - name: Instalar pnpm
-        run: npm install -g pnpm
+        run: npm install -g pnpm@10.32.1
 
       - name: Instalar dependencias
         run: pnpm install --frozen-lockfile
@@ -75,4 +75,3 @@ jobs:
         run: eas build --platform android --profile preview --non-interactive --no-wait
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-
